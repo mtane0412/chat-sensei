@@ -14,6 +14,7 @@ import Home from "./page";
 import type { TwitchIrcClientCallbacks } from "@/lib/twitch/irc-client";
 import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
 import type { ExplanationResult } from "@/lib/ai/schemas";
+import { db } from "@/lib/db/schema";
 
 const mockConnect = vi.fn();
 const mockDisconnect = vi.fn();
@@ -68,16 +69,19 @@ const sampleExplanation: ExplanationResult = {
   difficulty: 1,
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.mocked(runBrowserDiagnosis).mockResolvedValue(readyDiagnosis);
+  // 前のテストの失敗等でカードが残っていても、各テストが空の状態から始まるようにする
+  await db.cards.clear();
 });
 
-afterEach(() => {
+afterEach(async () => {
   mockConnect.mockClear();
   mockDisconnect.mockClear();
   capturedCallbacks = null;
   vi.mocked(runBrowserDiagnosis).mockReset();
   vi.mocked(explainChatMessage).mockReset();
+  await db.cards.clear();
 });
 
 /** 接続 → open状態 → 指定メッセージを1件受信、までの共通セットアップ */
@@ -209,6 +213,38 @@ describe("Home のAI解説(手動ピック)", () => {
       "gg chat",
       expect.objectContaining({ priority: "high", signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it("解説内の語句の「カード化」ボタンを押すと単語帳カードとして保存され、ボタンが「保存済み」に変わる", async () => {
+    vi.mocked(explainChatMessage).mockResolvedValue(sampleExplanation);
+    const user = userEvent.setup();
+    render(<Home />);
+    await connectAndReceiveMessage(user, "gg chat");
+
+    await user.click(screen.getByRole("button", { name: /gg chat/ }));
+    await waitFor(() => {
+      expect(screen.getByText(sampleExplanation.translation)).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "カード化" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "保存済み" })).toBeInTheDocument();
+    });
+
+    const stored = await db.cards.toArray();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({
+      term: "gg",
+      kind: "abbreviation",
+      meaning: sampleExplanation.items[0].meaning,
+      note: sampleExplanation.items[0].note,
+      sourceMessageText: "gg chat",
+      sourceChannel: "somechannel",
+      sourceAuthor: "CodeChamp92",
+      targetLang: "en",
+      explainLang: "ja",
+    });
   });
 
   it("解説生成中はローディング表示になる", async () => {
