@@ -9,6 +9,10 @@
  * 発言をクリックすると、設定済みの言語ペアで Prompt API(Gemini Nano)による
  * 構造化解説をダイアログ表示する(手動ピック)。Prompt API が利用できない
  * 環境では、理由を明示したうえで生成を行わない(暗黙のフォールバックはしない)。
+ *
+ * 自動抽出(バックグラウンド)が生成した候補は、チャットログの横に常設の
+ * `CandidatePanel` としてリアルタイムに表示する(`candidates` テーブルを
+ * Dexie の liveQuery で購読するため、手動での再取得は不要)。
  */
 "use client";
 
@@ -34,8 +38,11 @@ import { createAutoExtractionPipeline, type AutoExtractionPipeline } from "@/lib
 import type { ExplanationItem, ExplanationResult } from "@/lib/ai/schemas";
 import { loadSettings } from "@/lib/settings";
 import { createCard } from "@/lib/db/cards";
+import { acceptCandidate, rejectCandidate, subscribeToCandidates } from "@/lib/db/candidates";
+import type { Candidate } from "@/lib/db/schema";
 import { subscribeToChatMessages, useChatConnectionStore } from "@/store/chat-connection";
 import { TwitchEmbedPlayer } from "@/components/twitch-embed-player";
+import { CandidatePanel } from "@/components/candidate-panel";
 
 const CONNECTION_STATE_LABEL: Record<ConnectionState, string> = {
   idle: "待機中",
@@ -131,6 +138,24 @@ export default function Home() {
     return unsubscribe;
   }, [getAutoExtractionPipeline]);
 
+  // --- 自動抽出候補のリアルタイムパネル ---
+  // 自動抽出パイプラインが`candidates`テーブルに書き込むと、liveQuery経由でここが更新される。
+  // 手動で一覧を再取得する必要はなく、採用/却下によるテーブル変更も同じ経路で自動反映される。
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToCandidates((next) => setCandidates(next));
+    return unsubscribe;
+  }, []);
+
+  const handleAcceptCandidate = useCallback((id: number) => {
+    acceptCandidate(id);
+  }, []);
+
+  const handleRejectCandidate = useCallback((id: number) => {
+    rejectCandidate(id);
+  }, []);
+
   const handleConnect = useCallback(() => {
     const channel = channelInput.trim();
     if (!channel) return;
@@ -221,7 +246,14 @@ export default function Home() {
         dialogState.status !== "idle" && "md:pr-96",
       )}
     >
-      <div className="flex w-full max-w-3xl flex-col gap-4 p-6">
+      <div
+        className={cn(
+          "flex w-full max-w-3xl flex-col gap-4 p-6 transition-[max-width] duration-150",
+          // 自動抽出候補パネル(幅lg:20rem)をチャットログの横に並べる余白を確保するため、
+          // 候補が1件以上ある間だけ広い画面幅(lg以上)でコンテナ全体を広げる。
+          candidates.length > 0 && "lg:max-w-5xl",
+        )}
+      >
         <Card>
           <CardHeader>
             <CardTitle>chat-sensei</CardTitle>
@@ -263,19 +295,23 @@ export default function Home() {
           </Card>
         )}
 
-        <Card className="flex flex-1 flex-col overflow-hidden">
-          <ScrollArea className="h-[60vh]">
-            <ol className="flex flex-col gap-1 p-4">
-              {messages.map((message) => (
-                <ChatMessageRow
-                  key={message.id ?? `${message.username}-${message.timestampMs}`}
-                  message={message}
-                  onSelect={handleMessageClick}
-                />
-              ))}
-            </ol>
-          </ScrollArea>
-        </Card>
+        <div className="flex flex-1 flex-col gap-4 lg:flex-row">
+          <Card className="flex flex-1 flex-col overflow-hidden">
+            <ScrollArea className="h-[60vh]">
+              <ol className="flex flex-col gap-1 p-4">
+                {messages.map((message) => (
+                  <ChatMessageRow
+                    key={message.id ?? `${message.username}-${message.timestampMs}`}
+                    message={message}
+                    onSelect={handleMessageClick}
+                  />
+                ))}
+              </ol>
+            </ScrollArea>
+          </Card>
+
+          <CandidatePanel candidates={candidates} onAccept={handleAcceptCandidate} onReject={handleRejectCandidate} />
+        </div>
       </div>
 
       {/*

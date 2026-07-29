@@ -7,8 +7,9 @@
  * 各テストの独立性を保つため、テストごとに `db.candidates` / `db.cards` を空にしてから実行する。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Candidate } from "./schema";
 import { db } from "./schema";
-import { acceptCandidate, createCandidate, listCandidates, rejectCandidate } from "./candidates";
+import { acceptCandidate, createCandidate, listCandidates, rejectCandidate, subscribeToCandidates } from "./candidates";
 
 /** 自動抽出パイプラインが生成する候補入力を模したテストデータ(意味の分かる日本語・実チャット文を使用) */
 function buildNewCandidateInput(overrides: Partial<Parameters<typeof createCandidate>[0]> = {}) {
@@ -106,5 +107,52 @@ describe("rejectCandidate", () => {
     expect(storedCandidate).toBeUndefined();
     const storedCards = await db.cards.toArray();
     expect(storedCards).toHaveLength(0);
+  });
+});
+
+describe("subscribeToCandidates", () => {
+  it("購読直後は空配列で呼ばれ、候補を作成すると作成日時が古い順の一覧でコールバックが呼ばれる", async () => {
+    const dateNowSpy = vi.spyOn(Date, "now");
+    dateNowSpy.mockReturnValue(new Date("2026-07-29T10:00:00.000Z").getTime());
+
+    const received: Candidate[][] = [];
+    const unsubscribe = subscribeToCandidates((candidates) => {
+      received.push(candidates);
+    });
+
+    await vi.waitFor(() => {
+      expect(received.length).toBeGreaterThanOrEqual(1);
+    });
+    expect(received[0]).toEqual([]);
+
+    const older = await createCandidate(buildNewCandidateInput({ term: "clutch" }));
+    dateNowSpy.mockReturnValue(new Date("2026-07-29T10:05:00.000Z").getTime());
+    const newer = await createCandidate(buildNewCandidateInput({ term: "GG" }));
+
+    await vi.waitFor(() => {
+      const latest = received[received.length - 1];
+      expect(latest.map((candidate) => candidate.id)).toEqual([older.id, newer.id]);
+    });
+
+    unsubscribe();
+  });
+
+  it("購読解除後は候補を追加してもコールバックが呼ばれない", async () => {
+    const received: Candidate[][] = [];
+    const unsubscribe = subscribeToCandidates((candidates) => {
+      received.push(candidates);
+    });
+    await vi.waitFor(() => {
+      expect(received.length).toBeGreaterThanOrEqual(1);
+    });
+
+    unsubscribe();
+    const callCountAtUnsubscribe = received.length;
+
+    await createCandidate(buildNewCandidateInput());
+    // liveQueryの再実行が起こりうる猶予を置いても、購読解除後は呼び出し回数が増えないことを確認する
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(received.length).toBe(callCountAtUnsubscribe);
   });
 });
