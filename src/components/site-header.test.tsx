@@ -28,4 +28,11 @@ describe("SiteHeader", () => {
     const deckLink = screen.getByRole("link", { name: "単語帳" });
     expect(deckLink).toHaveAttribute("href", "/deck");
   });
+
+  it("復習クイズページ(/study)へのリンクを表示する", () => {
+    render(<SiteHeader />);
+
+    const studyLink = screen.getByRole("link", { name: "復習" });
+    expect(studyLink).toHaveAttribute("href", "/study");
+  });
 });

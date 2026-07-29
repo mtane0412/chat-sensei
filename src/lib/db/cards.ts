@@ -52,6 +52,20 @@ export async function searchCards(query: string): Promise<Card[]> {
   );
 }
 
+/**
+ * カード配列から、期日(srs.due)が現在時刻以下のものだけを期日が早い順に抽出する(DBアクセスなしの純関数)。
+ * すでに全カードを取得済みの呼び出し元(復習クイズページなど)は、`listDueCards` で再度DBへ
+ * 問い合わせる代わりにこちらを使うことで、同じテーブルへの重複スキャンを避けられる。
+ */
+export function selectDueCards(cards: Card[], now: number): Card[] {
+  return cards.filter((card) => card.srs.due <= now).sort((a, b) => a.srs.due - b.srs.due);
+}
+
+/** 期日(srs.due)が現在時刻以下のカードを、期日が早い順に返す(復習クイズの出題対象取得に使う) */
+export async function listDueCards(now: number): Promise<Card[]> {
+  return selectDueCards(await db.cards.toArray(), now);
+}
+
 /** 指定したIDのカードを削除する */
 export async function deleteCard(id: number): Promise<void> {
   await db.cards.delete(id);

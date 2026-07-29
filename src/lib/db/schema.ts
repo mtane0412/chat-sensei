@@ -10,6 +10,7 @@ import Dexie, { type Table } from "dexie";
 import type { EmotePosition } from "../twitch/irc-parser";
 import type { ExplanationItemKind } from "../ai/schemas";
 import type { SupportedLanguage } from "../ai/prompts";
+import type { Grade } from "./srs";
 
 /** Twitchチャットの1メッセージを永続化した形 */
 export interface StoredMessage {
@@ -29,10 +30,7 @@ export interface StoredMessage {
   confidence: number | null;
 }
 
-/**
- * SM-2間隔反復アルゴリズムの状態(Phase 5「復習クイズ」で使用)。
- * Phase 3時点ではカード作成時に初期値を保存するのみで、採点ロジックは実装しない。
- */
+/** SM-2間隔反復アルゴリズムの状態。採点ロジックは `srs.ts` の `gradeCard` を参照 */
 export interface CardSrsState {
   /** 次回復習予定日時(epoch ms) */
   due: number;
@@ -69,12 +67,12 @@ export interface Card {
   srs: CardSrsState;
 }
 
-/** 復習履歴(Phase 5「復習クイズ」で使用) */
+/** 復習履歴 */
 export interface Review {
   id?: number;
   cardId: number;
-  /** 採点(Again/Hard/Good/Easyなど、Phase 5で定義する) */
-  grade: number;
+  /** 採点(Again/Hard/Good/Easy)。`srs.ts` の `gradeCard` にそのまま渡す */
+  grade: Grade;
   reviewedAt: number;
 }
 
