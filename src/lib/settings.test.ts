@@ -7,7 +7,7 @@
  * (CLAUDE.md の Fail-Fast 方針: 暗黙のフォールバックにせず、呼び出し元に理由を返す)。
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS, SETTINGS_STORAGE_KEY, loadSettings, saveSettings } from "./settings";
+import { DEFAULT_SETTINGS, SETTINGS_STORAGE_KEY, clearSettings, loadSettings, saveSettings } from "./settings";
 
 afterEach(() => {
   window.localStorage.clear();
@@ -67,6 +67,21 @@ describe("loadSettings", () => {
     const result = loadSettings();
 
     expect(result).toEqual({ settings: DEFAULT_SETTINGS, wasCorrupted: true });
+  });
+});
+
+describe("clearSettings", () => {
+  it("保存されていた設定をLocalStorageから削除し、以後はデフォルト設定が読み込まれる", () => {
+    saveSettings({
+      targetLang: "es",
+      explainLang: "ja",
+      autoExtraction: { enabled: true, strictness: "strict" },
+    });
+
+    clearSettings();
+
+    expect(window.localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
+    expect(loadSettings()).toEqual({ settings: DEFAULT_SETTINGS, wasCorrupted: false });
   });
 });
 

@@ -37,7 +37,12 @@ vi.mock("@/lib/ai/runBrowserDiagnosis", () => ({
 
 vi.mock("@/lib/ai/explain", async () => {
   const actual = await vi.importActual<typeof import("@/lib/ai/explain")>("@/lib/ai/explain");
-  return { ...actual, explainChatMessage: vi.fn() };
+  return {
+    ...actual,
+    explainChatMessage: vi.fn(),
+    // 言語ペアがセッションプール生成に正しく渡っているかを検証するため、実装は維持しつつ呼び出しを監視する
+    createExplainBaseSessionFactory: vi.fn(actual.createExplainBaseSessionFactory),
+  };
 });
 
 vi.mock("@/lib/ai/auto-extraction", () => ({
@@ -45,7 +50,7 @@ vi.mock("@/lib/ai/auto-extraction", () => ({
 }));
 
 import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
-import { explainChatMessage } from "@/lib/ai/explain";
+import { explainChatMessage, createExplainBaseSessionFactory } from "@/lib/ai/explain";
 import { createAutoExtractionPipeline } from "@/lib/ai/auto-extraction";
 import { saveSettings } from "@/lib/settings";
 
@@ -89,6 +94,7 @@ afterEach(async () => {
   capturedCallbacks = null;
   vi.mocked(runBrowserDiagnosis).mockReset();
   vi.mocked(explainChatMessage).mockReset();
+  vi.mocked(createExplainBaseSessionFactory).mockClear();
   vi.mocked(createAutoExtractionPipeline).mockReset();
   window.localStorage.clear();
   await db.cards.clear();
@@ -427,5 +433,50 @@ describe("Home の自動抽出(バックグラウンド)", () => {
     await user.click(await screen.findByRole("button", { name: "切断する" }));
 
     expect(capturedSignal?.aborted).toBe(true);
+  });
+});
+
+describe("Home の言語ペア切替(通し確認)", () => {
+  // Home のセッションプールは画面ごとに1度だけ生成され(sessionPoolRef)、
+  // /settings で言語ペアを変更した後は画面遷移(アンマウント→再マウント)を経て
+  // 反映される。ここではその「アンマウント→設定変更→再マウント」の流れを再現し、
+  // 新しいセッションプールが常に最新の言語ペアで作り直されることを検証する。
+  it("言語ペアを変更してから画面を再マウントすると、新しい設定でベースセッションが作り直される", async () => {
+    saveSettings({
+      targetLang: "en",
+      explainLang: "ja",
+      autoExtraction: { enabled: false, strictness: "normal" },
+    });
+    vi.mocked(explainChatMessage).mockResolvedValue(sampleExplanation);
+
+    const user1 = userEvent.setup();
+    const { unmount } = render(<Home />);
+    await connectAndReceiveMessage(user1, "gg chat");
+    await user1.click(screen.getByRole("button", { name: /gg chat/ }));
+    await waitFor(() => {
+      expect(screen.getByText(sampleExplanation.translation)).toBeInTheDocument();
+    });
+
+    expect(createExplainBaseSessionFactory).toHaveBeenCalledTimes(1);
+    expect(createExplainBaseSessionFactory).toHaveBeenNthCalledWith(1, "en", "ja");
+
+    // /settings で言語ペアを変更し、/ に戻ってきた状況を再現する(コンポーネントの破棄・再生成)
+    unmount();
+    saveSettings({
+      targetLang: "es",
+      explainLang: "de",
+      autoExtraction: { enabled: false, strictness: "normal" },
+    });
+
+    const user2 = userEvent.setup();
+    render(<Home />);
+    await connectAndReceiveMessage(user2, "otra vez chat");
+    await user2.click(screen.getByRole("button", { name: /otra vez chat/ }));
+    await waitFor(() => {
+      expect(screen.getByText(sampleExplanation.translation)).toBeInTheDocument();
+    });
+
+    expect(createExplainBaseSessionFactory).toHaveBeenCalledTimes(2);
+    expect(createExplainBaseSessionFactory).toHaveBeenNthCalledWith(2, "es", "de");
   });
 });

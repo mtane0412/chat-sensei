@@ -6,7 +6,7 @@
  * ここではそのモジュールをモックしてページの表示ロジックのみを確認する。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SettingsPage from "./page";
 import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
@@ -16,7 +16,12 @@ vi.mock("@/lib/ai/runBrowserDiagnosis", () => ({
   runBrowserDiagnosis: vi.fn(),
 }));
 
+vi.mock("@/lib/db/reset", () => ({
+  clearAllIndexedDbData: vi.fn(),
+}));
+
 import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
+import { clearAllIndexedDbData } from "@/lib/db/reset";
 
 /** 全項目が利用可能な基準診断結果(お使いの Chrome 150 相当を想定) */
 const readyDiagnosis: EnvironmentDiagnosis = {
@@ -30,6 +35,7 @@ const readyDiagnosis: EnvironmentDiagnosis = {
 
 afterEach(() => {
   vi.mocked(runBrowserDiagnosis).mockReset();
+  vi.mocked(clearAllIndexedDbData).mockReset();
   window.localStorage.clear();
 });
 
@@ -196,6 +202,81 @@ describe("SettingsPage", () => {
         explainLang: "ja",
         autoExtraction: { enabled: true, strictness: "strict" },
       });
+    });
+  });
+
+  describe("データ管理", () => {
+    it("「データを全て削除する」ボタンを押しても、確認ダイアログが出るまでは削除処理を呼ばない", async () => {
+      vi.mocked(runBrowserDiagnosis).mockResolvedValue(readyDiagnosis);
+      const user = userEvent.setup();
+
+      render(<SettingsPage />);
+      await user.click(screen.getByRole("button", { name: "データを全て削除する" }));
+
+      expect(screen.getByText(/この操作は取り消せません/)).toBeInTheDocument();
+      expect(clearAllIndexedDbData).not.toHaveBeenCalled();
+    });
+
+    it("確認ダイアログでキャンセルすると、削除処理を呼ばずダイアログが閉じる", async () => {
+      vi.mocked(runBrowserDiagnosis).mockResolvedValue(readyDiagnosis);
+      const user = userEvent.setup();
+
+      render(<SettingsPage />);
+      await user.click(screen.getByRole("button", { name: "データを全て削除する" }));
+      await user.click(screen.getByRole("button", { name: "キャンセル" }));
+
+      expect(screen.queryByText(/この操作は取り消せません/)).not.toBeInTheDocument();
+      expect(clearAllIndexedDbData).not.toHaveBeenCalled();
+    });
+
+    it("確認ダイアログで削除を確定すると、IndexedDBとLocalStorageの両方が削除され、設定がデフォルトに戻る", async () => {
+      vi.mocked(runBrowserDiagnosis).mockResolvedValue(readyDiagnosis);
+      vi.mocked(clearAllIndexedDbData).mockResolvedValue(undefined);
+      window.localStorage.setItem(
+        SETTINGS_STORAGE_KEY,
+        JSON.stringify({ targetLang: "es", explainLang: "de", autoExtraction: { enabled: true, strictness: "strict" } }),
+      );
+      const user = userEvent.setup();
+
+      render(<SettingsPage />);
+      await waitFor(() => {
+        expect(screen.getByLabelText("学ぶ言語")).toHaveValue("es");
+      });
+
+      await user.click(screen.getByRole("button", { name: "データを全て削除する" }));
+      await user.click(screen.getByRole("button", { name: "削除する" }));
+
+      await waitFor(() => {
+        expect(clearAllIndexedDbData).toHaveBeenCalledTimes(1);
+      });
+      expect(window.localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
+      expect(screen.getByText("データを全て削除しました")).toBeInTheDocument();
+      expect(screen.getByLabelText("学ぶ言語")).toHaveValue("en");
+      expect(screen.getByLabelText("解説言語")).toHaveValue("ja");
+    });
+
+    it("削除処理が失敗した場合はエラーメッセージを表示し、設定は保持する", async () => {
+      vi.mocked(runBrowserDiagnosis).mockResolvedValue(readyDiagnosis);
+      vi.mocked(clearAllIndexedDbData).mockRejectedValue(new Error("IndexedDBの削除に失敗しました"));
+      window.localStorage.setItem(
+        SETTINGS_STORAGE_KEY,
+        JSON.stringify({ targetLang: "es", explainLang: "de", autoExtraction: { enabled: false, strictness: "normal" } }),
+      );
+      const user = userEvent.setup();
+
+      render(<SettingsPage />);
+      await waitFor(() => {
+        expect(screen.getByLabelText("学ぶ言語")).toHaveValue("es");
+      });
+
+      await user.click(screen.getByRole("button", { name: "データを全て削除する" }));
+      await user.click(screen.getByRole("button", { name: "削除する" }));
+
+      await waitFor(() => {
+        expect(within(screen.getByRole("dialog")).getByText("IndexedDBの削除に失敗しました")).toBeInTheDocument();
+      });
+      expect(window.localStorage.getItem(SETTINGS_STORAGE_KEY)).not.toBeNull();
+      expect(screen.getByLabelText("学ぶ言語")).toHaveValue("es");
     });
   });
 });

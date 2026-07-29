@@ -11,20 +11,31 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, Trash2, XCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
 import { describeDiagnosis, type DiagnosisMessage } from "@/lib/ai/describeDiagnosis";
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from "@/lib/ai/prompts";
 import { AUTO_EXTRACTION_STRICTNESS_LEVELS, type AutoExtractionStrictness } from "@/lib/twitch/message-filter";
+import { clearAllIndexedDbData } from "@/lib/db/reset";
 import {
   AUTO_EXTRACTION_STRICTNESS_DISPLAY_NAMES,
   DEFAULT_SETTINGS,
   LANGUAGE_DISPLAY_NAMES,
+  clearSettings,
   loadSettings,
   saveSettings,
   settingsSchema,
@@ -112,6 +123,36 @@ export default function SettingsPage() {
     setSaveError(null);
     setSavedNotice(true);
   }, [settingsForm]);
+
+  // --- データ管理(IndexedDB + LocalStorageの全削除) ---
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletedNotice, setDeletedNotice] = useState(false);
+
+  // IndexedDB(messages/cards/reviews/candidates)とLocalStorageの設定を両方削除する。
+  // 「一方だけ消える」中途半端な状態はFail-Fast方針に反するため、IndexedDBの削除に
+  // 失敗した場合はLocalStorage側には触れず、理由を明示してエラー表示する。
+  const handleConfirmDeleteAllData = useCallback(() => {
+    setIsDeleting(true);
+    setDeleteError(null);
+    clearAllIndexedDbData()
+      .then(() => {
+        clearSettings();
+        setSettingsForm(DEFAULT_SETTINGS);
+        setWasCorrupted(false);
+        setSaveError(null);
+        setSavedNotice(false);
+        setIsDeleteDialogOpen(false);
+        setDeletedNotice(true);
+      })
+      .catch((error: unknown) => {
+        setDeleteError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        setIsDeleting(false);
+      });
+  }, []);
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-6">
@@ -275,6 +316,65 @@ export default function SettingsPage() {
           </Button>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>データ管理</CardTitle>
+          <CardDescription>
+            chat-sensei が保存したデータ(受信したチャット・単語帳・復習履歴・言語設定など)を、
+            この端末のIndexedDBとLocalStorageから完全に削除します。サーバーにはデータを送信していないため、
+            削除すると復元はできません。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          {deletedNotice && !deleteError && (
+            <Alert className="border-emerald-500/50 text-emerald-700 dark:text-emerald-400">
+              <CheckCircle2 aria-hidden="true" />
+              <AlertDescription>データを全て削除しました</AlertDescription>
+            </Alert>
+          )}
+
+          <Button
+            onClick={() => {
+              setDeletedNotice(false);
+              setIsDeleteDialogOpen(true);
+            }}
+            variant="destructive"
+            className="self-start"
+          >
+            <Trash2 aria-hidden="true" />
+            データを全て削除する
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>データを全て削除しますか?</DialogTitle>
+            <DialogDescription>
+              受信したチャット・単語帳のカード・復習履歴・言語設定がこの端末から完全に削除されます。
+              この操作は取り消せません。
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* 削除ダイアログを開いたままエラーを表示する(カード側のAlertはダイアログの背後に隠れて見えないため) */}
+          {deleteError && (
+            <Alert variant="destructive">
+              <XCircle aria-hidden="true" />
+              <AlertDescription>{deleteError}</AlertDescription>
+            </Alert>
+          )}
+
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" disabled={isDeleting} />}>キャンセル</DialogClose>
+            <Button onClick={handleConfirmDeleteAllData} variant="destructive" disabled={isDeleting}>
+              {isDeleting && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+              削除する
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
