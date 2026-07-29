@@ -57,11 +57,20 @@ describe("buildExplainSystemPrompt", () => {
     expect(prompt).toMatch(/そのまま登場する文字列/);
   });
 
-  it("解説言語がjaのとき、代名詞・前置詞・数字・記号単体・@メンションを列挙しない指示を含む", () => {
+  it("解説言語がjaのとき、代名詞・数字・記号単体・@メンションを列挙しない指示を含む", () => {
     const prompt = buildExplainSystemPrompt("en", "ja");
 
     expect(prompt).toMatch(/代名詞/);
     expect(prompt).toMatch(/メンション/);
+  });
+
+  it("学ぶ言語が日本語のとき、英語の前置詞ではなく日本語の助詞(基本的な機能語)を列挙しない指示になる", () => {
+    // 除外ルールが英語の文法カテゴリ(前置詞)決め打ちだと、targetLangが日本語の場合に
+    // 「は」「を」等の助詞がノイズとして抽出され続けてしまうため、学ぶ言語に応じた
+    // 機能語(前置詞・助詞・冠詞など)を指すことを検証する
+    const prompt = buildExplainSystemPrompt("ja", "en");
+
+    expect(prompt).toMatch(/particle/i);
   });
 
   it("解説言語がenのとき、列挙する語句は元のチャット本文の厳密な部分文字列に限る指示を含む", () => {
