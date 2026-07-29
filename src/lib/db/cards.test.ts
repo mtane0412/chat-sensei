@@ -7,7 +7,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "./schema";
-import { createCard, deleteCard, exportCardsToJson, listCards, searchCards } from "./cards";
+import { createCard, deleteCard, exportCardsToJson, listCards, listDueCards, searchCards, selectDueCards } from "./cards";
 
 /** カード化ボタンから渡される入力を模したテストデータ(意味の分かる日本語・実チャット文を使用) */
 function buildNewCardInput(overrides: Partial<Parameters<typeof createCard>[0]> = {}) {
@@ -89,6 +89,36 @@ describe("searchCards", () => {
     const result = await searchCards("");
 
     expect(result).toHaveLength(2);
+  });
+});
+
+describe("listDueCards", () => {
+  it("期日(srs.due)が現在時刻以下のカードだけを、期日が早い順に返す", async () => {
+    const overdue = await createCard(buildNewCardInput({ term: "GG" }));
+    const future = await createCard(buildNewCardInput({ term: "clutch" }));
+    const moreOverdue = await createCard(buildNewCardInput({ term: "poggers" }));
+
+    const now = new Date("2026-07-29T12:00:00.000Z").getTime();
+    await db.cards.update(overdue.id!, { srs: { ...overdue.srs, due: now - 1000 } });
+    await db.cards.update(future.id!, { srs: { ...future.srs, due: now + 1000 } });
+    await db.cards.update(moreOverdue.id!, { srs: { ...moreOverdue.srs, due: now - 2000 } });
+
+    const due = await listDueCards(now);
+
+    expect(due.map((card) => card.term)).toEqual(["poggers", "GG"]);
+  });
+});
+
+describe("selectDueCards", () => {
+  it("カード配列から、期日(srs.due)が現在時刻以下のものだけを期日が早い順に抽出する(DBアクセスなしの純関数)", () => {
+    const now = new Date("2026-07-29T12:00:00.000Z").getTime();
+    const overdue = { ...buildNewCardInput({ term: "GG" }), id: 1, createdAt: 0, srs: { due: now - 1000, interval: 0, easeFactor: 2.5, repetitions: 0, lapses: 0, lastReviewedAt: null } };
+    const future = { ...buildNewCardInput({ term: "clutch" }), id: 2, createdAt: 0, srs: { due: now + 1000, interval: 0, easeFactor: 2.5, repetitions: 0, lapses: 0, lastReviewedAt: null } };
+    const moreOverdue = { ...buildNewCardInput({ term: "poggers" }), id: 3, createdAt: 0, srs: { due: now - 2000, interval: 0, easeFactor: 2.5, repetitions: 0, lapses: 0, lastReviewedAt: null } };
+
+    const due = selectDueCards([overdue, future, moreOverdue], now);
+
+    expect(due.map((card) => card.term)).toEqual(["poggers", "GG"]);
   });
 });
 

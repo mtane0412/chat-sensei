@@ -2,8 +2,7 @@
  * 全ページ共通のヘッダー。
  *
  * chat-sensei はページ数の少ないシングルパーパスアプリのため、
- * ナビゲーションは実装済みのページ(ホーム / 単語帳 / 設定)のみを表示する。
- * 復習(/study)は Phase 5 でページ実装後にリンクを追加する。
+ * ナビゲーションは実装済みのページ(ホーム / 単語帳 / 復習 / 設定)のみを表示する。
  */
 import Link from "next/link";
 
@@ -17,6 +16,9 @@ export function SiteHeader() {
         <div className="flex items-center gap-4 text-sm">
           <Link href="/deck" className="text-muted-foreground transition-colors hover:text-foreground">
             単語帳
+          </Link>
+          <Link href="/study" className="text-muted-foreground transition-colors hover:text-foreground">
+            復習
           </Link>
           <Link href="/settings" className="text-muted-foreground transition-colors hover:text-foreground">
             設定
