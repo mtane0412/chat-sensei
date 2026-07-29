@@ -48,7 +48,8 @@ export function TwitchEmbedPlayer({ channel }: TwitchEmbedPlayerProps) {
       src={src.toString()}
       title={`Twitch配信プレイヤー: ${channel}`}
       allowFullScreen
-      className="aspect-video w-full"
+      // Twitch embedの推奨最小サイズ(400x300px)を狭い画面でも下回らないようmin-h/min-wを設定する
+      className="aspect-video w-full min-h-[300px] min-w-[300px]"
     />
   );
 }
