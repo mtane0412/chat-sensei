@@ -53,6 +53,7 @@ import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
 import { explainChatMessage, createExplainBaseSessionFactory } from "@/lib/ai/explain";
 import { createAutoExtractionPipeline } from "@/lib/ai/auto-extraction";
 import { saveSettings } from "@/lib/settings";
+import { resetChatConnectionStoreForTests } from "@/store/chat-connection";
 
 /** 全項目利用可能な基準診断結果 */
 const readyDiagnosis: EnvironmentDiagnosis = {
@@ -86,6 +87,9 @@ beforeEach(async () => {
   vi.mocked(createAutoExtractionPipeline).mockReturnValue({ processMessage: vi.fn().mockResolvedValue(undefined) });
   // 前のテストの失敗等でカードが残っていても、各テストが空の状態から始まるようにする
   await db.cards.clear();
+  // チャット接続ストアはページ遷移をまたいで状態を保持するモジュールスコープの
+  // シングルトンであり、テスト間でも共有されてしまうため、毎回未接続状態に戻す
+  resetChatConnectionStoreForTests();
 });
 
 afterEach(async () => {
@@ -437,11 +441,14 @@ describe("Home の自動抽出(バックグラウンド)", () => {
 });
 
 describe("Home の言語ペア切替(通し確認)", () => {
-  // Home のセッションプールは画面ごとに1度だけ生成され(sessionPoolRef)、
-  // /settings で言語ペアを変更した後は画面遷移(アンマウント→再マウント)を経て
-  // 反映される。ここではその「アンマウント→設定変更→再マウント」の流れを再現し、
-  // 新しいセッションプールが常に最新の言語ペアで作り直されることを検証する。
-  it("言語ペアを変更してから画面を再マウントすると、新しい設定でベースセッションが作り直される", async () => {
+  // チャット接続(TwitchIrcClient)・接続状態・発言一覧は store/chat-connection.ts
+  // でページ遷移をまたいで維持される一方、AI解説用のセッションプールは Home
+  // コンポーネントのローカルなref(sessionPoolRef)で画面ごとに1度だけ生成される。
+  // /settings で言語ペアを変更して / に戻ってきた場合、チャット接続自体は
+  // 再接続せずに維持されたまま、新しいセッションプールが最新の言語ペアで
+  // 作り直されることを検証する(「アンマウント→設定変更→再マウント」で
+  // 画面遷移を再現する)。
+  it("言語ペアを変更して画面を行き来しても、チャット接続は維持されたまま新しい設定でベースセッションが作り直される", async () => {
     saveSettings({
       targetLang: "en",
       explainLang: "ja",
@@ -470,7 +477,31 @@ describe("Home の言語ペア切替(通し確認)", () => {
 
     const user2 = userEvent.setup();
     render(<Home />);
-    await connectAndReceiveMessage(user2, "otra vez chat");
+
+    // 再接続操作をしていないにもかかわらず、接続済みの状態と直前までの発言が維持されている
+    // (= ページ遷移でチャット接続が切れないことの検証)
+    expect(await screen.findByText("接続済み")).toBeInTheDocument();
+    expect(screen.getByText("gg chat")).toBeInTheDocument();
+
+    capturedCallbacks?.onEvent({
+      type: "privmsg",
+      channel: "somechannel",
+      message: {
+        id: "msg-otra",
+        channel: "somechannel",
+        userId: "333333",
+        username: "viajeroanon",
+        displayName: "viajeroanon",
+        color: null,
+        text: "otra vez chat",
+        isAction: false,
+        emotes: [],
+        badges: [],
+        timestampMs: 1690000000002,
+      },
+    });
+    await screen.findByText("otra vez chat");
+
     await user2.click(screen.getByRole("button", { name: /otra vez chat/ }));
     await waitFor(() => {
       expect(screen.getByText(sampleExplanation.translation)).toBeInTheDocument();
@@ -478,5 +509,105 @@ describe("Home の言語ペア切替(通し確認)", () => {
 
     expect(createExplainBaseSessionFactory).toHaveBeenCalledTimes(2);
     expect(createExplainBaseSessionFactory).toHaveBeenNthCalledWith(2, "es", "de");
+  });
+});
+
+describe("Home のページ遷移(チャット接続の永続化)", () => {
+  // 本来の不具合: チャットに接続した後、単語帳(/deck)・復習(/study)・設定(/settings)
+  // ページに遷移すると、Home がアンマウントされることでチャット接続そのものが
+  // 切れてしまっていた。store/chat-connection.ts に接続状態・発言一覧を移したことで、
+  // Home がアンマウント・再マウントされても接続と発言が保持されることを検証する。
+  it("接続後にページ遷移(アンマウント)しても、再度チャンネル名を入力せずに接続状態と発言一覧が保持される", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<Home />);
+    await connectAndReceiveMessage(user, "nice play chat");
+    expect(screen.getByText("接続済み")).toBeInTheDocument();
+
+    // /deck・/study・/settings への遷移を、Home のアンマウントとして再現する
+    unmount();
+    render(<Home />);
+
+    expect(screen.getByText("接続済み")).toBeInTheDocument();
+    expect(screen.getByText("nice play chat")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "切断する" })).toBeInTheDocument();
+  });
+
+  // 自動抽出(自動抽出パイプラインへの投入)は Home コンポーネントの購読(subscribeToChatMessages)に
+  // 依存しており、チャット接続そのものとは独立している。画面遷移中(Home アンマウント中)は
+  // 購読が解除されるため発言は自動抽出されず、再マウント後に届いた発言だけが自動抽出されることを検証する。
+  it("画面遷移中(アンマウント中)に届いた発言は自動抽出されず、再マウント後に届いた発言のみ自動抽出される", async () => {
+    saveSettings({
+      targetLang: "en",
+      explainLang: "ja",
+      autoExtraction: { enabled: true, strictness: "normal" },
+    });
+    const processMessage = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(createAutoExtractionPipeline).mockReturnValue({ processMessage });
+    const user = userEvent.setup();
+
+    const { unmount } = render(<Home />);
+    await connectAndReceiveMessage(user, "first message before leaving");
+    await waitFor(() => {
+      expect(processMessage).toHaveBeenCalledTimes(1);
+    });
+
+    // /deck 等への遷移を、Home のアンマウントとして再現する。
+    // 接続(store側)は維持されたまま、Home 側の自動抽出の購読だけが解除される。
+    unmount();
+    capturedCallbacks?.onEvent({
+      type: "privmsg",
+      channel: "somechannel",
+      message: {
+        id: "msg-while-away",
+        channel: "somechannel",
+        userId: "444444",
+        username: "awaymessage",
+        displayName: "awaymessage",
+        color: null,
+        text: "message while away",
+        isAction: false,
+        emotes: [],
+        badges: [],
+        timestampMs: 1690000000003,
+      },
+    });
+
+    render(<Home />);
+    // 再マウント直後は、環境診断(runBrowserDiagnosis)の非同期解決を待つ必要がある
+    // (診断結果はrefへの反映も含めて非同期に完了するため、ここで一度イベントループを譲る)
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // 遷移前の発言・アンマウント中に届いた発言のいずれも画面には残っている(接続自体は維持されている)
+    await screen.findByText("message while away");
+    expect(screen.getByText("first message before leaving")).toBeInTheDocument();
+    // しかしアンマウント中に届いた発言は自動抽出されない(呼び出し回数は1のまま)
+    expect(processMessage).toHaveBeenCalledTimes(1);
+
+    // 再マウント後に届いた発言は、通常どおり自動抽出される
+    capturedCallbacks?.onEvent({
+      type: "privmsg",
+      channel: "somechannel",
+      message: {
+        id: "msg-after-return",
+        channel: "somechannel",
+        userId: "555555",
+        username: "returnmessage",
+        displayName: "returnmessage",
+        color: null,
+        text: "message after return",
+        isAction: false,
+        emotes: [],
+        badges: [],
+        timestampMs: 1690000000004,
+      },
+    });
+
+    await waitFor(() => {
+      expect(processMessage).toHaveBeenCalledTimes(2);
+    });
+    expect(processMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ text: "message after return" }),
+      expect.anything(),
+    );
   });
 });

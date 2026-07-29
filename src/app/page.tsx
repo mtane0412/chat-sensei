@@ -21,7 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { createTwitchIrcClient, type ConnectionState, type TwitchIrcClient } from "@/lib/twitch/irc-client";
+import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments } from "@/lib/twitch/emotes";
 import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
@@ -33,9 +33,7 @@ import { createAutoExtractionPipeline, type AutoExtractionPipeline } from "@/lib
 import type { ExplanationItem, ExplanationResult } from "@/lib/ai/schemas";
 import { loadSettings } from "@/lib/settings";
 import { createCard } from "@/lib/db/cards";
-
-/** チャットに表示する発言の最大保持件数(古いものから捨てるリングバッファ) */
-const MAX_DISPLAYED_MESSAGES = 300;
+import { subscribeToChatMessages, useChatConnectionStore } from "@/store/chat-connection";
 
 const CONNECTION_STATE_LABEL: Record<ConnectionState, string> = {
   idle: "待機中",
@@ -60,13 +58,17 @@ type ExplanationDialogState =
 
 export default function Home() {
   const [channelInput, setChannelInput] = useState("");
-  const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
-  const [messages, setMessages] = useState<TwitchChatMessage[]>([]);
-  const clientRef = useRef<TwitchIrcClient | null>(null);
+  // 接続状態・受信済み発言はページ遷移(コンポーネントのアンマウント)をまたいで
+  // 保持する必要があるため、コンポーネントローカルではなくモジュールスコープの
+  // ストア(chat-connection.ts)で管理する。詳細はストアのコメントを参照。
+  const connectionState = useChatConnectionStore((state) => state.connectionState);
+  const messages = useChatConnectionStore((state) => state.messages);
+  const connect = useChatConnectionStore((state) => state.connect);
+  const disconnect = useChatConnectionStore((state) => state.disconnect);
 
   // --- AI解説(手動ピック)・自動抽出(バックグラウンド)で共有する参照 ---
   const [aiDiagnosis, setAiDiagnosis] = useState<EnvironmentDiagnosis | null>(null);
-  // getClient()のonEventはマウント時の1回しか再生成されないクロージャのため、
+  // 下記のsubscribeToChatMessagesのリスナーはマウント時に1度だけ生成されるクロージャのため、
   // 最新のaiDiagnosisをrefにも同期しておき、自動抽出の実行可否をそこから判定する。
   const aiDiagnosisRef = useRef<EnvironmentDiagnosis | null>(null);
   const sessionPoolRef = useRef<SessionPool | null>(null);
@@ -103,56 +105,42 @@ export default function Home() {
     return autoExtractionPipelineRef.current;
   }, [getSessionPool]);
 
-  // クライアントは初回レンダリング時に一度だけ生成する。
-  // setState群はReactが安定した参照を保証するため、コールバック内で使っても古いクロージャの問題は起きない。
-  // (refに保持したgetAutoExtractionPipeline/aiDiagnosisRefも、呼び出し時点で最新の値を参照する)
-  const getClient = useCallback((): TwitchIrcClient => {
-    if (!clientRef.current) {
-      clientRef.current = createTwitchIrcClient({
-        onStateChange: (state) => setConnectionState(state),
-        onEvent: (event) => {
-          if (event.type !== "privmsg") return;
-          setMessages((prev) => {
-            const next = [...prev, event.message];
-            return next.length > MAX_DISPLAYED_MESSAGES
-              ? next.slice(next.length - MAX_DISPLAYED_MESSAGES)
-              : next;
+  // 受信した発言(privmsg)を購読し、自動抽出パイプラインに投入する。
+  // 接続そのものはストア側で維持されるため、ここでは「表示中の画面がHomeである間だけ」
+  // 自動抽出を行う(refに保持したaiDiagnosisRef/設定は、呼び出し時点で最新の値を参照する)。
+  useEffect(() => {
+    const unsubscribe = subscribeToChatMessages((message) => {
+      const { settings } = loadSettings();
+      if (settings.autoExtraction.enabled && aiDiagnosisRef.current?.overallReady) {
+        getAutoExtractionPipeline()
+          .processMessage(message, {
+            strictness: settings.autoExtraction.strictness,
+            targetLang: settings.targetLang,
+            explainLang: settings.explainLang,
+            signal: autoExtractionAbortControllerRef.current?.signal,
+          })
+          .catch(() => {
+            // 自動抽出はベストエフォートのバックグラウンド処理のため、
+            // 個別発言の失敗(Prompt APIエラー・中断)はUIに通知せず読み捨てる
           });
-
-          const { settings } = loadSettings();
-          if (settings.autoExtraction.enabled && aiDiagnosisRef.current?.overallReady) {
-            getAutoExtractionPipeline()
-              .processMessage(event.message, {
-                strictness: settings.autoExtraction.strictness,
-                targetLang: settings.targetLang,
-                explainLang: settings.explainLang,
-                signal: autoExtractionAbortControllerRef.current?.signal,
-              })
-              .catch(() => {
-                // 自動抽出はベストエフォートのバックグラウンド処理のため、
-                // 個別発言の失敗(Prompt APIエラー・中断)はUIに通知せず読み捨てる
-              });
-          }
-        },
-      });
-    }
-    return clientRef.current;
+      }
+    });
+    return unsubscribe;
   }, [getAutoExtractionPipeline]);
 
   const handleConnect = useCallback(() => {
     const channel = channelInput.trim();
     if (!channel) return;
-    setMessages([]);
     // チャンネルを切り替えるので、前のチャンネルに紐づく自動抽出ジョブを中断する
     autoExtractionAbortControllerRef.current?.abort();
     autoExtractionAbortControllerRef.current = new AbortController();
-    getClient().connect(channel);
-  }, [channelInput, getClient]);
+    connect(channel);
+  }, [channelInput, connect]);
 
   const handleDisconnect = useCallback(() => {
     autoExtractionAbortControllerRef.current?.abort();
-    getClient().disconnect();
-  }, [getClient]);
+    disconnect();
+  }, [disconnect]);
 
   const connected = isConnectingOrConnected(connectionState);
 
