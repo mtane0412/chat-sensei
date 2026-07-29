@@ -34,6 +34,7 @@ import type { ExplanationItem, ExplanationResult } from "@/lib/ai/schemas";
 import { loadSettings } from "@/lib/settings";
 import { createCard } from "@/lib/db/cards";
 import { subscribeToChatMessages, useChatConnectionStore } from "@/store/chat-connection";
+import { TwitchEmbedPlayer } from "@/components/twitch-embed-player";
 
 const CONNECTION_STATE_LABEL: Record<ConnectionState, string> = {
   idle: "待機中",
@@ -63,6 +64,7 @@ export default function Home() {
   // ストア(chat-connection.ts)で管理する。詳細はストアのコメントを参照。
   const connectionState = useChatConnectionStore((state) => state.connectionState);
   const messages = useChatConnectionStore((state) => state.messages);
+  const channel = useChatConnectionStore((state) => state.channel);
   const connect = useChatConnectionStore((state) => state.connect);
   const disconnect = useChatConnectionStore((state) => state.disconnect);
 
@@ -242,6 +244,12 @@ export default function Home() {
           </div>
         </CardContent>
       </Card>
+
+      {channel && (
+        <Card className="overflow-hidden p-0">
+          <TwitchEmbedPlayer channel={channel} />
+        </Card>
+      )}
 
       <Card className="flex flex-1 flex-col overflow-hidden">
         <ScrollArea className="h-[60vh]">

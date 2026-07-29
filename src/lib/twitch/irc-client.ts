@@ -76,8 +76,11 @@ function defaultRandomSuffix(): number {
   return Math.floor(Math.random() * 80_000) + 10_000;
 }
 
-/** チャンネル名から先頭の `#` を除き小文字化する(Twitchのチャンネル名は大文字小文字を区別しない) */
-function normalizeChannelName(channel: string): string {
+/**
+ * チャンネル名から先頭の `#` を除き小文字化する(Twitchのチャンネル名は大文字小文字を区別しない)。
+ * 配信embed(iframe)にもIRC接続と同じ正規化済みチャンネル名を渡すため、ストア側と共有できるようexportする。
+ */
+export function normalizeChannelName(channel: string): string {
   return channel.replace(/^#/, "").toLowerCase();
 }
 

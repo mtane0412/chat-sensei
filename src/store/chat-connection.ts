@@ -10,9 +10,17 @@
  * 消えてしまい、実際の接続も切断されてしまう。このストアはそれらを React の
  * コンポーネントツリーの外(モジュールスコープの Zustand ストア)に保持することで、
  * どの画面を表示していても接続を維持する。
+ *
+ * 接続中のチャンネル名(`channel`)も併せて保持し、`TwitchEmbedPlayer`(配信embed)の
+ * 表示切り替えに使う。
  */
 import { create } from "zustand";
-import { createTwitchIrcClient, type ConnectionState, type TwitchIrcClient } from "@/lib/twitch/irc-client";
+import {
+  createTwitchIrcClient,
+  normalizeChannelName,
+  type ConnectionState,
+  type TwitchIrcClient,
+} from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 
 /** チャットに表示する発言の最大保持件数(古いものから捨てるリングバッファ) */
@@ -21,6 +29,8 @@ const MAX_DISPLAYED_MESSAGES = 300;
 interface ChatConnectionState {
   connectionState: ConnectionState;
   messages: TwitchChatMessage[];
+  /** 接続中のチャンネル名(正規化済み)。配信embed(TwitchEmbedPlayer)の表示に使う。未接続時はnull */
+  channel: string | null;
   connect: (channel: string) => void;
   disconnect: () => void;
 }
@@ -58,11 +68,13 @@ function getClient(): TwitchIrcClient {
 export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
   connectionState: "idle",
   messages: [],
+  channel: null,
   connect: (channel) => {
-    set({ messages: [] });
+    set({ messages: [], channel: normalizeChannelName(channel) });
     getClient().connect(channel);
   },
   disconnect: () => {
+    set({ channel: null });
     getClient().disconnect();
   },
 }));
@@ -89,5 +101,5 @@ export function subscribeToChatMessages(listener: ChatMessageListener): () => vo
 export function resetChatConnectionStoreForTests(): void {
   client = null;
   messageListeners.clear();
-  useChatConnectionStore.setState({ connectionState: "idle", messages: [] });
+  useChatConnectionStore.setState({ connectionState: "idle", messages: [], channel: null });
 }

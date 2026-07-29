@@ -29,6 +29,8 @@ vi.mock("@/lib/twitch/irc-client", () => ({
       getState: () => "idle",
     };
   }),
+  // 実装(irc-client.ts)と同じ正規化ロジックをテストでも使う(チャンネル名の小文字化・#除去)
+  normalizeChannelName: (channel: string) => channel.replace(/^#/, "").toLowerCase(),
 }));
 
 vi.mock("@/lib/ai/runBrowserDiagnosis", () => ({
@@ -211,6 +213,40 @@ describe("Home(ライブチャット画面)", () => {
       "src",
       "https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/2.0",
     );
+  });
+});
+
+describe("Home の配信embed(Twitch埋め込みプレイヤー)", () => {
+  it("未接続の状態では配信embedを表示しない", () => {
+    render(<Home />);
+
+    expect(screen.queryByTitle(/Twitch配信プレイヤー/)).not.toBeInTheDocument();
+  });
+
+  it("チャンネル名を入力して接続すると、そのチャンネルの配信embedが表示される", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await user.type(screen.getByLabelText("チャンネル名"), "ZackRawrr");
+    await user.click(screen.getByRole("button", { name: "接続する" }));
+    capturedCallbacks?.onStateChange?.("open");
+
+    const iframe = await screen.findByTitle("Twitch配信プレイヤー: zackrawrr");
+    expect(iframe.tagName).toBe("IFRAME");
+  });
+
+  it("切断すると、配信embedが非表示になる", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await user.type(screen.getByLabelText("チャンネル名"), "somechannel");
+    await user.click(screen.getByRole("button", { name: "接続する" }));
+    capturedCallbacks?.onStateChange?.("open");
+    await screen.findByTitle("Twitch配信プレイヤー: somechannel");
+
+    await user.click(screen.getByRole("button", { name: "切断する" }));
+
+    expect(screen.queryByTitle(/Twitch配信プレイヤー/)).not.toBeInTheDocument();
   });
 });
 
