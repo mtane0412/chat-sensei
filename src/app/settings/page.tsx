@@ -15,8 +15,17 @@ import { AlertTriangle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
 import { describeDiagnosis, type DiagnosisMessage } from "@/lib/ai/describeDiagnosis";
+import { SUPPORTED_LANGUAGES, type SupportedLanguage } from "@/lib/ai/prompts";
+import {
+  DEFAULT_SETTINGS,
+  LANGUAGE_DISPLAY_NAMES,
+  loadSettings,
+  saveSettings,
+  settingsSchema,
+} from "@/lib/settings";
 
 type DiagnosisState =
   | { status: "loading" }
@@ -71,6 +80,37 @@ export default function SettingsPage() {
     fetchDiagnosis();
   }, [fetchDiagnosis]);
 
+  const [languagePair, setLanguagePair] = useState<{ targetLang: SupportedLanguage; explainLang: SupportedLanguage }>(
+    DEFAULT_SETTINGS,
+  );
+  const [wasCorrupted, setWasCorrupted] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedNotice, setSavedNotice] = useState(false);
+
+  // LocalStorage(外部システム)から読み込んだ値を React state に同期する。
+  // SSR時は window が無いため呼べない(hydrationミスマッチを避けるため useEffect でのみ実行する)。
+  // setState をマイクロタスク内に閉じ込め、useEffect本体からの同期的な呼び出しを避ける
+  // (診断処理(fetchDiagnosis)と同じ理由・同じパターン)。
+  useEffect(() => {
+    Promise.resolve().then(() => {
+      const result = loadSettings();
+      setLanguagePair(result.settings);
+      setWasCorrupted(result.wasCorrupted);
+    });
+  }, []);
+
+  const handleSaveLanguagePair = useCallback(() => {
+    setSavedNotice(false);
+    const validation = settingsSchema.safeParse(languagePair);
+    if (!validation.success) {
+      setSaveError(validation.error.issues[0]?.message ?? "設定が不正です");
+      return;
+    }
+    saveSettings(validation.data);
+    setSaveError(null);
+    setSavedNotice(true);
+  }, [languagePair]);
+
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-6">
       <Card>
@@ -109,6 +149,79 @@ export default function SettingsPage() {
 
           <Button onClick={handleRetry} variant="outline" className="self-start">
             再診断する
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>言語設定</CardTitle>
+          <CardDescription>
+            Twitchチャットの原文言語(学ぶ言語)と、AIが解説を生成する言語(解説言語)を選びます。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          {wasCorrupted && (
+            <Alert className="border-amber-500/50 text-amber-700 dark:text-amber-400">
+              <AlertTriangle aria-hidden="true" />
+              <AlertDescription>
+                保存されていた設定を読み込めなかったため、デフォルト設定に戻しました。
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="target-lang-select">学ぶ言語</Label>
+            <select
+              id="target-lang-select"
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm dark:bg-input/30"
+              value={languagePair.targetLang}
+              onChange={(e) =>
+                setLanguagePair((prev) => ({ ...prev, targetLang: e.target.value as SupportedLanguage }))
+              }
+            >
+              {SUPPORTED_LANGUAGES.map((lang) => (
+                <option key={lang} value={lang}>
+                  {LANGUAGE_DISPLAY_NAMES[lang]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="explain-lang-select">解説言語</Label>
+            <select
+              id="explain-lang-select"
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm dark:bg-input/30"
+              value={languagePair.explainLang}
+              onChange={(e) =>
+                setLanguagePair((prev) => ({ ...prev, explainLang: e.target.value as SupportedLanguage }))
+              }
+            >
+              {SUPPORTED_LANGUAGES.map((lang) => (
+                <option key={lang} value={lang}>
+                  {LANGUAGE_DISPLAY_NAMES[lang]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {saveError && (
+            <Alert variant="destructive">
+              <XCircle aria-hidden="true" />
+              <AlertDescription>{saveError}</AlertDescription>
+            </Alert>
+          )}
+
+          {savedNotice && !saveError && (
+            <Alert className="border-emerald-500/50 text-emerald-700 dark:text-emerald-400">
+              <CheckCircle2 aria-hidden="true" />
+              <AlertDescription>設定を保存しました</AlertDescription>
+            </Alert>
+          )}
+
+          <Button onClick={handleSaveLanguagePair} className="self-start">
+            保存する
           </Button>
         </CardContent>
       </Card>

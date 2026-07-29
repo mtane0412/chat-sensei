@@ -2,15 +2,18 @@
  * src/app/page.tsx(ライブチャット画面)のテスト。
  *
  * Phase 1 の主要導線である「チャンネル名を入力して接続する → 受信した発言が
- * 表示名・色・emote付きで表示される → 切断する」という流れを検証する。
- * 実際のWebSocket通信は行わず、`createTwitchIrcClient` をモックして
- * コールバックを直接呼び出すことで受信イベントをシミュレートする。
+ * 表示名・色・emote付きで表示される → 切断する」という流れに加え、
+ * Phase 2 の主要導線である「発言をクリックするとAI解説が表示される」を検証する。
+ * 実際のWebSocket通信・Prompt API呼び出しは行わず、`createTwitchIrcClient` /
+ * `runBrowserDiagnosis` / `explainChatMessage` をモックしてシミュレートする。
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Home from "./page";
 import type { TwitchIrcClientCallbacks } from "@/lib/twitch/irc-client";
+import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
+import type { ExplanationResult } from "@/lib/ai/schemas";
 
 const mockConnect = vi.fn();
 const mockDisconnect = vi.fn();
@@ -27,11 +30,80 @@ vi.mock("@/lib/twitch/irc-client", () => ({
   }),
 }));
 
+vi.mock("@/lib/ai/runBrowserDiagnosis", () => ({
+  runBrowserDiagnosis: vi.fn(),
+}));
+
+vi.mock("@/lib/ai/explain", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/ai/explain")>("@/lib/ai/explain");
+  return { ...actual, explainChatMessage: vi.fn() };
+});
+
+import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
+import { explainChatMessage } from "@/lib/ai/explain";
+
+/** 全項目利用可能な基準診断結果 */
+const readyDiagnosis: EnvironmentDiagnosis = {
+  chromeVersion: 150,
+  meetsMinimumChromeVersion: true,
+  languageModel: { supported: true, availability: "available" },
+  languageDetector: { supported: true, availability: "available" },
+  storageEstimate: { quota: 100_000_000_000, usage: 1_000_000_000 },
+  overallReady: true,
+};
+
+const notReadyDiagnosis: EnvironmentDiagnosis = {
+  ...readyDiagnosis,
+  languageModel: { supported: false, availability: null },
+  overallReady: false,
+};
+
+/** サンプルの解説結果("gg chat" のような発言を想定) */
+const sampleExplanation: ExplanationResult = {
+  translation: "うまいプレイだったね、チャット",
+  literal: "いいプレイ、チャット",
+  items: [
+    { term: "gg", kind: "abbreviation", meaning: "good game(お疲れ様/いい試合だった)の略語", note: "対戦後の定番の挨拶" },
+  ],
+  difficulty: 1,
+};
+
+beforeEach(() => {
+  vi.mocked(runBrowserDiagnosis).mockResolvedValue(readyDiagnosis);
+});
+
 afterEach(() => {
   mockConnect.mockClear();
   mockDisconnect.mockClear();
   capturedCallbacks = null;
+  vi.mocked(runBrowserDiagnosis).mockReset();
+  vi.mocked(explainChatMessage).mockReset();
 });
+
+/** 接続 → open状態 → 指定メッセージを1件受信、までの共通セットアップ */
+async function connectAndReceiveMessage(user: ReturnType<typeof userEvent.setup>, text = "gg chat") {
+  await user.type(screen.getByLabelText("チャンネル名"), "somechannel");
+  await user.click(screen.getByRole("button", { name: "接続する" }));
+  capturedCallbacks?.onStateChange?.("open");
+  capturedCallbacks?.onEvent({
+    type: "privmsg",
+    channel: "somechannel",
+    message: {
+      id: "msg-1",
+      channel: "somechannel",
+      userId: "987654",
+      username: "codechamp92",
+      displayName: "CodeChamp92",
+      color: "#1E90FF",
+      text,
+      isAction: false,
+      emotes: [],
+      badges: [],
+      timestampMs: 1690000000000,
+    },
+  });
+  await screen.findByText(text);
+}
 
 describe("Home(ライブチャット画面)", () => {
   it("チャンネル名を入力して接続すると、受信した発言が表示名・本文付きで表示される", async () => {
@@ -115,5 +187,117 @@ describe("Home(ライブチャット画面)", () => {
       "src",
       "https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/2.0",
     );
+  });
+});
+
+describe("Home のAI解説(手動ピック)", () => {
+  it("Prompt APIが利用可能な場合、発言をクリックすると解説が表示される", async () => {
+    vi.mocked(explainChatMessage).mockResolvedValue(sampleExplanation);
+    const user = userEvent.setup();
+    render(<Home />);
+    await connectAndReceiveMessage(user, "gg chat");
+
+    await user.click(screen.getByRole("button", { name: /gg chat/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText(sampleExplanation.translation)).toBeInTheDocument();
+    });
+    expect(screen.getByText(sampleExplanation.literal)).toBeInTheDocument();
+    expect(screen.getByText("gg")).toBeInTheDocument();
+    expect(explainChatMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      "gg chat",
+      expect.objectContaining({ priority: "high", signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("解説生成中はローディング表示になる", async () => {
+    let resolveExplain!: (value: ExplanationResult) => void;
+    vi.mocked(explainChatMessage).mockImplementation(
+      () => new Promise((resolve) => { resolveExplain = resolve; }),
+    );
+    const user = userEvent.setup();
+    render(<Home />);
+    await connectAndReceiveMessage(user, "gg chat");
+
+    await user.click(screen.getByRole("button", { name: /gg chat/ }));
+
+    expect(await screen.findByText(/解説を生成中/)).toBeInTheDocument();
+
+    resolveExplain(sampleExplanation);
+    await waitFor(() => {
+      expect(screen.getByText(sampleExplanation.translation)).toBeInTheDocument();
+    });
+  });
+
+  it("解説生成が失敗した場合はエラーメッセージを表示する", async () => {
+    vi.mocked(explainChatMessage).mockRejectedValue(new Error("Prompt APIの応答が不正でした"));
+    const user = userEvent.setup();
+    render(<Home />);
+    await connectAndReceiveMessage(user, "gg chat");
+
+    await user.click(screen.getByRole("button", { name: /gg chat/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Prompt APIの応答が不正でした")).toBeInTheDocument();
+    });
+  });
+
+  it("Prompt APIが利用できない場合はクリックしても解説を生成せず、理由を表示する", async () => {
+    vi.mocked(runBrowserDiagnosis).mockResolvedValue(notReadyDiagnosis);
+    const user = userEvent.setup();
+    render(<Home />);
+    await connectAndReceiveMessage(user, "gg chat");
+
+    await user.click(screen.getByRole("button", { name: /gg chat/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Prompt API/)).toBeInTheDocument();
+    });
+    expect(explainChatMessage).not.toHaveBeenCalled();
+  });
+
+  // ダイアログはモーダルのため、開いている間は背景の発言リストが inert(操作不可)になる。
+  // そのため「別の発言を選び直す」導線は、実際には一度ダイアログを閉じてから行われる。
+  // 閉じる操作(×ボタン/handleDialogOpenChange)が、進行中の解説ジョブを正しく中断することを検証する。
+  it("ダイアログを閉じると進行中の解説ジョブを中断し、閉じた後は別の発言を選び直せる", async () => {
+    let firstCallSignal: AbortSignal | undefined;
+    vi.mocked(explainChatMessage).mockImplementationOnce((_pool, _text, options) => {
+      firstCallSignal = options?.signal;
+      return new Promise(() => {}); // 永久に未解決(中断だけを検証するため)
+    });
+    vi.mocked(explainChatMessage).mockResolvedValueOnce(sampleExplanation);
+    const user = userEvent.setup();
+    render(<Home />);
+    await connectAndReceiveMessage(user, "first message");
+    capturedCallbacks?.onEvent({
+      type: "privmsg",
+      channel: "somechannel",
+      message: {
+        id: "msg-2",
+        channel: "somechannel",
+        userId: "222",
+        username: "arukeinn",
+        displayName: "arukeinn",
+        color: null,
+        text: "second message",
+        isAction: false,
+        emotes: [],
+        badges: [],
+        timestampMs: 1690000000001,
+      },
+    });
+    await screen.findByText("second message");
+
+    await user.click(screen.getByRole("button", { name: /first message/ }));
+    expect(await screen.findByText(/解説を生成中/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(firstCallSignal?.aborted).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: /second message/ }));
+    await waitFor(() => {
+      expect(screen.getByText(sampleExplanation.translation)).toBeInTheDocument();
+    });
   });
 });
