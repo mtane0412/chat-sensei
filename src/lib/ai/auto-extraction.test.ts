@@ -132,13 +132,65 @@ describe("createAutoExtractionPipeline", () => {
     const pool = createFakeSessionPool({ triageResult: true });
     const pipeline = createAutoExtractionPipeline({ sessionPool: pool, recentTextsBufferSize: 1 });
 
-    await pipeline.processMessage(buildMessage({ text: "first unique message here" }), baseOptions);
-    await pipeline.processMessage(buildMessage({ text: "second unique message here" }), baseOptions);
+    await pipeline.processMessage(buildMessage({ id: "msg-a", text: "first unique message here" }), baseOptions);
+    await pipeline.processMessage(buildMessage({ id: "msg-b", text: "second unique message here" }), baseOptions);
     // バッファ長1のため、この時点で記憶されているのは直前の"second..."のみで、
     // "first..."の重複は検出されない(=フィルタを通過し、triage→explainが呼ばれる)
-    await pipeline.processMessage(buildMessage({ text: "first unique message here" }), baseOptions);
+    // (idは別発言であることを表すためmsg-aとは変えている)
+    await pipeline.processMessage(buildMessage({ id: "msg-c", text: "first unique message here" }), baseOptions);
 
     expect(pool.enqueue).toHaveBeenCalledTimes(6); // 3発言 × (triage + explain)
+  });
+
+  it("同一message.idの発言が再度渡された場合は二重処理とみなされ、triageすら呼ばれず候補も増えない", async () => {
+    // 画面再マウント等でリスナーが二重登録された場合など、同じ発言が2回processMessageに
+    // 渡されてしまうケースを想定する(irc-client側は同一privmsgに同じidを振る)。
+    const explanationJson = JSON.stringify({
+      translation: "そのプレー土壇場だったね",
+      literal: "それは土壇場のプレーだった",
+      items: [{ term: "clutch", kind: "word", meaning: "土壇場での見事なプレー", note: "対戦ゲームでよく使われる" }],
+      difficulty: 2,
+    });
+    const pool = createFakeSessionPool({ triageResult: true, explanationJson });
+    const pipeline = createAutoExtractionPipeline({ sessionPool: pool });
+    const message = buildMessage({ id: "msg-clutch-play", text: "that was such a clutch play honestly" });
+
+    await pipeline.processMessage(message, baseOptions);
+    await pipeline.processMessage(message, baseOptions);
+
+    // 1回目はtriage→explainで2回、2回目は同一idのため除去され呼ばれない
+    expect(pool.enqueue).toHaveBeenCalledTimes(2);
+    expect(await db.candidates.count()).toBe(1);
+  });
+
+  it("message.idがnullの発言は重複チェックの対象外となり、同じ内容の発言が続いても毎回triage/explainが呼ばれる", async () => {
+    // TwitchChatMessage.id は id タグを取得できなかった場合 null になりうる(irc-parser.ts参照)。
+    // null同士を誤って同一発言とみなしてしまうと、idを取得できない発言が2件目以降
+    // 一切処理されなくなってしまうため、その回帰を防ぐ。
+    const pool = createFakeSessionPool({ triageResult: true });
+    const pipeline = createAutoExtractionPipeline({ sessionPool: pool, recentTextsBufferSize: 1 });
+    const messageA = buildMessage({ id: null, text: "first message without an id here" });
+    const messageB = buildMessage({ id: null, text: "second totally different message here" });
+
+    await pipeline.processMessage(messageA, baseOptions);
+    await pipeline.processMessage(messageB, baseOptions); // 本文重複判定バッファ(サイズ1)からmessageAの本文を押し出す
+    await pipeline.processMessage(messageA, baseOptions); // idがnullのため重複チェックにかからず通過する
+
+    expect(pool.enqueue).toHaveBeenCalledTimes(6); // 3発言 × (triage + explain)
+  });
+
+  it("直近テキストの重複判定バッファが溢れて本文重複が検出できない場合でも、同一message.idの発言は二重処理から除去される", async () => {
+    const pool = createFakeSessionPool({ triageResult: true });
+    const pipeline = createAutoExtractionPipeline({ sessionPool: pool, recentTextsBufferSize: 1 });
+    const message = buildMessage({ id: "msg-original", text: "first duplicate-prone message here" });
+    const otherMessage = buildMessage({ id: "msg-other", text: "second totally different message here" });
+
+    await pipeline.processMessage(message, baseOptions);
+    await pipeline.processMessage(otherMessage, baseOptions); // 本文重複判定バッファ(サイズ1)からmessageの本文を押し出す
+    await pipeline.processMessage(message, baseOptions); // 本文重複チェックは効かないはずだが、id重複チェックで除去される
+
+    // message: triage+explain(2) / otherMessage: triage+explain(2) / messageの再送: 除去され0
+    expect(pool.enqueue).toHaveBeenCalledTimes(4);
   });
 
   it("中断済みのsignalを渡した場合はエラーになり、候補は保存されない", async () => {
