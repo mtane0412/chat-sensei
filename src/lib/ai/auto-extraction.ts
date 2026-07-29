@@ -12,6 +12,11 @@
  * 受け取って共有する(design: 単一セッション + 優先度付き直列キュー)。
  * 直近の重複判定用のリングバッファは内部状態として保持するため、
  * 接続中のチャンネルにつき1つのインスタンスを使い回す想定。
+ *
+ * 画面再マウント時のリスナー多重登録など、呼び出し側の事情で同一の発言が
+ * 複数回 `processMessage` に渡されるケースへの防御として、直近に処理した
+ * `message.id` のリングバッファも別途保持し、本文の重複判定(recentTexts)とは
+ * 独立に二重処理を防ぐ。
  */
 import { evaluateAutoExtractionCandidate, type AutoExtractionStrictness } from "../twitch/message-filter";
 import type { TwitchChatMessage } from "../twitch/irc-parser";
@@ -21,8 +26,14 @@ import { triageChatMessage } from "./triage";
 import type { SessionPool } from "./session-pool";
 import type { SupportedLanguage } from "./prompts";
 
-/** 直近の重複判定に使うリングバッファの既定保持件数 */
+/** 直近の重複判定に使うリングバッファの既定保持件数(本文用) */
 const DEFAULT_RECENT_TEXTS_BUFFER_SIZE = 50;
+/**
+ * 直近に処理した message.id を覚えておくリングバッファの保持件数。
+ * 本文の重複判定バッファ(recentTextsBufferSize)とは独立した固定値とする
+ * (本文用バッファを短く設定していても、id重複防止は機能させたいため)。
+ */
+const PROCESSED_MESSAGE_ID_BUFFER_SIZE = 50;
 
 export interface AutoExtractionPipelineDeps {
   /** 手動ピックと共有する SessionPool(単一セッションの優先度付き直列キュー) */
@@ -47,6 +58,8 @@ export interface AutoExtractionPipeline {
 export function createAutoExtractionPipeline(deps: AutoExtractionPipelineDeps): AutoExtractionPipeline {
   const bufferSize = deps.recentTextsBufferSize ?? DEFAULT_RECENT_TEXTS_BUFFER_SIZE;
   const recentTexts: string[] = [];
+  const processedMessageIds: string[] = [];
+  const processedMessageIdSet = new Set<string>();
 
   function rememberText(text: string): void {
     recentTexts.push(text);
@@ -55,8 +68,28 @@ export function createAutoExtractionPipeline(deps: AutoExtractionPipelineDeps): 
     }
   }
 
+  function rememberMessageId(id: string): void {
+    processedMessageIdSet.add(id);
+    processedMessageIds.push(id);
+    if (processedMessageIds.length > PROCESSED_MESSAGE_ID_BUFFER_SIZE) {
+      const oldestId = processedMessageIds.shift();
+      if (oldestId !== undefined) {
+        processedMessageIdSet.delete(oldestId);
+      }
+    }
+  }
+
   return {
     async processMessage(message, options) {
+      // id は取得できない場合 null になりうる(irc-parser.ts参照)。
+      // null 同士を誤って同一発言とみなさないよう、id がある場合のみ重複チェックの対象にする。
+      if (message.id !== null) {
+        if (processedMessageIdSet.has(message.id)) {
+          return;
+        }
+        rememberMessageId(message.id);
+      }
+
       const rejection = evaluateAutoExtractionCandidate(message, {
         strictness: options.strictness,
         recentTexts,
