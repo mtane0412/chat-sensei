@@ -79,6 +79,34 @@ export interface Review {
 }
 
 /**
+ * 自動抽出パイプライン(Phase 4)が生成した、レビュー待ちのカード候補。
+ * 誤判定を含みうるため `cards` へ直接保存せず、利用者が `/deck` のレビューUIで
+ * 採用(`cards`へ移動)/却下(削除)するまでここに留め置く。
+ * SRS状態(`srs`)は採用されて `Card` になった時点で初めて初期化するため、ここには持たない。
+ */
+export interface Candidate {
+  id?: number;
+  /** 元のチャット本文中に登場する語句・フレーズそのもの */
+  term: string;
+  kind: ExplanationItemKind;
+  /** 解説言語での意味 */
+  meaning: string;
+  /** 使われ方についての一言メモ */
+  note: string;
+  /** カード化の元になったチャット発言の全文 */
+  sourceMessageText: string;
+  sourceChannel: string;
+  sourceAuthor: string;
+  /** 学ぶ言語(生成時点の設定を保存する) */
+  targetLang: SupportedLanguage;
+  /** 解説言語(生成時点の設定を保存する) */
+  explainLang: SupportedLanguage;
+  tags: string[];
+  /** 生成日時(epoch ms) */
+  createdAt: number;
+}
+
+/**
  * chat-sensei の Dexie データベース。
  *
  * テスト(fake-indexeddb)ではテストごとに異なる `name` を渡すことで、
@@ -88,6 +116,7 @@ export class ChatSenseiDatabase extends Dexie {
   messages!: Table<StoredMessage, number>;
   cards!: Table<Card, number>;
   reviews!: Table<Review, number>;
+  candidates!: Table<Candidate, number>;
 
   constructor(name = "chat-sensei") {
     super(name);
@@ -95,6 +124,14 @@ export class ChatSenseiDatabase extends Dexie {
       messages: "++id, channel, timestampMs",
       cards: "++id, term, kind, createdAt, *tags",
       reviews: "++id, cardId, reviewedAt",
+    });
+    // Phase 4: 自動抽出パイプラインのレビュー待ちカード候補を保存するテーブルを追加する。
+    // 既存ユーザーのデータを保持したまま移行できるよう、version(1)は変更せず新バージョンを積む。
+    this.version(2).stores({
+      messages: "++id, channel, timestampMs",
+      cards: "++id, term, kind, createdAt, *tags",
+      reviews: "++id, cardId, reviewedAt",
+      candidates: "++id, term, kind, createdAt",
     });
   }
 }

@@ -17,7 +17,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { deleteCard, exportCardsToJson, listCards, searchCards } from "@/lib/db/cards";
-import type { Card as DeckCard } from "@/lib/db/schema";
+import { acceptCandidate, listCandidates, rejectCandidate } from "@/lib/db/candidates";
+import type { Card as DeckCard, Candidate } from "@/lib/db/schema";
 
 export default function DeckPage() {
   const [cards, setCards] = useState<DeckCard[]>([]);
@@ -63,6 +64,38 @@ export default function DeckPage() {
     URL.revokeObjectURL(url);
   }, [cards]);
 
+  // --- 自動抽出の候補レビュー(採用/却下) ---
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [isLoadingCandidates, setIsLoadingCandidates] = useState(true);
+
+  const refreshCandidates = useCallback(() => {
+    listCandidates().then((result) => {
+      setCandidates(result);
+      setIsLoadingCandidates(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    refreshCandidates();
+  }, [refreshCandidates]);
+
+  const handleAcceptCandidate = useCallback(
+    (id: number) => {
+      acceptCandidate(id).then(() => {
+        refresh(query);
+        refreshCandidates();
+      });
+    },
+    [query, refresh, refreshCandidates],
+  );
+
+  const handleRejectCandidate = useCallback(
+    (id: number) => {
+      rejectCandidate(id).then(() => refreshCandidates());
+    },
+    [refreshCandidates],
+  );
+
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-6">
       <Card>
@@ -85,6 +118,48 @@ export default function DeckPage() {
               </Button>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>自動抽出の候補</CardTitle>
+          <CardDescription>
+            AIが自動抽出した語句の候補です。採用すると単語帳に保存され、却下すると破棄されます。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {isLoadingCandidates && <p className="text-sm text-muted-foreground">読み込み中...</p>}
+
+          {!isLoadingCandidates && candidates.length === 0 && (
+            <p className="text-sm text-muted-foreground">候補はありません。</p>
+          )}
+
+          {!isLoadingCandidates && candidates.length > 0 && (
+            <ol className="flex flex-col gap-2">
+              {candidates.map((candidate) => (
+                <li key={candidate.id} className="rounded-md border p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">{candidate.term}</span>
+                      <Badge variant="secondary">{candidate.kind}</Badge>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button onClick={() => handleAcceptCandidate(candidate.id!)} size="sm" variant="outline">
+                        採用
+                      </Button>
+                      <Button onClick={() => handleRejectCandidate(candidate.id!)} size="sm" variant="ghost">
+                        却下
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground">{candidate.meaning}</p>
+                  {candidate.note && <p className="text-xs text-muted-foreground">{candidate.note}</p>}
+                  <p className="mt-1 text-xs text-muted-foreground italic">「{candidate.sourceMessageText}」</p>
+                </li>
+              ))}
+            </ol>
+          )}
         </CardContent>
       </Card>
 

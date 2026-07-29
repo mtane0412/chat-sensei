@@ -16,15 +16,19 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
 import { describeDiagnosis, type DiagnosisMessage } from "@/lib/ai/describeDiagnosis";
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from "@/lib/ai/prompts";
+import { AUTO_EXTRACTION_STRICTNESS_LEVELS, type AutoExtractionStrictness } from "@/lib/twitch/message-filter";
 import {
+  AUTO_EXTRACTION_STRICTNESS_DISPLAY_NAMES,
   DEFAULT_SETTINGS,
   LANGUAGE_DISPLAY_NAMES,
   loadSettings,
   saveSettings,
   settingsSchema,
+  type Settings,
 } from "@/lib/settings";
 
 type DiagnosisState =
@@ -80,9 +84,7 @@ export default function SettingsPage() {
     fetchDiagnosis();
   }, [fetchDiagnosis]);
 
-  const [languagePair, setLanguagePair] = useState<{ targetLang: SupportedLanguage; explainLang: SupportedLanguage }>(
-    DEFAULT_SETTINGS,
-  );
+  const [settingsForm, setSettingsForm] = useState<Settings>(DEFAULT_SETTINGS);
   const [wasCorrupted, setWasCorrupted] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
@@ -94,14 +96,14 @@ export default function SettingsPage() {
   useEffect(() => {
     Promise.resolve().then(() => {
       const result = loadSettings();
-      setLanguagePair(result.settings);
+      setSettingsForm(result.settings);
       setWasCorrupted(result.wasCorrupted);
     });
   }, []);
 
-  const handleSaveLanguagePair = useCallback(() => {
+  const handleSaveSettings = useCallback(() => {
     setSavedNotice(false);
-    const validation = settingsSchema.safeParse(languagePair);
+    const validation = settingsSchema.safeParse(settingsForm);
     if (!validation.success) {
       setSaveError(validation.error.issues[0]?.message ?? "設定が不正です");
       return;
@@ -109,7 +111,7 @@ export default function SettingsPage() {
     saveSettings(validation.data);
     setSaveError(null);
     setSavedNotice(true);
-  }, [languagePair]);
+  }, [settingsForm]);
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-6">
@@ -175,9 +177,9 @@ export default function SettingsPage() {
             <select
               id="target-lang-select"
               className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm dark:bg-input/30"
-              value={languagePair.targetLang}
+              value={settingsForm.targetLang}
               onChange={(e) =>
-                setLanguagePair((prev) => ({ ...prev, targetLang: e.target.value as SupportedLanguage }))
+                setSettingsForm((prev) => ({ ...prev, targetLang: e.target.value as SupportedLanguage }))
               }
             >
               {SUPPORTED_LANGUAGES.map((lang) => (
@@ -193,14 +195,62 @@ export default function SettingsPage() {
             <select
               id="explain-lang-select"
               className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm dark:bg-input/30"
-              value={languagePair.explainLang}
+              value={settingsForm.explainLang}
               onChange={(e) =>
-                setLanguagePair((prev) => ({ ...prev, explainLang: e.target.value as SupportedLanguage }))
+                setSettingsForm((prev) => ({ ...prev, explainLang: e.target.value as SupportedLanguage }))
               }
             >
               {SUPPORTED_LANGUAGES.map((lang) => (
                 <option key={lang} value={lang}>
                   {LANGUAGE_DISPLAY_NAMES[lang]}
+                </option>
+              ))}
+            </select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>自動抽出</CardTitle>
+          <CardDescription>
+            チャットを眺めているだけで、学習価値の高い発言をAIが自動で見つけ、単語帳の候補として貯めます。
+            候補は /deck でレビューして採用/却下してください(判定にもGemini
+            Nanoを使うため、手動ピックより低い優先度で処理されます)。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="auto-extraction-enabled-switch">自動抽出を有効にする</Label>
+            <Switch
+              id="auto-extraction-enabled-switch"
+              checked={settingsForm.autoExtraction.enabled}
+              onCheckedChange={(enabled) =>
+                setSettingsForm((prev) => ({ ...prev, autoExtraction: { ...prev.autoExtraction, enabled } }))
+              }
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="auto-extraction-strictness-select">フィルタの厳しさ</Label>
+            <select
+              id="auto-extraction-strictness-select"
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm dark:bg-input/30"
+              value={settingsForm.autoExtraction.strictness}
+              disabled={!settingsForm.autoExtraction.enabled}
+              onChange={(e) =>
+                setSettingsForm((prev) => ({
+                  ...prev,
+                  autoExtraction: {
+                    ...prev.autoExtraction,
+                    strictness: e.target.value as AutoExtractionStrictness,
+                  },
+                }))
+              }
+            >
+              {AUTO_EXTRACTION_STRICTNESS_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {AUTO_EXTRACTION_STRICTNESS_DISPLAY_NAMES[level]}
                 </option>
               ))}
             </select>
@@ -220,7 +270,7 @@ export default function SettingsPage() {
             </Alert>
           )}
 
-          <Button onClick={handleSaveLanguagePair} className="self-start">
+          <Button onClick={handleSaveSettings} className="self-start">
             保存する
           </Button>
         </CardContent>
