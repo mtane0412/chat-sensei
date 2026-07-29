@@ -29,8 +29,9 @@ import { describeDiagnosis } from "@/lib/ai/describeDiagnosis";
 import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
 import { createExplainBaseSessionFactory, explainChatMessage } from "@/lib/ai/explain";
 import { createSessionPool, type SessionPool } from "@/lib/ai/session-pool";
-import type { ExplanationResult } from "@/lib/ai/schemas";
+import type { ExplanationItem, ExplanationResult } from "@/lib/ai/schemas";
 import { loadSettings } from "@/lib/settings";
+import { createCard } from "@/lib/db/cards";
 
 /** チャットに表示する発言の最大保持件数(古いものから捨てるリングバッファ) */
 const MAX_DISPLAYED_MESSAGES = 300;
@@ -159,6 +160,23 @@ export default function Home() {
     }
   }, []);
 
+  // 解説内の語句をカード化(単語帳に保存)する。言語ペアはカード化時点の設定を保存する。
+  const handleSaveCard = useCallback(async (item: ExplanationItem, sourceMessage: TwitchChatMessage) => {
+    const { settings } = loadSettings();
+    await createCard({
+      term: item.term,
+      kind: item.kind,
+      meaning: item.meaning,
+      note: item.note,
+      sourceMessageText: sourceMessage.text,
+      sourceChannel: sourceMessage.channel,
+      sourceAuthor: sourceMessage.displayName,
+      targetLang: settings.targetLang,
+      explainLang: settings.explainLang,
+      tags: [],
+    });
+  }, []);
+
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-6">
       <Card>
@@ -234,14 +252,45 @@ export default function Home() {
             <p className="text-sm text-destructive">{dialogState.errorMessage}</p>
           )}
 
-          {dialogState.status === "success" && <ExplanationResultView result={dialogState.result} />}
+          {dialogState.status === "success" && (
+            <ExplanationResultView
+              result={dialogState.result}
+              sourceMessage={dialogState.sourceMessage}
+              onSaveCard={handleSaveCard}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>
   );
 }
 
-function ExplanationResultView({ result }: { result: ExplanationResult }) {
+function ExplanationResultView({
+  result,
+  sourceMessage,
+  onSaveCard,
+}: {
+  result: ExplanationResult;
+  sourceMessage: TwitchChatMessage;
+  onSaveCard: (item: ExplanationItem, sourceMessage: TwitchChatMessage) => Promise<void>;
+}) {
+  // 項目インデックスごとのカード化状態。保存開始と同時に"pending"にしてボタンを無効化し、
+  // 連打による重複保存を防ぐ(CodeRabbit指摘対応)。
+  const [cardStatuses, setCardStatuses] = useState<Record<number, "pending" | "saved" | "error">>({});
+
+  const handleSaveCardClick = useCallback(
+    async (item: ExplanationItem, index: number) => {
+      setCardStatuses((prev) => ({ ...prev, [index]: "pending" }));
+      try {
+        await onSaveCard(item, sourceMessage);
+        setCardStatuses((prev) => ({ ...prev, [index]: "saved" }));
+      } catch {
+        setCardStatuses((prev) => ({ ...prev, [index]: "error" }));
+      }
+    },
+    [onSaveCard, sourceMessage],
+  );
+
   return (
     <div className="flex flex-col gap-3 text-sm">
       <div>
@@ -255,16 +304,33 @@ function ExplanationResultView({ result }: { result: ExplanationResult }) {
       {result.items.length > 0 && (
         <div className="flex flex-col gap-2">
           <p className="font-medium">注目ポイント</p>
-          {result.items.map((item, index) => (
-            <div key={index} className="rounded-md border p-2">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold">{item.term}</span>
-                <Badge variant="secondary">{item.kind}</Badge>
+          {result.items.map((item, index) => {
+            const status = cardStatuses[index];
+            return (
+              <div key={index} className="rounded-md border p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold">{item.term}</span>
+                    <Badge variant="secondary">{item.kind}</Badge>
+                  </div>
+                  <Button
+                    onClick={() => handleSaveCardClick(item, index)}
+                    disabled={status === "pending" || status === "saved"}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {status === "saved" && "保存済み"}
+                    {status === "pending" && "保存中..."}
+                    {status === "error" && "再試行"}
+                    {status === undefined && "カード化"}
+                  </Button>
+                </div>
+                <p className="text-muted-foreground">{item.meaning}</p>
+                <p className="text-xs text-muted-foreground">{item.note}</p>
+                {status === "error" && <p className="text-xs text-destructive">カードの保存に失敗しました</p>}
               </div>
-              <p className="text-muted-foreground">{item.meaning}</p>
-              <p className="text-xs text-muted-foreground">{item.note}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

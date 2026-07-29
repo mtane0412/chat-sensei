@@ -21,4 +21,11 @@ describe("SiteHeader", () => {
     const settingsLink = screen.getByRole("link", { name: "設定" });
     expect(settingsLink).toHaveAttribute("href", "/settings");
   });
+
+  it("単語帳ページ(/deck)へのリンクを表示する", () => {
+    render(<SiteHeader />);
+
+    const deckLink = screen.getByRole("link", { name: "単語帳" });
+    expect(deckLink).toHaveAttribute("href", "/deck");
+  });
 });
