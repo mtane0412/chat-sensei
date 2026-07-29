@@ -248,6 +248,27 @@ describe("Home の配信embed(Twitch埋め込みプレイヤー)", () => {
 
     expect(screen.queryByTitle(/Twitch配信プレイヤー/)).not.toBeInTheDocument();
   });
+
+  // 本来の不具合: 発言クリックで開く解説パネルが中央モーダル(modal既定=true)実装だったため、
+  // base-ui Dialogがパネル外の要素すべてに inert/aria-hidden="true" を付与し、
+  // その配下にある配信embedのiframeがブラウザからバックグラウンドタブ相当に扱われ再生が止まっていた。
+  // 解説パネルを非モーダル化した後は、開いていても配信embedがinert化されず再生が止まらないことを検証する。
+  it("発言をクリックして解説パネルを開いても、配信embedのiframeはinert化されない(再生が止まらない)", async () => {
+    vi.mocked(explainChatMessage).mockResolvedValue(sampleExplanation);
+    const user = userEvent.setup();
+    render(<Home />);
+    await connectAndReceiveMessage(user, "gg chat");
+    const iframe = await screen.findByTitle("Twitch配信プレイヤー: somechannel");
+
+    await user.click(screen.getByRole("button", { name: /gg chat/ }));
+    await waitFor(() => {
+      expect(screen.getByText(sampleExplanation.translation)).toBeInTheDocument();
+    });
+
+    expect(iframe).not.toHaveAttribute("inert");
+    expect(iframe.closest("[inert]")).toBeNull();
+    expect(iframe.closest('[aria-hidden="true"]')).toBeNull();
+  });
 });
 
 describe("Home のAI解説(手動ピック)", () => {
@@ -349,10 +370,8 @@ describe("Home のAI解説(手動ピック)", () => {
     expect(explainChatMessage).not.toHaveBeenCalled();
   });
 
-  // ダイアログはモーダルのため、開いている間は背景の発言リストが inert(操作不可)になる。
-  // そのため「別の発言を選び直す」導線は、実際には一度ダイアログを閉じてから行われる。
   // 閉じる操作(×ボタン/handleDialogOpenChange)が、進行中の解説ジョブを正しく中断することを検証する。
-  it("ダイアログを閉じると進行中の解説ジョブを中断し、閉じた後は別の発言を選び直せる", async () => {
+  it("パネルを閉じると進行中の解説ジョブを中断し、閉じた後は別の発言を選び直せる", async () => {
     let firstCallSignal: AbortSignal | undefined;
     vi.mocked(explainChatMessage).mockImplementationOnce((_pool, _text, options) => {
       firstCallSignal = options?.signal;
@@ -388,6 +407,49 @@ describe("Home のAI解説(手動ピック)", () => {
     expect(firstCallSignal?.aborted).toBe(true);
 
     await user.click(screen.getByRole("button", { name: /second message/ }));
+    await waitFor(() => {
+      expect(screen.getByText(sampleExplanation.translation)).toBeInTheDocument();
+    });
+  });
+
+  // 解説パネルは非モーダル(サイド展開)のため、開いたまま背景の発言リストを操作できる。
+  // パネルを閉じずに別の発言をクリックした場合も、進行中のジョブを中断して新しい発言の解説に切り替わることを検証する。
+  it("パネルを閉じずに別の発言をクリックすると、進行中の解説ジョブを中断して新しい発言の解説に切り替わる", async () => {
+    let firstCallSignal: AbortSignal | undefined;
+    vi.mocked(explainChatMessage).mockImplementationOnce((_pool, _text, options) => {
+      firstCallSignal = options?.signal;
+      return new Promise(() => {}); // 永久に未解決(中断だけを検証するため)
+    });
+    vi.mocked(explainChatMessage).mockResolvedValueOnce(sampleExplanation);
+    const user = userEvent.setup();
+    render(<Home />);
+    await connectAndReceiveMessage(user, "first message");
+    capturedCallbacks?.onEvent({
+      type: "privmsg",
+      channel: "somechannel",
+      message: {
+        id: "msg-2",
+        channel: "somechannel",
+        userId: "222",
+        username: "arukeinn",
+        displayName: "arukeinn",
+        color: null,
+        text: "second message",
+        isAction: false,
+        emotes: [],
+        badges: [],
+        timestampMs: 1690000000001,
+      },
+    });
+    await screen.findByText("second message");
+
+    await user.click(screen.getByRole("button", { name: /first message/ }));
+    expect(await screen.findByText(/解説を生成中/)).toBeInTheDocument();
+
+    // パネルを閉じずに、そのまま別の発言をクリックする
+    await user.click(screen.getByRole("button", { name: /second message/ }));
+
+    expect(firstCallSignal?.aborted).toBe(true);
     await waitFor(() => {
       expect(screen.getByText(sampleExplanation.translation)).toBeInTheDocument();
     });

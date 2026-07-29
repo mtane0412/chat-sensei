@@ -21,6 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments } from "@/lib/twitch/emotes";
@@ -209,64 +210,86 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>chat-sensei</CardTitle>
-          <CardDescription>
-            Twitch のチャンネル名を入力してライブチャットに接続します(ログイン不要)。発言をクリックするとAI解説が表示されます。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="channel-input">チャンネル名</Label>
-            <div className="flex gap-2">
-              <Input
-                id="channel-input"
-                placeholder="例: zackrawrr"
-                value={channelInput}
-                onChange={(e) => setChannelInput(e.target.value)}
-                disabled={connected}
-              />
-              {connected ? (
-                <Button onClick={handleDisconnect} variant="outline">
-                  切断する
-                </Button>
-              ) : (
-                <Button onClick={handleConnect} disabled={channelInput.trim().length === 0}>
-                  接続する
-                </Button>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground" role="status">
-              状態: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {channel && (
-        <Card className="overflow-hidden p-0">
-          <TwitchEmbedPlayer channel={channel} />
-        </Card>
+    <div
+      className={cn(
+        "flex w-full flex-1 justify-center transition-[padding] duration-150",
+        // 解説パネル(幅24rem = max-w-sm、下記Dialogのwidth指定と合わせる)が画面右に固定表示される間、
+        // この外側コンテナに右パディングを付け、中央寄せの基準を左へ寄せる。本文ボックス(max-w-3xl)
+        // 自体の幅はここでは変えないため、余白に十分な広さがあるビューポートでは本文が不必要に
+        // 圧縮されず、パネルの手前まで実寸で表示される(幅が足りない場合のみ w-full により自然に縮む)。
+        // 狭い画面(md未満)ではパネルが画面全幅のオーバーレイになるため、余白確保は不要。
+        dialogState.status !== "idle" && "md:pr-96",
       )}
+    >
+      <div className="flex w-full max-w-3xl flex-col gap-4 p-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>chat-sensei</CardTitle>
+            <CardDescription>
+              Twitch のチャンネル名を入力してライブチャットに接続します(ログイン不要)。発言をクリックするとAI解説が表示されます。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="channel-input">チャンネル名</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="channel-input"
+                  placeholder="例: zackrawrr"
+                  value={channelInput}
+                  onChange={(e) => setChannelInput(e.target.value)}
+                  disabled={connected}
+                />
+                {connected ? (
+                  <Button onClick={handleDisconnect} variant="outline">
+                    切断する
+                  </Button>
+                ) : (
+                  <Button onClick={handleConnect} disabled={channelInput.trim().length === 0}>
+                    接続する
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground" role="status">
+                状態: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
-      <Card className="flex flex-1 flex-col overflow-hidden">
-        <ScrollArea className="h-[60vh]">
-          <ol className="flex flex-col gap-1 p-4">
-            {messages.map((message) => (
-              <ChatMessageRow
-                key={message.id ?? `${message.username}-${message.timestampMs}`}
-                message={message}
-                onSelect={handleMessageClick}
-              />
-            ))}
-          </ol>
-        </ScrollArea>
-      </Card>
+        {channel && (
+          <Card className="overflow-hidden p-0">
+            <TwitchEmbedPlayer channel={channel} />
+          </Card>
+        )}
 
-      <Dialog open={dialogState.status !== "idle"} onOpenChange={handleDialogOpenChange}>
-        <DialogContent>
+        <Card className="flex flex-1 flex-col overflow-hidden">
+          <ScrollArea className="h-[60vh]">
+            <ol className="flex flex-col gap-1 p-4">
+              {messages.map((message) => (
+                <ChatMessageRow
+                  key={message.id ?? `${message.username}-${message.timestampMs}`}
+                  message={message}
+                  onSelect={handleMessageClick}
+                />
+              ))}
+            </ol>
+          </ScrollArea>
+        </Card>
+      </div>
+
+      {/*
+        解説パネルは非モーダル(modal=false)にする。base-ui Dialogはmodal時、
+        パネル外の要素(配信embedのiframeを含む)にinert/aria-hidden="true"を付与するため、
+        中央モーダルのままだとパネルを開くたびに配信embedの再生が止まってしまう。
+        非モーダル化に加え、中央オーバーレイではなく画面右側に固定表示するパネルUIへ変更することで、
+        パネルを開いたままプレイヤー・チャットログの両方を操作できるようにする。
+      */}
+      <Dialog open={dialogState.status !== "idle"} onOpenChange={handleDialogOpenChange} modal={false}>
+        <DialogContent
+          showOverlay={false}
+          className="inset-y-0 right-0 left-auto h-dvh w-full max-w-none sm:max-w-full md:max-w-sm translate-x-0 translate-y-0 grid-rows-[auto_1fr] gap-4 overflow-y-auto rounded-none rounded-l-xl border-l shadow-lg data-open:slide-in-from-right data-closed:slide-out-to-right"
+        >
           <DialogHeader>
             <DialogTitle>チャット解説</DialogTitle>
             {dialogState.status !== "idle" && (
