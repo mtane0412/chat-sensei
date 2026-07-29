@@ -29,6 +29,8 @@ vi.mock("@/lib/twitch/irc-client", () => ({
       getState: () => "idle",
     };
   }),
+  // 実装(irc-client.ts)と同じ正規化ロジックをテストでも使う(チャンネル名の小文字化・#除去)
+  normalizeChannelName: (channel: string) => channel.replace(/^#/, "").toLowerCase(),
 }));
 
 import { resetChatConnectionStoreForTests, subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
@@ -82,6 +84,20 @@ describe("useChatConnectionStore", () => {
     useChatConnectionStore.getState().disconnect();
 
     expect(mockDisconnect).toHaveBeenCalled();
+  });
+
+  it("connect()を呼ぶと、配信embed用に正規化(小文字化)したチャンネル名がchannelに保持される", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    expect(useChatConnectionStore.getState().channel).toBe("zackrawrr");
+  });
+
+  it("disconnect()を呼ぶと、channelがnullに戻る", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    useChatConnectionStore.getState().disconnect();
+
+    expect(useChatConnectionStore.getState().channel).toBeNull();
   });
 
   it("クライアントからonStateChangeが通知されると、connectionStateが更新される", () => {
