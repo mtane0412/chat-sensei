@@ -99,3 +99,9 @@ export function saveSettings(settings: Settings): void {
   const validated = settingsSchema.parse(settings);
   window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(validated));
 }
+
+/** 保存されている設定を LocalStorage から削除する。以後 `loadSettings` はデフォルト設定を返す */
+export function clearSettings(): void {
+  ensureBrowserEnvironment();
+  window.localStorage.removeItem(SETTINGS_STORAGE_KEY);
+}
