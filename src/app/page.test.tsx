@@ -3,7 +3,9 @@
  *
  * Phase 1 の主要導線である「チャンネル名を入力して接続する → 受信した発言が
  * 表示名・色・emote付きで表示される → 切断する」という流れに加え、
- * Phase 2 の主要導線である「発言をクリックするとAI解説が表示される」を検証する。
+ * Phase 2 の主要導線である「発言をクリックするとAI解説が表示される」、
+ * Phase 5 の主要導線である「自動抽出候補がチャット横のパネルにリアルタイムで
+ * 蓄積され、採用/却下できる」を検証する。
  * 実際のWebSocket通信・Prompt API呼び出しは行わず、`createTwitchIrcClient` /
  * `runBrowserDiagnosis` / `explainChatMessage` をモックしてシミュレートする。
  */
@@ -15,6 +17,7 @@ import type { TwitchIrcClientCallbacks } from "@/lib/twitch/irc-client";
 import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
 import type { ExplanationResult } from "@/lib/ai/schemas";
 import { db } from "@/lib/db/schema";
+import { createCandidate } from "@/lib/db/candidates";
 
 const mockConnect = vi.fn();
 const mockDisconnect = vi.fn();
@@ -89,6 +92,7 @@ beforeEach(async () => {
   vi.mocked(createAutoExtractionPipeline).mockReturnValue({ processMessage: vi.fn().mockResolvedValue(undefined) });
   // 前のテストの失敗等でカードが残っていても、各テストが空の状態から始まるようにする
   await db.cards.clear();
+  await db.candidates.clear();
   // チャット接続ストアはページ遷移をまたいで状態を保持するモジュールスコープの
   // シングルトンであり、テスト間でも共有されてしまうため、毎回未接続状態に戻す
   resetChatConnectionStoreForTests();
@@ -104,6 +108,7 @@ afterEach(async () => {
   vi.mocked(createAutoExtractionPipeline).mockReset();
   window.localStorage.clear();
   await db.cards.clear();
+  await db.candidates.clear();
 });
 
 /** 接続 → open状態 → 指定メッセージを1件受信、までの共通セットアップ */
@@ -535,6 +540,74 @@ describe("Home の自動抽出(バックグラウンド)", () => {
     await user.click(await screen.findByRole("button", { name: "切断する" }));
 
     expect(capturedSignal?.aborted).toBe(true);
+  });
+});
+
+describe("Home の自動抽出候補パネル", () => {
+  /** テスト用の候補データ(意味の分かる日本語文字列を使用) */
+  function buildCandidateInput(overrides: Partial<Parameters<typeof createCandidate>[0]> = {}) {
+    return {
+      term: "clutch",
+      kind: "word" as const,
+      meaning: "土壇場での見事なプレー",
+      note: "対戦ゲームの実況・チャットでよく使われる",
+      sourceMessageText: "that was such a clutch play honestly",
+      sourceChannel: "somechannel",
+      sourceAuthor: "yamada_taro",
+      targetLang: "en" as const,
+      explainLang: "ja" as const,
+      tags: [],
+      ...overrides,
+    };
+  }
+
+  it("候補がない場合はチャット横のパネルを表示しない", () => {
+    render(<Home />);
+
+    expect(screen.queryByText("自動抽出候補")).not.toBeInTheDocument();
+  });
+
+  it("候補が生成されると、チャット横のパネルにリアルタイムで表示される", async () => {
+    render(<Home />);
+
+    await createCandidate(buildCandidateInput());
+
+    expect(await screen.findByText("自動抽出候補")).toBeInTheDocument();
+    expect(screen.getByText("clutch")).toBeInTheDocument();
+    expect(screen.getByText("土壇場での見事なプレー")).toBeInTheDocument();
+  });
+
+  it("採用ボタンを押すと候補が単語帳に保存され、パネルから消える", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+    await createCandidate(buildCandidateInput({ term: "GG", meaning: "good game(お疲れ様)の略語" }));
+    await screen.findByText("GG");
+
+    await user.click(screen.getByRole("button", { name: "採用" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("自動抽出候補")).not.toBeInTheDocument();
+    });
+    const storedCards = await db.cards.toArray();
+    expect(storedCards).toHaveLength(1);
+    expect(storedCards[0].term).toBe("GG");
+    expect(await db.candidates.count()).toBe(0);
+  });
+
+  it("却下ボタンを押すと候補が削除され、パネルから消える(単語帳には保存されない)", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+    await createCandidate(buildCandidateInput());
+    await screen.findByText("clutch");
+
+    await user.click(screen.getByRole("button", { name: "却下" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("自動抽出候補")).not.toBeInTheDocument();
+    });
+    const storedCards = await db.cards.toArray();
+    expect(storedCards).toHaveLength(0);
+    expect(await db.candidates.count()).toBe(0);
   });
 });
 

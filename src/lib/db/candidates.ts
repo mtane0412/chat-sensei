@@ -6,6 +6,7 @@
  * 貯め、利用者が `/deck` のレビューUIで採用/却下してから初めて単語帳(`cards`)に入る。
  * 採用時のSRS初期化ロジックは `cards.ts` の `createCard` をそのまま再利用し、重複させない。
  */
+import { liveQuery } from "dexie";
 import type { Card, Candidate } from "./schema";
 import { db } from "./schema";
 import { createCard } from "./cards";
@@ -57,4 +58,21 @@ export async function acceptCandidate(id: number): Promise<Card> {
 /** 候補を却下する: 単語帳には保存せず削除する */
 export async function rejectCandidate(id: number): Promise<void> {
   await db.candidates.delete(id);
+}
+
+/**
+ * 候補テーブルの変更をリアルタイムに購読する。
+ * 自動抽出パイプラインが候補を追加した瞬間や、採用/却下で候補が減った瞬間に
+ * `onData` が最新の一覧(作成日時が古い順=レビューすべき順)で呼ばれる。
+ * 返り値の関数を呼ぶと購読を解除する。
+ */
+export function subscribeToCandidates(
+  onData: (candidates: Candidate[]) => void,
+  onError?: (error: unknown) => void,
+): () => void {
+  const subscription = liveQuery(() => db.candidates.orderBy("createdAt").toArray()).subscribe({
+    next: onData,
+    error: (error: unknown) => onError?.(error),
+  });
+  return () => subscription.unsubscribe();
 }
