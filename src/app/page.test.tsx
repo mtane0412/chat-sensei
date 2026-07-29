@@ -40,8 +40,14 @@ vi.mock("@/lib/ai/explain", async () => {
   return { ...actual, explainChatMessage: vi.fn() };
 });
 
+vi.mock("@/lib/ai/auto-extraction", () => ({
+  createAutoExtractionPipeline: vi.fn(),
+}));
+
 import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
 import { explainChatMessage } from "@/lib/ai/explain";
+import { createAutoExtractionPipeline } from "@/lib/ai/auto-extraction";
+import { saveSettings } from "@/lib/settings";
 
 /** 全項目利用可能な基準診断結果 */
 const readyDiagnosis: EnvironmentDiagnosis = {
@@ -71,6 +77,8 @@ const sampleExplanation: ExplanationResult = {
 
 beforeEach(async () => {
   vi.mocked(runBrowserDiagnosis).mockResolvedValue(readyDiagnosis);
+  // 自動抽出は既定でモック化し、明示的にテストしないケースでは何もしないダミーを返す
+  vi.mocked(createAutoExtractionPipeline).mockReturnValue({ processMessage: vi.fn().mockResolvedValue(undefined) });
   // 前のテストの失敗等でカードが残っていても、各テストが空の状態から始まるようにする
   await db.cards.clear();
 });
@@ -81,6 +89,8 @@ afterEach(async () => {
   capturedCallbacks = null;
   vi.mocked(runBrowserDiagnosis).mockReset();
   vi.mocked(explainChatMessage).mockReset();
+  vi.mocked(createAutoExtractionPipeline).mockReset();
+  window.localStorage.clear();
   await db.cards.clear();
 });
 
@@ -335,5 +345,87 @@ describe("Home のAI解説(手動ピック)", () => {
     await waitFor(() => {
       expect(screen.getByText(sampleExplanation.translation)).toBeInTheDocument();
     });
+  });
+});
+
+describe("Home の自動抽出(バックグラウンド)", () => {
+  it("自動抽出が無効(デフォルト設定)の場合、発言を受信してもパイプラインを呼ばない", async () => {
+    const processMessage = vi.fn();
+    vi.mocked(createAutoExtractionPipeline).mockReturnValue({ processMessage });
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await connectAndReceiveMessage(user, "that was such a clutch play honestly");
+
+    expect(processMessage).not.toHaveBeenCalled();
+  });
+
+  it("自動抽出が有効な場合、受信した発言と設定をパイプラインに渡す", async () => {
+    saveSettings({
+      targetLang: "en",
+      explainLang: "ja",
+      autoExtraction: { enabled: true, strictness: "strict" },
+    });
+    const processMessage = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(createAutoExtractionPipeline).mockReturnValue({ processMessage });
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await connectAndReceiveMessage(user, "that was such a clutch play honestly");
+
+    await waitFor(() => {
+      expect(processMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(processMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "that was such a clutch play honestly" }),
+      expect.objectContaining({
+        strictness: "strict",
+        targetLang: "en",
+        explainLang: "ja",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("Prompt APIが利用できない場合は、自動抽出が有効でもパイプラインを呼ばない", async () => {
+    vi.mocked(runBrowserDiagnosis).mockResolvedValue(notReadyDiagnosis);
+    saveSettings({
+      targetLang: "en",
+      explainLang: "ja",
+      autoExtraction: { enabled: true, strictness: "normal" },
+    });
+    const processMessage = vi.fn();
+    vi.mocked(createAutoExtractionPipeline).mockReturnValue({ processMessage });
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await connectAndReceiveMessage(user, "that was such a clutch play honestly");
+
+    expect(processMessage).not.toHaveBeenCalled();
+  });
+
+  it("切断すると、自動抽出に渡したAbortSignalを中断する", async () => {
+    saveSettings({
+      targetLang: "en",
+      explainLang: "ja",
+      autoExtraction: { enabled: true, strictness: "normal" },
+    });
+    let capturedSignal: AbortSignal | undefined;
+    const processMessage = vi.fn().mockImplementation((_message: unknown, options: { signal?: AbortSignal }) => {
+      capturedSignal = options.signal;
+      return new Promise(() => {}); // 中断だけを検証するため永久に未解決
+    });
+    vi.mocked(createAutoExtractionPipeline).mockReturnValue({ processMessage });
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await connectAndReceiveMessage(user, "that was such a clutch play honestly");
+    await waitFor(() => {
+      expect(capturedSignal).toBeDefined();
+    });
+
+    await user.click(await screen.findByRole("button", { name: "切断する" }));
+
+    expect(capturedSignal?.aborted).toBe(true);
   });
 });

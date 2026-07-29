@@ -6,7 +6,12 @@
  * 純関数を検証する。
  */
 import { describe, expect, it } from "vitest";
-import { buildExplainSystemPrompt, buildExplainUserPrompt, SUPPORTED_LANGUAGES } from "./prompts";
+import {
+  buildExplainSystemPrompt,
+  buildExplainUserPrompt,
+  buildTriageUserPrompt,
+  SUPPORTED_LANGUAGES,
+} from "./prompts";
 
 describe("SUPPORTED_LANGUAGES", () => {
   it("Prompt APIが対応する5言語(en/ja/es/de/fr)を含む", () => {
@@ -51,5 +56,20 @@ describe("buildExplainUserPrompt", () => {
     const prompt = buildExplainUserPrompt("gg no re chat");
 
     expect(prompt).toContain("gg no re chat");
+  });
+});
+
+describe("buildTriageUserPrompt", () => {
+  it("チャット本文をそのまま埋め込んだユーザープロンプトを組み立てる", () => {
+    const prompt = buildTriageUserPrompt("gg no re chat");
+
+    expect(prompt).toContain("gg no re chat");
+  });
+
+  it("真偽値での回答を明示的に指示する", () => {
+    const prompt = buildTriageUserPrompt("gg no re chat");
+
+    expect(prompt).toMatch(/true/i);
+    expect(prompt).toMatch(/false/i);
   });
 });

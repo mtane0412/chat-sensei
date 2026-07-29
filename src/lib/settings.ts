@@ -9,8 +9,19 @@
  */
 import { z } from "zod";
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from "./ai/prompts";
+import { AUTO_EXTRACTION_STRICTNESS_LEVELS } from "./twitch/message-filter";
 
 export const SETTINGS_STORAGE_KEY = "chat-sensei:settings";
+
+/**
+ * 自動抽出(Phase 4)のオン/オフとフィルタの厳しさ。
+ * `.default()` を指定し、旧バージョン(このフィールドを持たない保存データ)を
+ * 「壊れている」とはみなさず、デフォルト値を補って読み込めるようにする。
+ */
+const autoExtractionSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  strictness: z.enum(AUTO_EXTRACTION_STRICTNESS_LEVELS).default("normal"),
+});
 
 export const settingsSchema = z
   .object({
@@ -18,6 +29,8 @@ export const settingsSchema = z
     targetLang: z.enum(SUPPORTED_LANGUAGES),
     /** 解説言語(AIが生成する解説の言語) */
     explainLang: z.enum(SUPPORTED_LANGUAGES),
+    /** 自動抽出パイプラインの設定 */
+    autoExtraction: autoExtractionSettingsSchema.default({ enabled: false, strictness: "normal" }),
   })
   .refine((data) => data.targetLang !== data.explainLang, {
     message: "学ぶ言語と解説言語には異なる言語を指定してください",
@@ -26,7 +39,21 @@ export const settingsSchema = z
 
 export type Settings = z.infer<typeof settingsSchema>;
 
-export const DEFAULT_SETTINGS: Settings = { targetLang: "en", explainLang: "ja" };
+export const DEFAULT_SETTINGS: Settings = {
+  targetLang: "en",
+  explainLang: "ja",
+  autoExtraction: { enabled: false, strictness: "normal" },
+};
+
+/** 抽出強度セレクトに表示する日本語ラベル */
+export const AUTO_EXTRACTION_STRICTNESS_DISPLAY_NAMES: Record<
+  (typeof AUTO_EXTRACTION_STRICTNESS_LEVELS)[number],
+  string
+> = {
+  loose: "緩い(短い発言も拾う)",
+  normal: "標準",
+  strict: "厳しい(長めの発言のみ)",
+};
 
 /** 設定画面のセレクトボックスに表示する、各言語のネイティブ表記 */
 export const LANGUAGE_DISPLAY_NAMES: Record<SupportedLanguage, string> = {

@@ -134,6 +134,7 @@ describe("SettingsPage", () => {
       expect(JSON.parse(window.localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "{}")).toEqual({
         targetLang: "es",
         explainLang: "de",
+        autoExtraction: { enabled: false, strictness: "normal" },
       });
     });
 
@@ -148,6 +149,53 @@ describe("SettingsPage", () => {
 
       expect(screen.getByText(/学ぶ言語と解説言語には異なる言語を指定してください/)).toBeInTheDocument();
       expect(window.localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
+    });
+  });
+
+  describe("自動抽出設定", () => {
+    it("デフォルトでは無効、フィルタの厳しさは標準を選択済みで表示する", () => {
+      vi.mocked(runBrowserDiagnosis).mockResolvedValue(readyDiagnosis);
+
+      render(<SettingsPage />);
+
+      expect(screen.getByRole("switch", { name: "自動抽出を有効にする" })).not.toBeChecked();
+      expect(screen.getByLabelText("フィルタの厳しさ")).toHaveValue("normal");
+    });
+
+    it("保存されていた自動抽出設定を読み込んでUIに反映する", async () => {
+      vi.mocked(runBrowserDiagnosis).mockResolvedValue(readyDiagnosis);
+      window.localStorage.setItem(
+        SETTINGS_STORAGE_KEY,
+        JSON.stringify({
+          targetLang: "en",
+          explainLang: "ja",
+          autoExtraction: { enabled: true, strictness: "loose" },
+        }),
+      );
+
+      render(<SettingsPage />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("switch", { name: "自動抽出を有効にする" })).toBeChecked();
+      });
+      expect(screen.getByLabelText("フィルタの厳しさ")).toHaveValue("loose");
+    });
+
+    it("自動抽出を有効にしてフィルタの厳しさを変更し保存すると、LocalStorageに反映される", async () => {
+      vi.mocked(runBrowserDiagnosis).mockResolvedValue(readyDiagnosis);
+      const user = userEvent.setup();
+
+      render(<SettingsPage />);
+
+      await user.click(screen.getByRole("switch", { name: "自動抽出を有効にする" }));
+      await user.selectOptions(screen.getByLabelText("フィルタの厳しさ"), "strict");
+      await user.click(screen.getByRole("button", { name: "保存する" }));
+
+      expect(JSON.parse(window.localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "{}")).toEqual({
+        targetLang: "en",
+        explainLang: "ja",
+        autoExtraction: { enabled: true, strictness: "strict" },
+      });
     });
   });
 });

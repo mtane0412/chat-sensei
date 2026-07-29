@@ -29,6 +29,7 @@ import { describeDiagnosis } from "@/lib/ai/describeDiagnosis";
 import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
 import { createExplainBaseSessionFactory, explainChatMessage } from "@/lib/ai/explain";
 import { createSessionPool, type SessionPool } from "@/lib/ai/session-pool";
+import { createAutoExtractionPipeline, type AutoExtractionPipeline } from "@/lib/ai/auto-extraction";
 import type { ExplanationItem, ExplanationResult } from "@/lib/ai/schemas";
 import { loadSettings } from "@/lib/settings";
 import { createCard } from "@/lib/db/cards";
@@ -63,8 +64,48 @@ export default function Home() {
   const [messages, setMessages] = useState<TwitchChatMessage[]>([]);
   const clientRef = useRef<TwitchIrcClient | null>(null);
 
+  // --- AI解説(手動ピック)・自動抽出(バックグラウンド)で共有する参照 ---
+  const [aiDiagnosis, setAiDiagnosis] = useState<EnvironmentDiagnosis | null>(null);
+  // getClient()のonEventはマウント時の1回しか再生成されないクロージャのため、
+  // 最新のaiDiagnosisをrefにも同期しておき、自動抽出の実行可否をそこから判定する。
+  const aiDiagnosisRef = useRef<EnvironmentDiagnosis | null>(null);
+  const sessionPoolRef = useRef<SessionPool | null>(null);
+  const autoExtractionPipelineRef = useRef<AutoExtractionPipeline | null>(null);
+  const autoExtractionAbortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    aiDiagnosisRef.current = aiDiagnosis;
+  }, [aiDiagnosis]);
+
+  useEffect(() => {
+    runBrowserDiagnosis()
+      .then((diagnosis) => setAiDiagnosis(diagnosis))
+      .catch(() => setAiDiagnosis(null));
+  }, []);
+
+  // セッションプールは設定(言語ペア)を使って初回利用時に一度だけ生成する。
+  // 手動ピック(explain, high優先度)と自動抽出(triage/explain, low優先度)はこのプールを共有し、
+  // Prompt APIの呼び出しを常に直列化する。
+  const getSessionPool = useCallback((): SessionPool => {
+    if (!sessionPoolRef.current) {
+      const { settings } = loadSettings();
+      sessionPoolRef.current = createSessionPool({
+        createBaseSession: createExplainBaseSessionFactory(settings.targetLang, settings.explainLang),
+      });
+    }
+    return sessionPoolRef.current;
+  }, []);
+
+  const getAutoExtractionPipeline = useCallback((): AutoExtractionPipeline => {
+    if (!autoExtractionPipelineRef.current) {
+      autoExtractionPipelineRef.current = createAutoExtractionPipeline({ sessionPool: getSessionPool() });
+    }
+    return autoExtractionPipelineRef.current;
+  }, [getSessionPool]);
+
   // クライアントは初回レンダリング時に一度だけ生成する。
   // setState群はReactが安定した参照を保証するため、コールバック内で使っても古いクロージャの問題は起きない。
+  // (refに保持したgetAutoExtractionPipeline/aiDiagnosisRefも、呼び出し時点で最新の値を参照する)
   const getClient = useCallback((): TwitchIrcClient => {
     if (!clientRef.current) {
       clientRef.current = createTwitchIrcClient({
@@ -77,47 +118,47 @@ export default function Home() {
               ? next.slice(next.length - MAX_DISPLAYED_MESSAGES)
               : next;
           });
+
+          const { settings } = loadSettings();
+          if (settings.autoExtraction.enabled && aiDiagnosisRef.current?.overallReady) {
+            getAutoExtractionPipeline()
+              .processMessage(event.message, {
+                strictness: settings.autoExtraction.strictness,
+                targetLang: settings.targetLang,
+                explainLang: settings.explainLang,
+                signal: autoExtractionAbortControllerRef.current?.signal,
+              })
+              .catch(() => {
+                // 自動抽出はベストエフォートのバックグラウンド処理のため、
+                // 個別発言の失敗(Prompt APIエラー・中断)はUIに通知せず読み捨てる
+              });
+          }
         },
       });
     }
     return clientRef.current;
-  }, []);
+  }, [getAutoExtractionPipeline]);
 
   const handleConnect = useCallback(() => {
     const channel = channelInput.trim();
     if (!channel) return;
     setMessages([]);
+    // チャンネルを切り替えるので、前のチャンネルに紐づく自動抽出ジョブを中断する
+    autoExtractionAbortControllerRef.current?.abort();
+    autoExtractionAbortControllerRef.current = new AbortController();
     getClient().connect(channel);
   }, [channelInput, getClient]);
 
   const handleDisconnect = useCallback(() => {
+    autoExtractionAbortControllerRef.current?.abort();
     getClient().disconnect();
   }, [getClient]);
 
   const connected = isConnectingOrConnected(connectionState);
 
   // --- AI解説(手動ピック) ---
-  const [aiDiagnosis, setAiDiagnosis] = useState<EnvironmentDiagnosis | null>(null);
-  const sessionPoolRef = useRef<SessionPool | null>(null);
   const explainAbortControllerRef = useRef<AbortController | null>(null);
   const [dialogState, setDialogState] = useState<ExplanationDialogState>({ status: "idle" });
-
-  useEffect(() => {
-    runBrowserDiagnosis()
-      .then((diagnosis) => setAiDiagnosis(diagnosis))
-      .catch(() => setAiDiagnosis(null));
-  }, []);
-
-  // セッションプールは設定(言語ペア)を使って初回クリック時に一度だけ生成する。
-  const getSessionPool = useCallback((): SessionPool => {
-    if (!sessionPoolRef.current) {
-      const { settings } = loadSettings();
-      sessionPoolRef.current = createSessionPool({
-        createBaseSession: createExplainBaseSessionFactory(settings.targetLang, settings.explainLang),
-      });
-    }
-    return sessionPoolRef.current;
-  }, []);
 
   const handleMessageClick = useCallback(
     (message: TwitchChatMessage) => {
