@@ -3,7 +3,7 @@
  *
  * Pick up の前後に置く決定的(LLM を使わない)処理を検証する(issue #26)。
  * - `preparePickupInput`: emote・@メンション・URL を本文から除き、LLM に渡す本文を組み立てる
- * - `filterPickupTerms`: LLM が返した語句のうち emote 名・@メンション・文字を含まない語句を落とす
+ * - `filterPickupTerms`: LLM が返した語句のうち emote 名・@メンション・文字を含まない語句・笑い声(issue #30)を落とす
  */
 import { describe, expect, it } from "vitest";
 import { filterPickupTerms, preparePickupInput } from "./pickup-filter";
@@ -133,6 +133,40 @@ describe("filterPickupTerms", () => {
     expect(filterPickupTerms(terms, { text: "sayuwuKuru sticky", emoteNames: [], mentionNames: [] })).toEqual([
       { term: "sayuwuKuru", meaning: "意味不明な文字列" },
       { term: "sticky", meaning: "スタン状態にする" },
+    ]);
+  });
+
+  it("笑い声(haha / hahaha / hehe / HAHA)を落とし、略語の lol / lmao は残す(issue #30)", () => {
+    const terms = [
+      { term: "haha", meaning: "笑い声" },
+      { term: "hahaha", meaning: "笑い声" },
+      { term: "hehe", meaning: "軽い笑い" },
+      { term: "HAHA", meaning: "笑い声" },
+      { term: "hah", meaning: "笑い声" },
+      { term: "lol", meaning: "爆笑" },
+      { term: "lmao", meaning: "大爆笑" },
+      { term: "put effort into", meaning: "〜に力を注ぐ" },
+    ];
+
+    expect(
+      filterPickupTerms(terms, { text: "they put so much effort into it haha lol lmao", emoteNames: [], mentionNames: [] }),
+    ).toEqual([
+      { term: "lol", meaning: "爆笑" },
+      { term: "lmao", meaning: "大爆笑" },
+      { term: "put effort into", meaning: "〜に力を注ぐ" },
+    ]);
+  });
+
+  it("前後に記号が付いた笑い声(haha! / (hehe) / hahaha...)も落とす", () => {
+    const terms = [
+      { term: "haha!", meaning: "笑い声" },
+      { term: "(hehe)", meaning: "軽い笑い" },
+      { term: "hahaha...", meaning: "笑い声" },
+      { term: "lol!", meaning: "爆笑" },
+    ];
+
+    expect(filterPickupTerms(terms, { text: "haha! (hehe) hahaha... lol!", emoteNames: [], mentionNames: [] })).toEqual([
+      { term: "lol!", meaning: "爆笑" },
     ]);
   });
 

@@ -184,6 +184,41 @@ describe("buildPickupSystemPrompt", () => {
     expect(buildPickupSystemPrompt("ja", "en")).toMatch(/words/);
   });
 
+  it("解説言語がjaのとき、複数語の熟語・句動詞を優先し、笑い声・相槌・感嘆詞は含めない指示を含む(issue #30)", () => {
+    const prompt = buildPickupSystemPrompt("en", "ja");
+
+    expect(prompt).toMatch(/句動詞/);
+    expect(prompt).toMatch(/優先/);
+    expect(prompt).toMatch(/笑い声/);
+    expect(prompt).toMatch(/相槌/);
+    expect(prompt).toMatch(/感嘆詞/);
+  });
+
+  it("解説言語がenのとき、複数語の熟語・句動詞を優先し、笑い声・相槌・感嘆詞は含めない指示を含む(issue #30)", () => {
+    const prompt = buildPickupSystemPrompt("ja", "en");
+
+    expect(prompt).toMatch(/phrasal verbs/i);
+    expect(prompt).toMatch(/prefer/i);
+    expect(prompt).toMatch(/laughter/i);
+    expect(prompt).toMatch(/backchannel/i);
+    expect(prompt).toMatch(/interjections/i);
+  });
+
+  it("学ぶ言語が英語のとき、すべての解説言語で複数語の表現の例として put effort into を示す(issue #30)", () => {
+    for (const explainLang of SUPPORTED_LANGUAGES) {
+      if (explainLang === "en") continue;
+      expect(buildPickupSystemPrompt("en", explainLang)).toContain("put effort into");
+    }
+  });
+
+  it("学ぶ言語が英語以外のとき、複数語の表現の例は学ぶ言語の表現になる(英語の例を混ぜない)(issue #30)", () => {
+    // 学ぶ言語が日本語なら日本語の慣用句を例示し、英語の "put effort into" は登場しない
+    const prompt = buildPickupSystemPrompt("ja", "en");
+
+    expect(prompt).toContain("気が置けない");
+    expect(prompt).not.toContain("put effort into");
+  });
+
   it("解説用・翻訳用のシステムプロンプトとは別物である", () => {
     const prompt = buildPickupSystemPrompt("en", "ja");
 

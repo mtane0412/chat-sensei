@@ -9,7 +9,8 @@
  *   LLM に渡す本文と、後段フィルタで照合するための emote 名・メンション名を返す
  * - `filterPickupTerms`: 後段フィルタ。返ってきた語句のうち emote 名・@メンション・
  *   `!` で始まるチャットコマンド・文字を1つも含まない語句(数字や記号だけ)・
- *   呼び出し側が指定した除外名(表示中の発言者名など)を落とし、重複する語句は1件にまとめる
+ *   `haha` のような笑い声(issue #30)・呼び出し側が指定した除外名(表示中の発言者名など)を落とし、
+ *   重複する語句は1件にまとめる
  *
  * 翻訳列は「emote 名はそのまま残す」設計のため、この処理は Pick up 専用である。
  */
@@ -33,6 +34,14 @@ const MENTION_PATTERN = /@(\w+)/g;
 const URL_PATTERN = /https?:\/\/\S+/g;
 /** 文字(どの言語の文字でもよい)を1つも含まない語句にマッチする */
 const NO_LETTER_PATTERN = /^[^\p{L}]*$/u;
+/**
+ * `haha` / `hahaha` / `hehe` / `hah` のような笑い声にマッチする(issue #30)。
+ * 笑い声は学ぶべき表現ではないが、`lol` / `lmao` は略語として学ぶ価値があるためここでは扱わない。
+ * `haha!` / `(hehe)` のように前後に記号が付く形は、`SURROUNDING_NON_LETTERS_PATTERN` で記号を外してから照合する。
+ */
+const LAUGHTER_PATTERN = /^(ha|he)+h?$/i;
+/** 語句の先頭・末尾に連続する、文字以外の記号(`!` `(` `)` `...` など) */
+const SURROUNDING_NON_LETTERS_PATTERN = /^[^\p{L}]+|[^\p{L}]+$/gu;
 
 /**
  * チャット本文から Pick up の対象にならないトークンを除き、LLM に渡す本文を組み立てる。
@@ -88,6 +97,7 @@ export function filterPickupTerms(
     if (normalized.startsWith("@") || normalized.startsWith("!")) return false;
     if (excludedNames.has(normalized)) return false;
     if (NO_LETTER_PATTERN.test(normalized)) return false;
+    if (LAUGHTER_PATTERN.test(normalized.replace(SURROUNDING_NON_LETTERS_PATTERN, ""))) return false;
     if (seen.has(normalized)) return false;
     seen.add(normalized);
     return true;
