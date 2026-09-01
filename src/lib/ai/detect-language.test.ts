@@ -3,11 +3,16 @@
  *
  * 発言ごとの言語判定結果(信頼度順の候補一覧)と言語設定から、その発言を
  * 「学ぶ言語として翻訳・Pick up する」「解説言語と同じなので何もしない」「学ぶ言語ではないので何もしない」の
- * どれに振り分けるかを検証する。判定は最上位候補だけで決め、信頼度による暗黙のフォールバックは行わない。
+ * どれに振り分けるかを検証する。
+ *
+ * 判定は最上位候補で決めるのが基本だが、"oooohhh ok" のような短い感嘆詞は最上位候補が
+ * 無関係な言語(ar など)になることがある(実配信で観測)。そのため最上位候補が学ぶ言語にも
+ * 解説言語にも該当しないときだけ、候補列の中に十分な信頼度の学ぶ言語があればそれを採用する。
+ * 「先頭の学ぶ言語で扱う」ような判定器の結果に基づかないフォールバックは行わない。
  */
 import { describe, expect, it } from "vitest";
 import type { Settings } from "@/lib/settings";
-import { classifyDetectedLanguage } from "./detect-language";
+import { classifyDetectedLanguage, MIN_FALLBACK_CONFIDENCE } from "./detect-language";
 
 const 英語を学ぶ日本語話者の設定: Settings = { learningLangs: ["en"], explainLang: "ja" };
 const 日英混在チャットの設定: Settings = { learningLangs: ["en", "ja"], explainLang: "ja" };
@@ -35,6 +40,68 @@ describe("classifyDetectedLanguage", () => {
     const result = classifyDetectedLanguage([{ detectedLanguage: "ko", confidence: 0.8 }], 英語を学ぶ日本語話者の設定);
 
     expect(result).toEqual({ kind: "other", detectedLanguage: "ko" });
+  });
+
+  it("最上位候補が対象外でも、候補列に十分な信頼度の学ぶ言語があればその言語で処理する(短い感嘆詞の誤判定対策)", () => {
+    const result = classifyDetectedLanguage(
+      [
+        { detectedLanguage: "ar", confidence: 0.45 },
+        { detectedLanguage: "en", confidence: 0.3 },
+        { detectedLanguage: "ja", confidence: 0.05 },
+      ],
+      英語を学ぶ日本語話者の設定,
+    );
+
+    expect(result).toEqual({ kind: "learning", lang: "en" });
+  });
+
+  it("候補列に複数の学ぶ言語があるときは、信頼度が高い(先に並ぶ)ほうを採用する", () => {
+    const result = classifyDetectedLanguage(
+      [
+        { detectedLanguage: "pt", confidence: 0.5 },
+        { detectedLanguage: "es", confidence: 0.3 },
+        { detectedLanguage: "en", confidence: 0.15 },
+      ],
+      { learningLangs: ["en", "es"], explainLang: "ja" },
+    );
+
+    expect(result).toEqual({ kind: "learning", lang: "es" });
+  });
+
+  it("候補列の学ぶ言語の信頼度が下限未満なら採用せず「対象外」のままにする(韓国語の発言などを誤って処理しないため)", () => {
+    const result = classifyDetectedLanguage(
+      [
+        { detectedLanguage: "ko", confidence: 0.98 },
+        { detectedLanguage: "en", confidence: MIN_FALLBACK_CONFIDENCE - 0.01 },
+      ],
+      英語を学ぶ日本語話者の設定,
+    );
+
+    expect(result).toEqual({ kind: "other", detectedLanguage: "ko" });
+  });
+
+  it("候補列に解説言語があっても、それを理由に「同じ言語」にはしない(同じ言語の判定は最上位候補だけで行う)", () => {
+    const result = classifyDetectedLanguage(
+      [
+        { detectedLanguage: "ar", confidence: 0.5 },
+        { detectedLanguage: "ja", confidence: 0.4 },
+      ],
+      英語を学ぶ日本語話者の設定,
+    );
+
+    expect(result).toEqual({ kind: "other", detectedLanguage: "ar" });
+  });
+
+  it("フォールバックでも解説言語と同じ言語は学ぶ言語として採用しない", () => {
+    const result = classifyDetectedLanguage(
+      [
+        { detectedLanguage: "ar", confidence: 0.5 },
+        { detectedLanguage: "ja", confidence: 0.4 },
+      ],
+      日英混在チャットの設定,
+    );
+
+    expect(result).toEqual({ kind: "other", detectedLanguage: "ar" });
   });
 
   it("地域付きの言語タグ(en-US など)は主言語部分で照合する", () => {
