@@ -8,6 +8,7 @@
  * 注目の表現の抽出は pickups ストアに、Prompt API の利用可否は prompt-api ストアに閉じているため、
  * ここでは各ストアの state を直接書き換えて注入する。
  * 各パイプラインの開始(`startTranslationPipeline` / `startPickupPipeline`)はブラウザAPIに触れるためモックする。
+ * 設定ダイアログの環境診断(`runBrowserDiagnosis`)も同様にモックする。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
@@ -17,6 +18,7 @@ import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filt
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
 import { resetPromptApiStoreForTests, usePromptApiStore } from "@/store/prompt-api";
+import { resetSettingsStoreForTests, useSettingsStore } from "@/store/settings";
 import { resetTranslationStoreForTests, useTranslationStore } from "@/store/translations";
 
 const mockStopPipeline = vi.fn();
@@ -37,6 +39,10 @@ vi.mock("@/store/pickups", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/store/pickups")>()),
   startPickupPipeline: () => mockStartPickupPipeline(),
   warmUpPickupPipeline: () => mockWarmUpPickupPipeline(),
+}));
+
+vi.mock("@/lib/ai/runBrowserDiagnosis", () => ({
+  runBrowserDiagnosis: () => new Promise(() => {}),
 }));
 
 import Home from "./page";
@@ -80,6 +86,7 @@ afterEach(() => {
   resetPickupStoreForTests();
   resetPromptApiStoreForTests();
   resetBotFilterStoreForTests();
+  resetSettingsStoreForTests();
   window.localStorage.clear();
 });
 
@@ -466,5 +473,57 @@ describe("Home(Prompt API の利用可否)", () => {
 
     expect(within(screen.getByRole("region", { name: "翻訳" })).getByText("準備中...")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("準備中...")).toBeInTheDocument();
+  });
+});
+
+describe("Home(設定ダイアログ)", () => {
+  it("接続フォームの横にある設定ボタンから、言語ペアのセレクトが入った設定ダイアログを開ける", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("chat-sensei:settings", JSON.stringify({ targetLang: "es", explainLang: "en" }));
+    render(<Home />);
+
+    await user.click(screen.getByRole("button", { name: "設定" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    expect(within(dialog).getByRole("combobox", { name: "学ぶ言語" })).toHaveValue("es");
+    expect(within(dialog).getByRole("combobox", { name: "解説言語" })).toHaveValue("en");
+  });
+
+  it("マウント時に LocalStorage から言語ペアを復元してから、パイプラインを開始する", () => {
+    window.localStorage.setItem("chat-sensei:settings", JSON.stringify({ targetLang: "fr", explainLang: "ja" }));
+
+    render(<Home />);
+
+    expect(useSettingsStore.getState().settings).toEqual({ targetLang: "fr", explainLang: "ja" });
+    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);
+    expect(mockStartPickupPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it("言語ペアを変更して保存すると、翻訳・Pick up のパイプラインを停止して新しい言語ペアで開始し直す", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "設定" }));
+    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "学ぶ言語" }), "de");
+    await user.click(within(dialog).getByRole("button", { name: "保存する" }));
+
+    expect(mockStopPipeline).toHaveBeenCalledTimes(1);
+    expect(mockStopPickupPipeline).toHaveBeenCalledTimes(1);
+    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(2);
+    expect(mockStartPickupPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it("言語ペアを変えずに保存した場合は、パイプラインを再起動しない", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await user.click(screen.getByRole("button", { name: "設定" }));
+    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    await user.click(within(dialog).getByRole("button", { name: "保存する" }));
+
+    expect(mockStopPipeline).not.toHaveBeenCalled();
+    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);
   });
 });
