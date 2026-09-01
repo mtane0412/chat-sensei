@@ -31,7 +31,7 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
-import { buildEmoteImageUrl, splitMessageIntoSegments } from "@/lib/twitch/emotes";
+import { buildEmoteImageUrl, splitMessageIntoSegments, splitTextByEmoteNames, type MessageSegment } from "@/lib/twitch/emotes";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
 import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupEntry } from "@/store/pickups";
@@ -287,7 +287,7 @@ function TranslationCellContent({
     case "pending":
       return <span className="text-muted-foreground">翻訳中...</span>;
     case "done":
-      return <span>{entry.translation}</span>;
+      return <TranslationText message={message} translation={entry.translation} />;
     case "failed":
       return <span className="text-destructive">翻訳に失敗: {entry.reason}</span>;
     case "dropped":
@@ -339,6 +339,42 @@ function PickupCellContent({
   }
 }
 
+/**
+ * 翻訳文の中身。翻訳は emote 名をそのまま残す設計のため、元の発言に含まれていた emote 名が
+ * 文字列として現れた箇所を左列と同じ emote 画像に置き換えて表示する(issue #28)
+ */
+function TranslationText({ message, translation }: { message: TwitchChatMessage; translation: string }) {
+  const segments = useMemo(() => {
+    const knownEmotes = splitMessageIntoSegments(message.text, message.emotes).filter(
+      (segment) => segment.type === "emote",
+    );
+    return splitTextByEmoteNames(translation, knownEmotes);
+  }, [message.text, message.emotes, translation]);
+
+  return (
+    <span>
+      <MessageSegments segments={segments} />
+    </span>
+  );
+}
+
+/** テキスト/emote セグメント列を、テキストはそのまま・emote は画像として描画する(左列・翻訳列で共通) */
+function MessageSegments({ segments }: { segments: MessageSegment[] }) {
+  return segments.map((segment, index) =>
+    segment.type === "text" ? (
+      <span key={index}>{segment.text}</span>
+    ) : (
+      // eslint-disable-next-line @next/next/no-img-element -- Twitch CDNの外部画像のためnext/imageのドメイン許可設定は不要な単純imgで表示する
+      <img
+        key={index}
+        src={buildEmoteImageUrl(segment.id)}
+        alt={segment.text}
+        className="mx-0.5 inline-block h-6 align-text-bottom"
+      />
+    ),
+  );
+}
+
 function ChatMessageRow({ message }: { message: TwitchChatMessage }) {
   const segments = useMemo(
     () => splitMessageIntoSegments(message.text, message.emotes),
@@ -351,19 +387,7 @@ function ChatMessageRow({ message }: { message: TwitchChatMessage }) {
         {message.displayName}
       </span>
       <span>: </span>
-      {segments.map((segment, index) =>
-        segment.type === "text" ? (
-          <span key={index}>{segment.text}</span>
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element -- Twitch CDNの外部画像のためnext/imageのドメイン許可設定は不要な単純imgで表示する
-          <img
-            key={index}
-            src={buildEmoteImageUrl(segment.id)}
-            alt={segment.text}
-            className="mx-0.5 inline-block h-6 align-text-bottom"
-          />
-        ),
-      )}
+      <MessageSegments segments={segments} />
     </Row>
   );
 }

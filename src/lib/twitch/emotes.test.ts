@@ -6,7 +6,7 @@
  * 描画用セグメントに変換する純関数を検証する。
  */
 import { describe, expect, it } from "vitest";
-import { buildEmoteImageUrl, splitMessageIntoSegments } from "./emotes";
+import { buildEmoteImageUrl, isEmoteOnlyMessage, splitMessageIntoSegments, splitTextByEmoteNames } from "./emotes";
 import type { EmotePosition } from "./irc-parser";
 
 describe("buildEmoteImageUrl", () => {
@@ -90,5 +90,73 @@ describe("splitMessageIntoSegments", () => {
       { type: "text", text: "💻hugs💻 " },
       { type: "emote", id: "emotesv2_1", text: "haddyHiya" },
     ]);
+  });
+});
+
+describe("splitTextByEmoteNames", () => {
+  /** 元の発言に含まれていた emote(名前と ID の対応) */
+  const 既知のemote = [
+    { id: "emotesv2_1", text: "sayuwuLul" },
+    { id: "25", text: "Kappa" },
+  ];
+
+  it("既知の emote が無い場合はテキスト1件のセグメントを返す", () => {
+    expect(splitTextByEmoteNames("マジで?", [])).toEqual([{ type: "text", text: "マジで?" }]);
+  });
+
+  it("翻訳文中に現れる emote 名を、日本語に隣接していても emote セグメントに置き換える", () => {
+    const segments = splitTextByEmoteNames("なんでsayuwuLulそんな flagged したの", 既知のemote);
+
+    expect(segments).toEqual([
+      { type: "text", text: "なんで" },
+      { type: "emote", id: "emotesv2_1", text: "sayuwuLul" },
+      { type: "text", text: "そんな flagged したの" },
+    ]);
+  });
+
+  it("複数種類・複数回の emote 名をすべて置き換える", () => {
+    const segments = splitTextByEmoteNames("Kappa 草 sayuwuLul Kappa", 既知のemote);
+
+    expect(segments).toEqual([
+      { type: "emote", id: "25", text: "Kappa" },
+      { type: "text", text: " 草 " },
+      { type: "emote", id: "emotesv2_1", text: "sayuwuLul" },
+      { type: "text", text: " " },
+      { type: "emote", id: "25", text: "Kappa" },
+    ]);
+  });
+
+  it("英数字の単語の一部として含まれる場合は emote とみなさない(Kappajapan の Kappa など)", () => {
+    const segments = splitTextByEmoteNames("Kappajapan に行く", 既知のemote);
+
+    expect(segments).toEqual([{ type: "text", text: "Kappajapan に行く" }]);
+  });
+
+  it("emote 名の大文字小文字は区別する(kappa は Kappa とみなさない)", () => {
+    const segments = splitTextByEmoteNames("kappa lol", 既知のemote);
+
+    expect(segments).toEqual([{ type: "text", text: "kappa lol" }]);
+  });
+});
+
+describe("isEmoteOnlyMessage", () => {
+  it("emote だけ(空白区切りの繰り返しを含む)の発言は true", () => {
+    const emotes: EmotePosition[] = [
+      { id: "25", start: 0, end: 4 },
+      { id: "25", start: 6, end: 10 },
+    ];
+
+    expect(isEmoteOnlyMessage("Kappa Kappa", emotes)).toBe(true);
+  });
+
+  it("emote 以外の文字がある発言は false", () => {
+    const emotes: EmotePosition[] = [{ id: "25", start: 5, end: 9 }];
+
+    expect(isEmoteOnlyMessage("nice Kappa", emotes)).toBe(false);
+  });
+
+  it("emote が無い発言は false(空文字列でも翻訳側の判断に委ねる)", () => {
+    expect(isEmoteOnlyMessage("hello", [])).toBe(false);
+    expect(isEmoteOnlyMessage("", [])).toBe(false);
   });
 });
