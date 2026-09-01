@@ -176,6 +176,14 @@ describe("buildPickupSystemPrompt", () => {
     expect(prompt).toMatch(/empty/i);
   });
 
+  it("アルファベット言語の意味説明は文字数ではなく語数で長さを指示する(10〜20文字では短すぎるため)", () => {
+    for (const explainLang of ["en", "es", "de", "fr"] as const) {
+      const prompt = buildPickupSystemPrompt("ja", explainLang);
+      expect(prompt).not.toMatch(/10 (to|a|bis|à) 20 (characters|caracteres|Zeichen|caractères)/);
+    }
+    expect(buildPickupSystemPrompt("ja", "en")).toMatch(/words/);
+  });
+
   it("解説用・翻訳用のシステムプロンプトとは別物である", () => {
     const prompt = buildPickupSystemPrompt("en", "ja");
 

@@ -5,7 +5,9 @@
  * `translate.ts` と同じ構造で、Pick up 専用のプロンプト・スキーマを使う。
  *
  * - `pickUpExpressions`: `SessionPool` にジョブを積み、返ってきたJSON文字列を
- *   `pickupSchema` で検証してから返す。自由文をパースする脆い処理は行わない。
+ *   `pickupSchema` で検証し、さらに各語句が原文に登場することを照合してから返す
+ *   (モデルが解説言語の語や言い換えを「原文の語句」として返した応答は失敗として扱う)。
+ *   自由文をパースする脆い処理は行わない。
  * - `createPickupBaseSessionFactory`: Pick up 専用のシステムプロンプトを持つ
  *   ベースセッションの生成関数を組み立てる。`session-pool.ts` はベースセッションを
  *   1つしか持たないため、翻訳用・解説用とはプールを分ける前提(issue #15 の方針 (a))。
@@ -22,8 +24,9 @@ export interface PickupOptions {
 
 /**
  * チャット本文から注目の表現を抽出する。
- * Prompt API の応答は必ず JSON 文字列として返るため、`JSON.parse` → `pickupSchema.parse`
- * の順で検証し、いずれかに失敗した場合はエラーを投げる。
+ * Prompt API の応答は必ず JSON 文字列として返るため、`JSON.parse` → `pickupSchema.parse` →
+ * 原文との照合の順で検証し、いずれかに失敗した場合はエラーを投げる。
+ * 照合は大文字小文字を区別しない(「W」を「w」として返す程度の揺れは原文の語句とみなす)。
  */
 export async function pickUpExpressions(
   sessionPool: SessionPool,
@@ -48,7 +51,13 @@ export async function pickUpExpressions(
     throw new Error(`Prompt APIの応答をJSONとして解釈できませんでした: ${raw}`, { cause: error });
   }
 
-  return pickupSchema.parse(parsed);
+  const result = pickupSchema.parse(parsed);
+  const normalizedText = chatMessageText.toLowerCase();
+  const unknownTerm = result.terms.find((term) => !normalizedText.includes(term.term.toLowerCase()));
+  if (unknownTerm) {
+    throw new Error(`Prompt APIが原文に登場しない語句を返しました: ${unknownTerm.term}`);
+  }
+  return result;
 }
 
 /**

@@ -140,6 +140,11 @@ describe("pickupSchema", () => {
   it("ペアにmeaningが無い場合はパースエラーになる", () => {
     expect(() => pickupSchema.parse({ terms: [{ term: "gg" }] })).toThrow();
   });
+
+  it("termまたはmeaningが空文字の場合はパースエラーになる(中身の無いペアを描画しない)", () => {
+    expect(() => pickupSchema.parse({ terms: [{ term: "", meaning: "意味" }] })).toThrow();
+    expect(() => pickupSchema.parse({ terms: [{ term: "gg", meaning: "" }] })).toThrow();
+  });
 });
 
 describe("buildPickupResponseConstraint", () => {

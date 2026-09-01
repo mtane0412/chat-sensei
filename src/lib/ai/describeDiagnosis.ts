@@ -48,7 +48,7 @@ function describeLanguageModel(diagnosis: EnvironmentDiagnosis): DiagnosisMessag
     return {
       id: "language-model",
       level: "error",
-      message: "この環境では Prompt API (window.LanguageModel) が見つかりません。翻訳・解説の生成は無効化されます。",
+      message: "この環境では Prompt API (window.LanguageModel) が見つかりません。翻訳・Pick up の生成は無効化されます。",
     };
   }
 

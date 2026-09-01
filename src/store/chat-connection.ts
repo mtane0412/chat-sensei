@@ -40,7 +40,7 @@ interface ChatConnectionState {
   disconnect: () => void;
 }
 
-/** 発言受信時に翻訳・解説生成などの追加処理を行うためのリスナー */
+/** 発言受信時に翻訳・Pick up 生成などの追加処理を行うためのリスナー */
 type ChatMessageListener = (message: TwitchChatMessage) => void;
 const messageListeners = new Set<ChatMessageListener>();
 
@@ -95,7 +95,7 @@ useBotFilterStore.subscribe((state, prevState) => {
 });
 
 /**
- * 受信した発言(privmsg)を購読する。バックグラウンドの翻訳・解説生成のように、
+ * 受信した発言(privmsg)を購読する。バックグラウンドの翻訳・Pick up 生成のように、
  * 画面表示用のリングバッファとは独立に「受信した発言そのもの」を必要とする
  * 処理から利用する。戻り値の関数を呼ぶと購読を解除できる。
  */

@@ -72,10 +72,10 @@ export function buildTranslationResponseConstraint(): Record<string, unknown> {
  * 訳文・直訳・分類・難易度などの解説向け情報は含めない(それらは `explanationSchema` の責務)。
  */
 export const pickupTermSchema = z.object({
-  /** 元のチャット本文中に登場する語句・フレーズそのもの */
-  term: z.string(),
+  /** 元のチャット本文中に登場する語句・フレーズそのもの(原文との照合は `pickup.ts` が行う) */
+  term: z.string().min(1),
   /** 解説言語での短い意味 */
-  meaning: z.string(),
+  meaning: z.string().min(1),
 });
 
 export const pickupSchema = z.object({

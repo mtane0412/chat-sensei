@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "chat-sensei",
   description:
-    "Twitch のライブチャットを 生IRC / 翻訳 / 解説 の3カラムで読む、Chrome内蔵AI(Gemini Nano)で完結するクライアントサイド専用ツール。",
+    "Twitch のライブチャットを 生IRC / 翻訳 / Pick up の3カラムで読む、Chrome内蔵AI(Gemini Nano)で完結するクライアントサイド専用ツール。",
 };
 
 export default function RootLayout({

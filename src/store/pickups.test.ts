@@ -268,6 +268,30 @@ describe("startPickupPipeline", () => {
     stop();
   });
 
+  it("リングバッファから消えた発言が無い場合、受信時の破棄処理ではストアを更新しない(不要な再レンダーを起こさない)", async () => {
+    const deferred = createDeferred<string>();
+    const { deps, emit } = createDeps({
+      promptResults: [Promise.resolve(JSON.stringify(抽出なし)), deferred.promise],
+    });
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1" }));
+    await flush();
+
+    let updates = 0;
+    const unsubscribe = usePickupStore.subscribe(() => {
+      updates += 1;
+    });
+    // msg-1 はリングバッファに残ったままなので、破棄処理による更新は起きず pending の1回だけになる
+    emit(createMessage({ id: "msg-2" }));
+    await flush();
+    unsubscribe();
+
+    expect(updates).toBe(1);
+    expect(usePickupStore.getState().entries["msg-2"]).toEqual({ status: "pending" });
+    stop();
+  });
+
   it("設定の言語ペアでセッションプールを生成する", async () => {
     const { deps, emit } = createDeps({ promptResults: [Promise.resolve(JSON.stringify(抽出なし))] });
 

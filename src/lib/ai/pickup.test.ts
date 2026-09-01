@@ -80,6 +80,22 @@ describe("pickUpExpressions", () => {
   });
 });
 
+describe("pickUpExpressions(原文との照合)", () => {
+  it("大文字小文字の違いは許容する(「W」を「w」として返しても原文の語句とみなす)", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [{ term: "w", meaning: "勝利" }] }));
+
+    const result = await pickUpExpressions(pool, "that was a W");
+
+    expect(result.terms).toEqual([{ term: "w", meaning: "勝利" }]);
+  });
+
+  it("原文に登場しない語句が含まれる場合はエラーを投げる(解説言語の語や言い換えを原文の語句として表示しない)", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [{ term: "了解", meaning: "分かった" }] }));
+
+    await expect(pickUpExpressions(pool, "roger that")).rejects.toThrow(/原文に登場しない/);
+  });
+});
+
 describe("createPickupBaseSessionFactory", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

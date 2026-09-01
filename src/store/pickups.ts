@@ -93,9 +93,12 @@ function setEntry(id: string, entry: PickupEntry): void {
 /** 表示用リングバッファに残っていない発言の抽出結果を捨て、メモリが際限なく増えないようにする */
 function pruneEntries(messages: TwitchChatMessage[]): void {
   const liveIds = new Set(messages.map((message) => message.id));
-  usePickupStore.setState((prev) => ({
-    entries: Object.fromEntries(Object.entries(prev.entries).filter(([id]) => liveIds.has(id))),
-  }));
+  usePickupStore.setState((prev) => {
+    const kept = Object.entries(prev.entries).filter(([id]) => liveIds.has(id));
+    // 破棄対象が無ければ同じ参照を返し、購読側(ページ)の不要な再レンダーを避ける
+    if (kept.length === Object.keys(prev.entries).length) return prev;
+    return { entries: Object.fromEntries(kept) };
+  });
 }
 
 /** 環境診断結果から、利用者に見せる「Prompt API が使えない理由」を取り出す */
