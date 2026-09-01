@@ -10,8 +10,9 @@
  *   (新しいクローンセッション)として `STRUCTURED_PROMPT_MAX_ATTEMPTS` 回まで試行し直す。
  *   スキーマ不一致は再試行せず即座にエラーを投げる(自由文をパースする脆いフォールバックはしない)。
  * - `createBaseSessionFactory`: 用途ごとのシステムプロンプトを持つベースセッションの生成関数を組み立てる。
- *   `window.LanguageModel` を実際に呼び出す唯一の場所。`session-pool.ts` はベースセッションを
+ *   `window.LanguageModel` を実際に呼び出す唯一の場所。`SessionPool` はベースセッションを
  *   1 つしか持たないため、用途ごとにプールを分ける前提(issue #15 の方針 (a))。
+ *   ただし直列キュー(`PromptJobQueue`)は用途をまたいで 1 つを共有し、並走させない(issue #23)。
  */
 import type { z } from "zod";
 import type { SupportedLanguage } from "./prompts";

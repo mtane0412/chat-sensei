@@ -11,7 +11,7 @@
  *   「原文の語句」として返した応答は失敗として扱い、再試行しない)。
  *   emote だけの発言のように渡す本文が空になる場合は LLM を呼ばず、空の結果を返す(issue #26)。
  * - `createPickupBaseSessionFactory`: Pick up 専用のシステムプロンプトを持つベースセッションの生成関数を組み立てる。
- *   翻訳用とはプールを分ける前提(issue #15 の方針 (a))
+ *   翻訳用とはプール(ベースセッション)を分ける前提(issue #15 の方針 (a))。直列キューは共有する(issue #23)
  */
 import type { EmotePosition } from "@/lib/twitch/irc-parser";
 import { filterPickupTerms, preparePickupInput } from "./pickup-filter";

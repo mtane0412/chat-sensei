@@ -6,7 +6,7 @@
  *
  * - `translateChatMessage`: 翻訳用ユーザープロンプトと `translationSchema` で `runStructuredPrompt` を呼ぶ
  * - `createTranslateBaseSessionFactory`: 翻訳専用のシステムプロンプトを持つベースセッションの生成関数を組み立てる。
- *   Pick up 用とはプールを分ける前提(issue #15 の方針 (a))
+ *   Pick up 用とはプール(ベースセッション)を分ける前提(issue #15 の方針 (a))。直列キューは共有する(issue #23)
  */
 import { buildTranslateSystemPrompt, buildTranslateUserPrompt, type SupportedLanguage } from "./prompts";
 import { translationSchema, type TranslationResult } from "./schemas";

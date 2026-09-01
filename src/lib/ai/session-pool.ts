@@ -1,19 +1,24 @@
 /**
- * Gemini Nano(Prompt API)へのアクセスを、単一のベースセッション + 優先度付き直列キューで
- * 制御するモジュール。
+ * Gemini Nano(Prompt API)へのアクセスを、用途ごとのベースセッション + アプリ全体で 1 つの
+ * 優先度付き直列キューで制御するモジュール。
  *
  * Prompt API は Web Worker で使えずメインスレッドで動作するため、無制御に
  * 呼び出すと UI がブロックされる。そのためここでは以下を保証する。
  *
- * - 同時実行数は常に1(直列処理)
+ * - 同時実行数は常に1(直列処理)。翻訳用・Pick up 用のようにシステムプロンプト(ベースセッション)が
+ *   異なるプールでも、同じ `PromptJobQueue` を共有すればアプリ全体で 1 つずつしか `prompt()` を投げない(issue #23)
  * - 優先度は2段階("high" = 利用者の明示的な操作, "low" = バックグラウンド生成)。
  *   高優先度ジョブは、待機中の低優先度ジョブより必ず先に処理される
- * - 低優先度キューには上限を設け、溢れた場合は最も古いものから破棄する
+ * - 低優先度キューには上限を設け、溢れた場合はプールを問わず最も古いものから破棄する
  *   (高優先度キューは利用者の明示的な操作なので上限を設けない)
  * - 各ジョブは `AbortSignal` を受け取れ、実行前に中断されていれば実行しない
  * - ベースセッションは `session.clone()` して使い捨てのブランチを都度作ることで、
  *   システムプロンプトのウォームアップ(初回生成コスト)を再利用しつつ、
  *   ジョブ間でコンテキストが汚染されないようにする
+ *
+ * 役割分担:
+ * - `createPromptJobQueue`: 優先度・上限・中断を扱う直列キュー。ベースセッションのことは知らない
+ * - `createSessionPool`: ベースセッション 1 つを保持し、ジョブをクローンセッション付きでキューに積む
  */
 
 /** Prompt API の `LanguageModel` セッションが最低限備えるべきインターフェース */
@@ -28,11 +33,28 @@ export interface PromptSessionLike {
 
 export type JobPriority = "high" | "low";
 
+export interface PromptJobQueueOptions {
+  /** 低優先度キューの最大長。超えた分は古いものから破棄する。省略時 20 */
+  maxLowPriorityQueueLength?: number;
+}
+
+/**
+ * Prompt API 呼び出しの直列キュー。複数の `SessionPool` で 1 つを共有し、
+ * アプリ全体の同時実行数を 1 に保つ。
+ */
+export interface PromptJobQueue {
+  /**
+   * ジョブをキューに積み、完了(または拒否)した際に解決される Promise を返す。
+   * `run` は前のジョブが完了してから呼び出される。
+   */
+  enqueue<T>(priority: JobPriority, run: () => Promise<T>, signal?: AbortSignal): Promise<T>;
+}
+
 export interface SessionPoolDeps {
   /** ベースセッションを生成する。言語ペア(system prompt)は呼び出し側が組み立てて渡す */
   createBaseSession: () => Promise<PromptSessionLike>;
-  /** 低優先度キューの最大長。超えた分は古いものから破棄する。省略時 20 */
-  maxLowPriorityQueueLength?: number;
+  /** ジョブを積む直列キュー。用途の異なるプール間で同じものを渡し、並走を防ぐ */
+  queue: PromptJobQueue;
 }
 
 export interface SessionPool {
@@ -64,7 +86,7 @@ export class LowPriorityQueueOverflowError extends Error {
 }
 
 interface QueuedJob {
-  run: (session: PromptSessionLike) => Promise<unknown>;
+  run: () => Promise<unknown>;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
   signal?: AbortSignal;
@@ -76,24 +98,12 @@ function abortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException("Aborted", "AbortError");
 }
 
-export function createSessionPool(deps: SessionPoolDeps): SessionPool {
-  const maxLowPriorityQueueLength = deps.maxLowPriorityQueueLength ?? DEFAULT_MAX_LOW_PRIORITY_QUEUE_LENGTH;
+export function createPromptJobQueue(options: PromptJobQueueOptions = {}): PromptJobQueue {
+  const maxLowPriorityQueueLength = options.maxLowPriorityQueueLength ?? DEFAULT_MAX_LOW_PRIORITY_QUEUE_LENGTH;
 
   const highQueue: QueuedJob[] = [];
   const lowQueue: QueuedJob[] = [];
-  let baseSessionPromise: Promise<PromptSessionLike> | null = null;
   let isProcessing = false;
-
-  function getBaseSession(): Promise<PromptSessionLike> {
-    if (!baseSessionPromise) {
-      baseSessionPromise = deps.createBaseSession().catch((error: unknown) => {
-        // 生成に失敗したら次回 enqueue 時に再試行できるようキャッシュを捨てる
-        baseSessionPromise = null;
-        throw error;
-      });
-    }
-    return baseSessionPromise;
-  }
 
   function dropOldestLowPriorityJobIfOverCapacity() {
     while (lowQueue.length > maxLowPriorityQueueLength) {
@@ -120,14 +130,7 @@ export function createSessionPool(deps: SessionPoolDeps): SessionPool {
     isProcessing = true;
     void (async () => {
       try {
-        const baseSession = await getBaseSession();
-        const jobSession = await baseSession.clone();
-        try {
-          const result = await job.run(jobSession);
-          job.resolve(result);
-        } finally {
-          jobSession.destroy();
-        }
+        job.resolve(await job.run());
       } catch (error) {
         job.reject(error);
       } finally {
@@ -138,10 +141,7 @@ export function createSessionPool(deps: SessionPoolDeps): SessionPool {
   }
 
   return {
-    async warmUp() {
-      await getBaseSession();
-    },
-    enqueue<T>(priority: JobPriority, run: (session: PromptSessionLike) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    enqueue<T>(priority: JobPriority, run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
       return new Promise<T>((resolve, reject) => {
         if (signal?.aborted) {
           reject(abortReason(signal));
@@ -149,7 +149,7 @@ export function createSessionPool(deps: SessionPoolDeps): SessionPool {
         }
 
         const job: QueuedJob = {
-          run: run as (session: PromptSessionLike) => Promise<unknown>,
+          run,
           resolve: resolve as (value: unknown) => void,
           reject,
           signal,
@@ -177,6 +177,43 @@ export function createSessionPool(deps: SessionPoolDeps): SessionPool {
 
         processNext();
       });
+    },
+  };
+}
+
+export function createSessionPool(deps: SessionPoolDeps): SessionPool {
+  let baseSessionPromise: Promise<PromptSessionLike> | null = null;
+
+  function getBaseSession(): Promise<PromptSessionLike> {
+    if (!baseSessionPromise) {
+      baseSessionPromise = deps.createBaseSession().catch((error: unknown) => {
+        // 生成に失敗したら次回 enqueue 時に再試行できるようキャッシュを捨てる
+        baseSessionPromise = null;
+        throw error;
+      });
+    }
+    return baseSessionPromise;
+  }
+
+  return {
+    async warmUp() {
+      await getBaseSession();
+    },
+    enqueue<T>(priority: JobPriority, run: (session: PromptSessionLike) => Promise<T>, signal?: AbortSignal): Promise<T> {
+      // ベースセッションの生成・クローンもキューの中で行い、`LanguageModel.create()` を含めて直列にする
+      return deps.queue.enqueue(
+        priority,
+        async () => {
+          const baseSession = await getBaseSession();
+          const jobSession = await baseSession.clone();
+          try {
+            return await run(jobSession);
+          } finally {
+            jobSession.destroy();
+          }
+        },
+        signal,
+      );
     },
   };
 }
