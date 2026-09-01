@@ -1,5 +1,5 @@
 /**
- * 言語ペア設定(学ぶ言語 `targetLang` / 解説言語 `explainLang`)を保持する、モジュールスコープのストア。
+ * 言語設定(学ぶ言語 `learningLangs` / 解説言語 `explainLang`)を保持する、モジュールスコープのストア。
  *
  * 設定の正本は LocalStorage(`lib/settings.ts`)だが、翻訳・Pick up のパイプラインの起動と
  * 設定ダイアログの表示で参照するため、Zustand ストアにキャッシュして参照する(`bot-filter.ts` と同じ構成)。
@@ -8,7 +8,7 @@
  * ブラウザ側で `hydrateSettingsStore()` を呼んだときに初めて復元する。復元は1度だけ行い、
  * 以後の変更は `setSettings` 経由でストアと LocalStorage の両方へ書き込む。
  *
- * 言語ペアが変わると翻訳・Pick up のセッションプール(システムプロンプトに言語ペアを含む)を作り直す必要があるため、
+ * 言語設定が変わると翻訳・Pick up のセッションプール(システムプロンプトに言語ペアを含む)を作り直す必要があるため、
  * ホーム画面はこのストアの `settings` を購読してパイプラインを再起動する(`auto-pipeline.ts` の `start` を参照)。
  */
 import { create } from "zustand";
@@ -22,7 +22,7 @@ interface SettingsState {
   wasCorrupted: boolean;
   /**
    * 設定を更新し、LocalStorage にも保存する。
-   * 学ぶ言語と解説言語が同じなどスキーマに反する値は `saveSettings` が例外を投げ、ストアは変更しない
+   * 学ぶ言語が空などスキーマに反する値は `saveSettings` が例外を投げ、ストアは変更しない
    */
   setSettings: (settings: Settings) => void;
 }

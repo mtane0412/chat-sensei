@@ -106,12 +106,48 @@ describe("describeDiagnosis", () => {
     expect(storageMessage?.level).toBe("warning");
   });
 
-  it("languageDetector が未対応の場合は warning(必須機能ではないため error にしない)", () => {
+  it("languageDetector が未対応の場合は error にし、翻訳・Pick up が発言ごとの言語判定に依存することを伝える", () => {
     const messages = describeDiagnosis(
       baseDiagnosis({ languageDetector: { supported: false, availability: null } }),
     );
 
     const ldMessage = messages.find((m) => m.id === "language-detector");
+    expect(ldMessage?.level).toBe("error");
+    expect(ldMessage?.message).toMatch(/Language Detector API is not available/);
+    expect(ldMessage?.message).toMatch(/Translation and Pick up/);
+  });
+
+  it("languageDetector の availability() が失敗していた場合は error にし、その理由をそのまま伝える", () => {
+    const messages = describeDiagnosis(
+      baseDiagnosis({
+        languageDetector: { supported: true, availability: "unavailable", error: "availability() rejected: undefined" },
+      }),
+    );
+
+    const ldMessage = messages.find((m) => m.id === "language-detector");
+    expect(ldMessage?.level).toBe("error");
+    expect(ldMessage?.message).toMatch(/availability\(\) rejected: undefined/);
+  });
+
+  it("languageModel の availability() が失敗していた場合も error にし、その理由をそのまま伝える", () => {
+    const messages = describeDiagnosis(
+      baseDiagnosis({
+        languageModel: { supported: true, availability: "unavailable", error: "availability() rejected: boom" },
+      }),
+    );
+
+    const lmMessage = messages.find((m) => m.id === "language-model");
+    expect(lmMessage?.level).toBe("error");
+    expect(lmMessage?.message).toMatch(/availability\(\) rejected: boom/);
+  });
+
+  it("languageDetector が 'downloadable' の場合は warning でダウンロードが必要なことを伝える", () => {
+    const messages = describeDiagnosis(
+      baseDiagnosis({ languageDetector: { supported: true, availability: "downloadable" } }),
+    );
+
+    const ldMessage = messages.find((m) => m.id === "language-detector");
     expect(ldMessage?.level).toBe("warning");
+    expect(ldMessage?.message).toMatch(/download/);
   });
 });

@@ -16,21 +16,25 @@
  * (自力で読む練習をしたいときに使う。初期状態はどちらも見える)。
  * 生IRC列の見出しには、新着発言に合わせてスクロール領域を最下部へ送り続ける追従トグル(FollowToggle。
  * 初期状態はオンで、利用者が上へスクロールして最下部から離れると自動でオフになる)と、
- * bot除外設定(BotFilterDialog)を開くアイコンを置く。除外パターンは
+ * 学ぶ言語(LearningLanguagesDialog。複数選択可)、bot除外設定(BotFilterDialog)を開くアイコンを置く。
+ * 翻訳列の見出しには解説言語(ExplanationLanguageDialog)を開くアイコンを置く。言語は配信ごとに異なるため、
+ * アプリ全体の設定(歯車)ではなく対象の列から切り替える。除外パターンは
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
  * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
  * 各パイプラインはこの画面のマウント時に開始する。Prompt API の利用可否は両列で共通の
  * prompt-api ストアを参照し、利用不可の理由は翻訳列・Pick up列それぞれの見出し下に表示する。
- * 接続フォームの横には設定ダイアログ(SettingsDialog)を開くアイコンを置く。言語ペアは settings ストアが
- * LocalStorage から復元し、パイプラインは復元後に開始する。言語ペアが変わると両パイプラインを
- * 停止して新しい言語ペアで開始し直す(生成済みの翻訳・Pick up は破棄され、表示中の発言は再生成される)。
+ * 接続フォームの横には設定ダイアログ(SettingsDialog。環境診断と設定の初期化)を開くアイコンを置く。
+ * 言語設定は settings ストアが LocalStorage から復元し、パイプラインは復元後に開始する。言語設定が変わると
+ * 両パイプラインを停止して新しい設定で開始し直す(生成済みの翻訳・Pick up は破棄され、表示中の発言は再生成される)。
+ * 発言ごとの言語判定で処理しなかった行(解説言語と同じ / 学ぶ言語ではない)は、その旨を各列に表示する。
  */
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronsDownIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
+import { ExplanationLanguageDialog, LearningLanguagesDialog } from "@/components/language-dialogs";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -138,10 +142,12 @@ export default function Home() {
   useEffect(() => hydrateBotFilterStore(), []);
 
   const settingsHydrated = useSettingsStore((state) => state.hydrated);
-  const targetLang = useSettingsStore((state) => state.settings.targetLang);
-  const explainLang = useSettingsStore((state) => state.settings.explainLang);
+  const settings = useSettingsStore((state) => state.settings);
+  // 言語設定の内容が変わったときだけパイプラインを再起動するため、値を文字列にして依存に使う
+  // (`setSettings` は同じ内容でも新しいオブジェクトを作るため、参照比較では再起動してしまう)
+  const settingsKey = `${settings.learningLangs.join(",")}|${settings.explainLang}`;
 
-  // 受信した発言を自動で翻訳・抽出ジョブに流す。言語ペアの復元後に開始し、言語ペアが変わるたびに
+  // 受信した発言を自動で翻訳・抽出ジョブに流す。言語設定の復元後に開始し、言語設定が変わるたびに
   // 停止 → 開始し直す(セッションプールのシステムプロンプトに言語ペアを含むため)。
   // 変更時に既に接続済みなら、設定の保存というユーザー操作の延長でセッションを先に生成しておく
   useEffect(() => {
@@ -149,13 +155,13 @@ export default function Home() {
     const stop = startTranslationPipeline();
     if (isConnectingOrConnected(useChatConnectionStore.getState().connectionState)) warmUpTranslationPipeline();
     return stop;
-  }, [settingsHydrated, targetLang, explainLang]);
+  }, [settingsHydrated, settingsKey]);
   useEffect(() => {
     if (!settingsHydrated) return;
     const stop = startPickupPipeline();
     if (isConnectingOrConnected(useChatConnectionStore.getState().connectionState)) warmUpPickupPipeline();
     return stop;
-  }, [settingsHydrated, targetLang, explainLang]);
+  }, [settingsHydrated, settingsKey]);
 
   const handleConnect = useCallback(() => {
     const channel = channelInput.trim();
@@ -210,6 +216,7 @@ export default function Home() {
             headerAction={
               <>
                 <FollowToggle following={followLatest} onFollowingChange={setFollowLatest} />
+                <LearningLanguagesDialog />
                 <BotFilterDialog />
               </>
             }
@@ -224,7 +231,10 @@ export default function Home() {
             title="Translation"
             blurred={translationBlurred}
             headerAction={
-              <BlurToggle label="Blur translation" blurred={translationBlurred} onBlurredChange={setTranslationBlurred} />
+              <>
+                <ExplanationLanguageDialog />
+                <BlurToggle label="Blur translation" blurred={translationBlurred} onBlurredChange={setTranslationBlurred} />
+              </>
             }
             headerExtra={<PromptApiUnavailableReason promptApi={promptApi} />}
           >
@@ -396,8 +406,8 @@ function PromptApiUnavailableReason({ promptApi }: { promptApi: PromptApiStatus 
 }
 
 /**
- * 翻訳列・Pick up列で共通の1行の中身。生成中・失敗・キュー溢れ・Prompt API 利用不可の各状態を
- * 暗黙に隠さず明示する。表示文言は `labels`(翻訳列・Pick up 列ごとの文言一式)から選び、完了時の描画だけを
+ * 翻訳列・Pick up列で共通の1行の中身。生成中・失敗・キュー溢れ・Prompt API 利用不可・
+ * 言語判定によるスキップ(解説言語と同じ / 学ぶ言語ではない)の各状態を暗黙に隠さず明示する。表示文言は `labels`(翻訳列・Pick up 列ごとの文言一式)から選び、完了時の描画だけを
  * `renderDone` で列ごとに差し替える。
  */
 function PipelineCellContent<TDone extends object>({
@@ -438,6 +448,10 @@ function PipelineCellContent<TDone extends object>({
       return <span className="text-muted-foreground">{labels.notYet} (too many messages)</span>;
     case "unavailable":
       return <span className="text-muted-foreground">{labels.unavailable}</span>;
+    case "same-language":
+      return <span className="text-muted-foreground">Same language</span>;
+    case "other-language":
+      return <span className="text-muted-foreground">Not a learning language ({entry.detectedLanguage})</span>;
   }
 }
 

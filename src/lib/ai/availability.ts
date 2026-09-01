@@ -27,8 +27,14 @@ export const MINIMUM_CHROME_VERSION = 148;
 export interface ApiDiagnosis {
   /** `window` にAPI自体が存在するか(ブラウザ・バージョンによる対応可否) */
   supported: boolean;
-  /** `availability()` の呼び出し結果。`supported` が false の場合は null */
+  /** `availability()` の呼び出し結果。`supported` が false の場合は null。`availability()` 自体が失敗した場合は "unavailable" */
   availability: ApiAvailability | null;
+  /**
+   * `availability()` の呼び出しが例外・reject で失敗した場合の理由。
+   * Chrome 側で API が無効化されていると `undefined` で reject することがあり(Chrome 152 で確認)、
+   * 診断全体を失敗させる代わりに、その API だけを理由付きで利用不可として報告する
+   */
+  error?: string;
 }
 
 /** ストレージ空き容量の概算(バイト単位)。取得できない場合は null */
@@ -44,7 +50,10 @@ export interface EnvironmentDiagnosis {
   languageModel: ApiDiagnosis;
   languageDetector: ApiDiagnosis;
   storageEstimate: StorageEstimate;
-  /** Prompt API がすぐに使える、またはユーザー操作でダウンロードを開始できる状態か */
+  /**
+   * Prompt API と Language Detector API の両方が、すぐに使えるかユーザー操作でダウンロードを開始できる状態か。
+   * 翻訳・Pick up は発言ごとの言語判定(Language Detector)を前提にするため、どちらか一方では不十分とする
+   */
   overallReady: boolean;
 }
 
@@ -86,6 +95,20 @@ function isUsableAvailability(availability: ApiAvailability | null): boolean {
 }
 
 /**
+ * 1 つの組み込み API の `availability()` を呼び、失敗した場合は理由付きの unavailable にする。
+ * API が注入されていない(環境に存在しない)場合は未対応として扱う
+ */
+async function diagnoseApi(api: { availability: () => Promise<ApiAvailability> } | undefined): Promise<ApiDiagnosis> {
+  if (!api) return { supported: false, availability: null };
+  try {
+    return { supported: true, availability: await api.availability() };
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return { supported: true, availability: "unavailable", error: `availability() rejected: ${reason}` };
+  }
+}
+
+/**
  * 注入された依存性をもとにブラウザ環境を診断する。
  *
  * `languageModel` / `languageDetector` / `storage` を省略した場合は、
@@ -94,13 +117,8 @@ function isUsableAvailability(availability: ApiAvailability | null): boolean {
 export async function diagnoseEnvironment(deps: DiagnosisDeps): Promise<EnvironmentDiagnosis> {
   const chromeVersion = parseChromeMajorVersion(deps.userAgent);
 
-  const languageModel: ApiDiagnosis = deps.languageModel
-    ? { supported: true, availability: await deps.languageModel.availability() }
-    : { supported: false, availability: null };
-
-  const languageDetector: ApiDiagnosis = deps.languageDetector
-    ? { supported: true, availability: await deps.languageDetector.availability() }
-    : { supported: false, availability: null };
+  const languageModel = await diagnoseApi(deps.languageModel);
+  const languageDetector = await diagnoseApi(deps.languageDetector);
 
   let storageEstimate: StorageEstimate = { quota: null, usage: null };
   if (deps.storage) {
@@ -117,6 +135,7 @@ export async function diagnoseEnvironment(deps: DiagnosisDeps): Promise<Environm
     languageModel,
     languageDetector,
     storageEstimate,
-    overallReady: isUsableAvailability(languageModel.availability),
+    overallReady:
+      isUsableAvailability(languageModel.availability) && isUsableAvailability(languageDetector.availability),
   };
 }

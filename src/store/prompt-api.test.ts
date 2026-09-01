@@ -36,6 +36,17 @@ describe("ensurePromptApiDiagnosed", () => {
     expect(usePromptApiStore.getState().status).toEqual(status);
   });
 
+  it("Prompt API は使えるが Language Detector が使えない場合は、Language Detector を理由にした unavailable になる", async () => {
+    const status = await ensurePromptApiDiagnosed(async () => ({
+      ...createDiagnosis(true),
+      languageDetector: { supported: false, availability: null },
+      overallReady: false,
+    }));
+
+    expect(status.status).toBe("unavailable");
+    expect(status.status === "unavailable" && status.reason).toMatch(/Language Detector/);
+  });
+
   it("診断そのものが失敗した場合は、その旨を理由にした unavailable になる(暗黙に ready 扱いしない)", async () => {
     const status = await ensurePromptApiDiagnosed(async () => {
       throw new Error("navigator.storage が使えません");

@@ -113,6 +113,18 @@ export function isEmoteOnlyMessage(text: string, emotes: EmotePosition[]): boole
   );
 }
 
+/**
+ * emote を取り除いたテキスト部分だけを空白 1 つで連結して返す。
+ * 言語判定(Language Detector)に emote 名(英字の固有名)を混ぜると判定が英語に寄るため、判定にはこの結果を使う。
+ */
+export function extractPlainText(text: string, emotes: EmotePosition[]): string {
+  return splitMessageIntoSegments(text, emotes)
+    .filter((segment): segment is TextSegment => segment.type === "text")
+    .map((segment) => segment.text.trim())
+    .filter((part) => part.length > 0)
+    .join(" ");
+}
+
 /** LLM に渡す本文の中で emote 1 件を置き換えるプレースホルダと、元の emote(ID・名前)の対応 */
 export interface EmotePlaceholder {
   /** 本文中に埋め込む記号トークン(例: `[[E0]]`) */

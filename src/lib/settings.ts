@@ -1,5 +1,9 @@
 /**
- * 学ぶ言語(targetLang)・解説言語(explainLang)の設定を LocalStorage に保存・復元するモジュール。
+ * 学ぶ言語(learningLangs: 1つ以上)・解説言語(explainLang)の設定を LocalStorage に保存・復元するモジュール。
+ *
+ * 学ぶ言語は配信ごとに複数の言語が混ざるチャット(英語と日本語など)に対応するため複数選べる。
+ * 学ぶ言語と解説言語が同じ組み合わせは禁止しない。解説言語と同じ言語の発言は翻訳・Pick up をしない、
+ * という扱いをパイプライン側(`store/auto-pipeline.ts`)が Language Detector の判定結果で行う。
  *
  * chat-sensei はログイン不要・サーバー不要のクライアントサイド専用アプリのため、
  * 利用者の設定は LocalStorage のみに永続化する。保存データが壊れている・
@@ -12,22 +16,20 @@ import { SUPPORTED_LANGUAGES, type SupportedLanguage } from "./ai/prompts";
 
 export const SETTINGS_STORAGE_KEY = "chat-sensei:settings";
 
-export const settingsSchema = z
-  .object({
-    /** 学ぶ言語(Twitchチャットの原文言語) */
-    targetLang: z.enum(SUPPORTED_LANGUAGES),
-    /** 解説言語(AIが生成する解説の言語) */
-    explainLang: z.enum(SUPPORTED_LANGUAGES),
-  })
-  .refine((data) => data.targetLang !== data.explainLang, {
-    message: "The learning language and the explanation language must be different",
-    path: ["explainLang"],
-  });
+export const settingsSchema = z.object({
+  /** 学ぶ言語(Twitchチャットの原文として翻訳・Pick up の対象にする言語)。1つ以上、重複なし */
+  learningLangs: z
+    .array(z.enum(SUPPORTED_LANGUAGES))
+    .min(1, "Select at least one learning language")
+    .refine((langs) => new Set(langs).size === langs.length, { message: "Learning languages must not repeat" }),
+  /** 解説言語(訳文・Pick up の意味の言語) */
+  explainLang: z.enum(SUPPORTED_LANGUAGES),
+});
 
 export type Settings = z.infer<typeof settingsSchema>;
 
 export const DEFAULT_SETTINGS: Settings = {
-  targetLang: "en",
+  learningLangs: ["en"],
   explainLang: "ja",
 };
 
@@ -69,7 +71,7 @@ export function loadSettings(): LoadSettingsResult {
   }
 }
 
-/** 設定を LocalStorage に保存する。スキーマ(学ぶ言語≠解説言語 含む)に反する値は例外を投げて拒否する */
+/** 設定を LocalStorage に保存する。スキーマ(学ぶ言語が空・重複など)に反する値は例外を投げて拒否する */
 export function saveSettings(settings: Settings): void {
   ensureBrowserEnvironment();
   const validated = settingsSchema.parse(settings);

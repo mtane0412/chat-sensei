@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildEmoteImageUrl,
+  extractPlainText,
   isEmoteOnlyMessage,
   maskEmotesWithPlaceholders,
   restoreEmotesFromPlaceholders,
@@ -211,5 +212,21 @@ describe("isEmoteOnlyMessage", () => {
   it("emote が無い発言は false(空文字列でも翻訳側の判断に委ねる)", () => {
     expect(isEmoteOnlyMessage("hello", [])).toBe(false);
     expect(isEmoteOnlyMessage("", [])).toBe(false);
+  });
+});
+
+describe("extractPlainText", () => {
+  it("emote を取り除いたテキスト部分だけを空白区切りで返す(言語判定に emote 名を混ぜないため)", () => {
+    const text = "Kappa gg chat Kappa";
+    const emotes = [
+      { id: "25", start: 0, end: 4 },
+      { id: "25", start: 14, end: 18 },
+    ];
+
+    expect(extractPlainText(text, emotes)).toBe("gg chat");
+  });
+
+  it("emote だけの発言では空文字を返す", () => {
+    expect(extractPlainText("Kappa", [{ id: "25", start: 0, end: 4 }])).toBe("");
   });
 });

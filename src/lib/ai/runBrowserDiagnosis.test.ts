@@ -31,16 +31,18 @@ describe("runBrowserDiagnosis", () => {
     expect(result.languageModel).toEqual({ supported: false, availability: null });
   });
 
-  it("window.LanguageModel が存在する場合はその availability() を呼び出して反映する", async () => {
+  it("window.LanguageModel / window.LanguageDetector が存在する場合はそれぞれの availability() を呼び出して反映する", async () => {
     stubNavigator({
       userAgent:
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.187 Safari/537.36",
     });
     vi.stubGlobal("LanguageModel", { availability: async () => "available" as const });
+    vi.stubGlobal("LanguageDetector", { availability: async () => "available" as const });
 
     const result = await runBrowserDiagnosis();
 
     expect(result.languageModel).toEqual({ supported: true, availability: "available" });
+    expect(result.languageDetector).toEqual({ supported: true, availability: "available" });
     expect(result.overallReady).toBe(true);
   });
 

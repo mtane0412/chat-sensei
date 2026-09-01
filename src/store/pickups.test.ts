@@ -32,14 +32,15 @@ describe("startPickupPipeline", () => {
     stop();
   });
 
-  it("emote だけの発言は LLM を呼ばずに terms が空の done として保持する(issue #26)", async () => {
-    const { deps, emit, enqueue } = createDeps();
+  it("emote だけの発言は言語判定も LLM 呼び出しもせずに terms が空の done として保持する(issue #26。判定すると und で対象外になってしまうため)", async () => {
+    const { deps, emit, enqueue, detect } = createDeps();
 
     const stop = startPickupPipeline(deps);
     await flush();
     emit(createMessage({ id: "msg-1", text: "Kappa", emotes: [{ id: "25", start: 0, end: 4 }] }));
     await flush();
 
+    expect(detect).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
     expect(usePickupStore.getState().entries["msg-1"]).toEqual({ status: "done", terms: [] });
     stop();

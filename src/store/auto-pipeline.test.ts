@@ -1,8 +1,9 @@
 /**
  * src/store/auto-pipeline.ts(受信した発言を自動で LLM ジョブに流す共通パイプラインのファクトリ)のテスト。
  *
- * 翻訳列・Pick up 列に共通する振る舞い ―― 受信した発言ごとにジョブを低優先度で投入し、その結果
- * (生成中・完了・失敗・キュー溢れ・Prompt API 利用不可)を発言 ID に紐づけて保持すること、
+ * 翻訳列・Pick up 列に共通する振る舞い ―― 受信した発言ごとに Language Detector で言語を判定し、
+ * 学ぶ言語ならその言語のセッションプールへジョブを低優先度で投入し、その結果
+ * (生成中・完了・失敗・キュー溢れ・Prompt API 利用不可・同じ言語・対象外の言語)を発言 ID に紐づけて保持すること、
  * 環境診断が終わるまで発言を保留すること、ウォームアップ、リングバッファから消えた発言の破棄 ――
  * をここで検証する。翻訳・Pick up 固有の振る舞いは `translations.test.ts` / `pickups.test.ts` が担当する。
  */
@@ -209,7 +210,7 @@ describe("createAutoPipeline().start", () => {
     stop();
   });
 
-  it("設定の言語ペアでセッションプールを生成する", async () => {
+  it("判定した学ぶ言語と解説言語のペアでセッションプールを生成する", async () => {
     const { deps, emit } = createDeps({ promptResults: [Promise.resolve("t")] });
 
     const stop = start(deps);
@@ -217,7 +218,114 @@ describe("createAutoPipeline().start", () => {
     emit(createMessage());
     await flush();
 
-    expect(deps.createPool).toHaveBeenCalledWith({ targetLang: "en", explainLang: "ja" });
+    expect(deps.createPool).toHaveBeenCalledWith("en", "ja");
+    stop();
+  });
+
+  it("言語判定には emote を取り除いた本文を渡す(emote 名で判定が英語に寄らないようにする)", async () => {
+    const { deps, emit, detect } = createDeps({ promptResults: [Promise.resolve("t")] });
+
+    const stop = start(deps);
+    await flush();
+    emit(createMessage({ text: "Kappa gg chat", emotes: [{ id: "25", start: 0, end: 4 }] }));
+    await flush();
+
+    expect(detect).toHaveBeenCalledWith("gg chat");
+    stop();
+  });
+
+  it("学ぶ言語が複数のとき、判定した言語ごとに別のセッションプールを使う", async () => {
+    const { deps, emit, detect } = createDeps({
+      promptResults: [Promise.resolve("英語の結果"), Promise.resolve("スペイン語の結果")],
+      settings: { learningLangs: ["en", "es"], explainLang: "ja" },
+    });
+    detect
+      .mockResolvedValueOnce([{ detectedLanguage: "en", confidence: 0.9 }])
+      .mockResolvedValueOnce([{ detectedLanguage: "es", confidence: 0.9 }]);
+
+    const stop = start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-en", text: "gg chat" }));
+    emit(createMessage({ id: "msg-es", text: "vamos equipo" }));
+    await flush();
+
+    expect(deps.createPool).toHaveBeenCalledTimes(2);
+    expect(deps.createPool).toHaveBeenNthCalledWith(1, "en", "ja");
+    expect(deps.createPool).toHaveBeenNthCalledWith(2, "es", "ja");
+    expect(useStore.getState().entries["msg-en"]).toEqual({ status: "done", result: "英語の結果" });
+    expect(useStore.getState().entries["msg-es"]).toEqual({ status: "done", result: "スペイン語の結果" });
+    stop();
+  });
+
+  it("同じ学ぶ言語の発言が続いても、その言語のセッションプールは 1 つだけ生成する", async () => {
+    const { deps, emit } = createDeps({ promptResults: [Promise.resolve("1"), Promise.resolve("2")] });
+
+    const stop = start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1" }));
+    emit(createMessage({ id: "msg-2" }));
+    await flush();
+
+    expect(deps.createPool).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("解説言語と同じ言語と判定した発言は、モデルを呼ばず same-language として保持する", async () => {
+    const { deps, emit, enqueue } = createDeps({
+      detectedLanguage: "ja",
+      settings: { learningLangs: ["en", "ja"], explainLang: "ja" },
+    });
+
+    const stop = start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "ナイスプレー" }));
+    await flush();
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(deps.createPool).not.toHaveBeenCalled();
+    expect(useStore.getState().entries["msg-1"]).toEqual({ status: "same-language" });
+    stop();
+  });
+
+  it("学ぶ言語にも解説言語にも該当しない発言は、判定した言語を添えて other-language として保持する", async () => {
+    const { deps, emit, enqueue } = createDeps({ detectedLanguage: "ko" });
+
+    const stop = start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "안녕하세요" }));
+    await flush();
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(useStore.getState().entries["msg-1"]).toEqual({ status: "other-language", detectedLanguage: "ko" });
+    stop();
+  });
+
+  it("言語判定が失敗した場合は理由付きで failed として保持する(暗黙に学ぶ言語で処理しない)", async () => {
+    const { deps, emit, detect, enqueue } = createDeps();
+    detect.mockRejectedValueOnce(new Error("Language Detector がクラッシュしました"));
+
+    const stop = start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1" }));
+    await flush();
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(useStore.getState().entries["msg-1"]).toEqual({
+      status: "failed",
+      reason: "Language Detector がクラッシュしました",
+    });
+    stop();
+  });
+
+  it("resolveWithoutModel が結果を返した発言は言語判定もしない", async () => {
+    const { deps, emit, detect } = createDeps();
+
+    const stop = start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "skip: そのまま" }));
+    await flush();
+
+    expect(detect).not.toHaveBeenCalled();
     stop();
   });
 
@@ -323,16 +431,54 @@ describe("createAutoPipeline().start", () => {
 });
 
 describe("createAutoPipeline().warmUp", () => {
-  it("診断が ready のとき、ユーザー操作の延長でセッションプールを生成しベースセッションをウォームアップする", async () => {
-    const { deps, warmUp } = createDeps({ ready: true });
+  it("診断が ready のとき、ユーザー操作の延長で Language Detector と学ぶ言語ごとのセッションプールを生成しウォームアップする", async () => {
+    const { deps, warmUp, createDetector } = createDeps({
+      ready: true,
+      settings: { learningLangs: ["en", "es"], explainLang: "ja" },
+    });
 
     const stop = start(deps);
     await flush();
     warmUpPipeline();
     await flush();
 
-    expect(deps.createPool).toHaveBeenCalledWith({ targetLang: "en", explainLang: "ja" });
+    expect(createDetector).toHaveBeenCalledTimes(1);
+    expect(deps.createPool).toHaveBeenCalledTimes(2);
+    expect(deps.createPool).toHaveBeenNthCalledWith(1, "en", "ja");
+    expect(deps.createPool).toHaveBeenNthCalledWith(2, "es", "ja");
+    expect(warmUp).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
+  it("学ぶ言語に解説言語が含まれていても、解説言語のセッションプールはウォームアップしない(その言語の発言は処理しないため)", async () => {
+    const { deps, warmUp } = createDeps({
+      ready: true,
+      settings: { learningLangs: ["en", "ja"], explainLang: "ja" },
+    });
+
+    const stop = start(deps);
+    await flush();
+    warmUpPipeline();
+    await flush();
+
+    expect(deps.createPool).toHaveBeenCalledTimes(1);
+    expect(deps.createPool).toHaveBeenCalledWith("en", "ja");
     expect(warmUp).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("Language Detector の生成に失敗した場合は共有の Prompt API 状態を unavailable にして理由を保持する", async () => {
+    const { deps, createDetector } = createDeps({ ready: true });
+    createDetector.mockRejectedValueOnce(new Error("NotAllowedError: user activation is required"));
+
+    const stop = start(deps);
+    await flush();
+    warmUpPipeline();
+    await flush();
+
+    const promptApi = usePromptApiStore.getState().status;
+    expect(promptApi.status).toBe("unavailable");
+    expect(promptApi.status === "unavailable" && promptApi.reason).toMatch(/Language Detector.*user activation/);
     stop();
   });
 

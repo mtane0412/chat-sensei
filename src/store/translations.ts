@@ -9,6 +9,8 @@
  * - ジョブ: emote を `[[E0]]` のようなプレースホルダに置き換えた本文で `translateChatMessage` を低優先度で実行し、
  *   訳文中のプレースホルダを emote セグメントに戻した `segments` を保持する(issue #44。LLM に emote 名を
  *   見せると意訳して書き換えることがあり、名前の一致では復元できないため)
+ * - 発言ごとの言語判定(学ぶ言語ならその言語のセッションプールへ、解説言語と同じ・対象外ならスキップ)は
+ *   `auto-pipeline.ts` が行う。ベースセッションは「学ぶ言語 1 つ × 解説言語」のペアごとに組み立てる
  * - Prompt API の利用可否は `prompt-api.ts` の共有ストアを参照する(Pick up 列と共通)
  */
 import { createTranslateBaseSessionFactory, translateChatMessage } from "@/lib/ai/translate";
@@ -34,7 +36,7 @@ export type TranslationEntry = PipelineEntry<TranslationDone>;
 export type TranslationPipelineDeps = AutoPipelineDeps;
 
 const pipeline = createAutoPipeline<TranslationDone>({
-  createBaseSession: (settings) => createTranslateBaseSessionFactory(settings.targetLang, settings.explainLang),
+  createBaseSession: (targetLang, explainLang) => createTranslateBaseSessionFactory(targetLang, explainLang),
   resolveWithoutModel: (message) =>
     isEmoteOnlyMessage(message.text, message.emotes) || isChatCommandMessage(message.text)
       ? { segments: splitMessageIntoSegments(message.text, message.emotes) }

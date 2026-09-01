@@ -62,20 +62,22 @@ describe("diagnoseEnvironment", () => {
     expect(result.overallReady).toBe(false);
   });
 
-  it("LanguageModel.availability() が 'available' を返す場合は利用可能と判定する", async () => {
+  it("LanguageModel と LanguageDetector の両方が 'available' を返す場合は利用可能と判定する", async () => {
     const result = await diagnoseEnvironment({
       userAgent: chromeUa,
       languageModel: { availability: async () => "available" },
+      languageDetector: { availability: async () => "available" },
     });
 
     expect(result.languageModel).toEqual({ supported: true, availability: "available" });
     expect(result.overallReady).toBe(true);
   });
 
-  it("LanguageModel.availability() が 'downloadable' の場合も利用可能扱いにする(初回DLで開始できるため)", async () => {
+  it("両方が 'downloadable' の場合も利用可能扱いにする(初回DLで開始できるため)", async () => {
     const result = await diagnoseEnvironment({
       userAgent: chromeUa,
       languageModel: { availability: async () => "downloadable" },
+      languageDetector: { availability: async () => "downloadable" },
     });
 
     expect(result.overallReady).toBe(true);
@@ -85,8 +87,45 @@ describe("diagnoseEnvironment", () => {
     const result = await diagnoseEnvironment({
       userAgent: chromeUa,
       languageModel: { availability: async () => "unavailable" },
+      languageDetector: { availability: async () => "available" },
     });
 
+    expect(result.overallReady).toBe(false);
+  });
+
+  it("LanguageModel が使えても LanguageDetector が無い場合は利用不可と判定する(発言ごとの言語判定に必須のため)", async () => {
+    const result = await diagnoseEnvironment({
+      userAgent: chromeUa,
+      languageModel: { availability: async () => "available" },
+    });
+
+    expect(result.overallReady).toBe(false);
+  });
+
+  it("LanguageDetector.availability() が 'unavailable' の場合は利用不可と判定する", async () => {
+    const result = await diagnoseEnvironment({
+      userAgent: chromeUa,
+      languageModel: { availability: async () => "available" },
+      languageDetector: { availability: async () => "unavailable" },
+    });
+
+    expect(result.overallReady).toBe(false);
+  });
+
+  it("availability() が reject した API は、その理由を添えて unavailable として扱い、診断全体は失敗させない(Chrome 側で API が無効化されている場合など)", async () => {
+    const result = await diagnoseEnvironment({
+      userAgent: chromeUa,
+      languageModel: { availability: async () => "available" },
+      // Chrome 152 で Language Detector API が無効化されているとき、実際に undefined で reject する
+      languageDetector: { availability: () => Promise.reject(undefined) },
+    });
+
+    expect(result.languageModel).toEqual({ supported: true, availability: "available" });
+    expect(result.languageDetector).toEqual({
+      supported: true,
+      availability: "unavailable",
+      error: "availability() rejected: undefined",
+    });
     expect(result.overallReady).toBe(false);
   });
 

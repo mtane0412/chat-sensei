@@ -1,9 +1,9 @@
 /**
  * src/components/settings-dialog.tsx(設定ダイアログ)のテスト。
  *
- * ホーム画面の接続フォーム横のアイコンから開き、言語ペア(学ぶ言語 / 解説言語)の変更・保存、
- * 保存データが壊れていた場合の通知、Prompt API の環境診断結果の表示、設定の初期化ができることを検証する。
- * 言語ペアの正本は settings ストア(LocalStorage 連携)にあるため、ストアと LocalStorage の両方を確認する。
+ * ホーム画面の接続フォーム横のアイコンから開き、保存データが壊れていた場合の通知、
+ * Prompt API / Language Detector の環境診断結果の表示、設定の初期化ができることを検証する。
+ * 言語設定(学ぶ言語 / 解説言語)は各列の見出しのダイアログ(`language-dialogs.tsx`)に移したため、ここでは扱わない。
  * 環境診断(`runBrowserDiagnosis`)はブラウザ API に触れるためモックする。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -47,55 +47,22 @@ async function openDialog(user: ReturnType<typeof userEvent.setup>) {
   return screen.findByRole("dialog", { name: "Settings" });
 }
 
-describe("SettingsDialog(言語ペア)", () => {
-  it("ストアが LocalStorage から未復元の間は、設定ボタンを無効にして開けないようにする(デフォルト設定で上書きしないため)", () => {
+describe("SettingsDialog(設定の初期化・通知)", () => {
+  it("ストアが LocalStorage から未復元の間は、設定ボタンを無効にして開けないようにする(初期化でデフォルトを書き込まないため)", () => {
     render(<SettingsDialog />);
 
     expect(screen.getByRole("button", { name: "Settings" })).toBeDisabled();
   });
 
-  it("設定ボタンから開くと、学ぶ言語・解説言語のセレクトに現在の設定が入っている", async () => {
-    const user = userEvent.setup();
-    hydrateSettingsStore();
-    useSettingsStore.getState().setSettings({ targetLang: "es", explainLang: "en" });
-    render(<SettingsDialog />);
-
-    const dialog = await openDialog(user);
-
-    expect(within(dialog).getByRole("combobox", { name: "Learning language" })).toHaveValue("es");
-    expect(within(dialog).getByRole("combobox", { name: "Explanation language" })).toHaveValue("en");
-  });
-
-  it("言語ペアを変更して保存すると、ストアに反映され LocalStorage にも保存され、ダイアログが閉じる", async () => {
+  it("言語設定のセレクトは置かない(学ぶ言語・解説言語は各列の見出しから設定する)", async () => {
     const user = userEvent.setup();
     hydrateSettingsStore();
     render(<SettingsDialog />);
 
     const dialog = await openDialog(user);
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Learning language" }), "de");
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
-    expect(useSettingsStore.getState().settings).toEqual({ targetLang: "de", explainLang: "ja" });
-    expect(JSON.parse(window.localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "null")).toEqual({
-      targetLang: "de",
-      explainLang: "ja",
-    });
-    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
-  });
-
-  it("学ぶ言語と解説言語に同じ言語を選んで保存するとエラーを表示し、保存しない", async () => {
-    const user = userEvent.setup();
-    hydrateSettingsStore();
-    render(<SettingsDialog />);
-
-    const dialog = await openDialog(user);
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Learning language" }), "ja");
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
-
-    expect(within(dialog).getByRole("alert")).toHaveTextContent("must be different");
-    expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS);
-    expect(window.localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
-    expect(screen.getByRole("dialog", { name: "Settings" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 
   it("保存データが壊れていた場合は、デフォルトに戻した旨を表示する", async () => {
@@ -109,9 +76,9 @@ describe("SettingsDialog(言語ペア)", () => {
     expect(within(dialog).getByText(/reset to the defaults/)).toBeInTheDocument();
   });
 
-  it("「設定を初期化する」で LocalStorage の設定を削除し、セレクトもデフォルトに戻る", async () => {
+  it("「設定を初期化する」で LocalStorage の設定を削除し、ストアもデフォルトに戻る", async () => {
     const user = userEvent.setup();
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ targetLang: "fr", explainLang: "en" }));
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ learningLangs: ["fr"], explainLang: "en" }));
     hydrateSettingsStore();
     render(<SettingsDialog />);
 
@@ -120,8 +87,6 @@ describe("SettingsDialog(言語ペア)", () => {
 
     expect(window.localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
     expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS);
-    expect(within(dialog).getByRole("combobox", { name: "Learning language" })).toHaveValue("en");
-    expect(within(dialog).getByRole("combobox", { name: "Explanation language" })).toHaveValue("ja");
   });
 });
 
@@ -138,7 +103,7 @@ describe("SettingsDialog(環境診断)", () => {
     expect(items.map((item) => item.textContent)).toEqual([
       expect.stringContaining("Chrome 150"),
       expect.stringContaining("The Prompt API is ready to use"),
-      expect.stringContaining("The Language Detector API is available"),
+      expect.stringContaining("The Language Detector API is ready to use"),
       expect.stringContaining("about 10.0GB"),
     ]);
   });

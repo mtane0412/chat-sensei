@@ -1,5 +1,6 @@
 /**
- * Prompt API(Gemini Nano)の利用可否を 1 か所で保持する共有ストア。
+ * Prompt API(Gemini Nano)と Language Detector API の利用可否を 1 か所で保持する共有ストア。
+ * 翻訳・Pick up は発言ごとの言語判定(Language Detector)を前提にするため、両方が使えて初めて `ready` とする。
  *
  * 翻訳列(`translations.ts`)と Pick up 列(`pickups.ts`)は同じ環境で動くため、環境診断は 1 回だけ実行し、
  * その結果(`PromptApiStatus`)を両パイプラインとページで共有する。パイプラインごとに診断・保持していた
@@ -33,10 +34,17 @@ export const usePromptApiStore = create<PromptApiState>(() => ({
 /** 実行中の環境診断。同時に複数のパイプラインから呼ばれても診断を 1 回にまとめるために保持する */
 let inFlightDiagnosis: Promise<PromptApiStatus> | null = null;
 
-/** 環境診断結果から、利用者に見せる「Prompt API が使えない理由」を取り出す */
+/**
+ * 環境診断結果から、利用者に見せる「使えない理由」を取り出す。
+ * Prompt API と Language Detector API のうち error になっているものを優先し、
+ * どちらも error でなければ(診断の判定と食い違う場合)Prompt API のメッセージを返す
+ */
 function describePromptApiUnavailableReason(diagnosis: EnvironmentDiagnosis): string {
-  const message = describeDiagnosis(diagnosis).find((item) => item.id === "language-model");
-  return message?.message ?? "The Prompt API is not available.";
+  const messages = describeDiagnosis(diagnosis).filter(
+    (item) => item.id === "language-model" || item.id === "language-detector",
+  );
+  const failed = messages.find((item) => item.level === "error");
+  return failed?.message ?? messages[0]?.message ?? "The Prompt API is not available.";
 }
 
 /**
