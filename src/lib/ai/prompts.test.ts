@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildExplainSystemPrompt,
   buildExplainUserPrompt,
+  buildPickupSystemPrompt,
+  buildPickupUserPrompt,
   buildTranslateSystemPrompt,
   buildTranslateUserPrompt,
   SUPPORTED_LANGUAGES,
@@ -152,5 +154,62 @@ describe("buildTranslateUserPrompt", () => {
 
   it("解説用のユーザープロンプトとは異なる文言で翻訳対象であることを示す", () => {
     expect(buildTranslateUserPrompt("hello")).not.toBe(buildExplainUserPrompt("hello"));
+  });
+});
+
+describe("buildPickupSystemPrompt", () => {
+  it("解説言語がjaのとき、学ぶ言語の特殊な表現を抜き出して日本語で意味を示すよう指示する日本語のシステムプロンプトを組み立てる", () => {
+    const prompt = buildPickupSystemPrompt("en", "ja");
+
+    expect(prompt).toContain("英語");
+    expect(prompt).toContain("日本語");
+    expect(prompt).toMatch(/スラング/);
+    expect(prompt).toMatch(/空/);
+  });
+
+  it("解説言語がenのとき、英語のシステムプロンプトを組み立てる", () => {
+    const prompt = buildPickupSystemPrompt("ja", "en");
+
+    expect(prompt).toContain("Japanese");
+    expect(prompt).toContain("English");
+    expect(prompt).toMatch(/slang/i);
+    expect(prompt).toMatch(/empty/i);
+  });
+
+  it("アルファベット言語の意味説明は文字数ではなく語数で長さを指示する(10〜20文字では短すぎるため)", () => {
+    for (const explainLang of ["en", "es", "de", "fr"] as const) {
+      const prompt = buildPickupSystemPrompt("ja", explainLang);
+      expect(prompt).not.toMatch(/10 (to|a|bis|à) 20 (characters|caracteres|Zeichen|caractères)/);
+    }
+    expect(buildPickupSystemPrompt("ja", "en")).toMatch(/words/);
+  });
+
+  it("解説用・翻訳用のシステムプロンプトとは別物である", () => {
+    const prompt = buildPickupSystemPrompt("en", "ja");
+
+    expect(prompt).not.toBe(buildExplainSystemPrompt("en", "ja"));
+    expect(prompt).not.toBe(buildTranslateSystemPrompt("en", "ja"));
+  });
+
+  it("すべてのサポート言語の組み合わせでエラーなくプロンプトを生成できる", () => {
+    for (const targetLang of SUPPORTED_LANGUAGES) {
+      for (const explainLang of SUPPORTED_LANGUAGES) {
+        if (targetLang === explainLang) continue;
+        expect(() => buildPickupSystemPrompt(targetLang, explainLang)).not.toThrow();
+      }
+    }
+  });
+});
+
+describe("buildPickupUserPrompt", () => {
+  it("チャット本文をそのまま埋め込んだユーザープロンプトを組み立てる", () => {
+    const prompt = buildPickupUserPrompt("gg no re chat");
+
+    expect(prompt).toContain("gg no re chat");
+  });
+
+  it("解説用・翻訳用のユーザープロンプトとは異なる文言で抽出対象であることを示す", () => {
+    expect(buildPickupUserPrompt("hello")).not.toBe(buildExplainUserPrompt("hello"));
+    expect(buildPickupUserPrompt("hello")).not.toBe(buildTranslateUserPrompt("hello"));
   });
 });
