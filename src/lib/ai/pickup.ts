@@ -10,6 +10,9 @@
  *   登場することを照合してから返す(モデルが解説言語の語や言い換えを「原文の語句」として
  *   返した応答は失敗として扱う)。自由文をパースする脆い処理は行わない。
  *   emote だけの発言のように渡す本文が空になる場合は LLM を呼ばず、空の結果を返す(issue #26)。
+ *   Gemini Nano は `responseConstraint` 指定時でも応答 JSON を途中で打ち切ることがある
+ *   (issue #19)ため、JSON として解釈できなかった場合に限り、新しいジョブとして
+ *   `PICKUP_MAX_ATTEMPTS` 回まで明示的に試行し直す。スキーマ不一致・照合失敗は再試行しない。
  * - `createPickupBaseSessionFactory`: Pick up 専用のシステムプロンプトを持つ
  *   ベースセッションの生成関数を組み立てる。`session-pool.ts` はベースセッションを
  *   1つしか持たないため、翻訳用・解説用とはプールを分ける前提(issue #15 の方針 (a))。
@@ -19,6 +22,12 @@ import { filterPickupTerms, preparePickupInput } from "./pickup-filter";
 import { buildPickupSystemPrompt, buildPickupUserPrompt, type SupportedLanguage } from "./prompts";
 import { buildPickupResponseConstraint, pickupSchema, type PickupResult } from "./schemas";
 import type { JobPriority, PromptSessionLike, SessionPool } from "./session-pool";
+
+/**
+ * 抽出1件あたりの最大試行回数(初回 + 再試行1回)。
+ * 応答 JSON の打ち切り(issue #19)への対処として、JSON 解釈失敗時に限り1回だけやり直す。
+ */
+export const PICKUP_MAX_ATTEMPTS = 2;
 
 export interface PickupOptions {
   /** 抽出は受信した全発言を自動で処理するバックグラウンド生成のため、既定は low */
@@ -34,6 +43,8 @@ export interface PickupOptions {
  * チャット本文から注目の表現を抽出する。
  * Prompt API の応答は必ず JSON 文字列として返るため、`JSON.parse` → `pickupSchema.parse` →
  * 決定的な後段フィルタ → 本文との照合の順で処理し、パース・照合に失敗した場合はエラーを投げる。
+ * `JSON.parse` に失敗した場合だけは、直前の応答がコンテキストに残らないよう別ジョブ
+ * (新しいクローンセッション)として `PICKUP_MAX_ATTEMPTS` 回まで試行し直す。
  * 照合は大文字小文字を区別しない(「W」を「w」として返す程度の揺れは原文の語句とみなす)。
  */
 export async function pickUpExpressions(
@@ -47,21 +58,7 @@ export async function pickUpExpressions(
     return { terms: [] };
   }
 
-  const raw = await sessionPool.enqueue(
-    priority,
-    (session) =>
-      session.prompt(buildPickupUserPrompt(prepared.text), {
-        responseConstraint: buildPickupResponseConstraint(),
-      }),
-    options.signal,
-  );
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`Prompt APIの応答をJSONとして解釈できませんでした: ${raw}`, { cause: error });
-  }
+  const parsed = await promptForPickupJson(sessionPool, priority, prepared.text, options.signal);
 
   const terms = filterPickupTerms(pickupSchema.parse(parsed).terms, prepared, options.excludedNames ?? []);
   const normalizedText = prepared.text.toLowerCase();
@@ -70,6 +67,35 @@ export async function pickUpExpressions(
     throw new Error(`Prompt APIが原文に登場しない語句を返しました: ${unknownTerm.term}`);
   }
   return { terms };
+}
+
+/**
+ * Pick up 用のプロンプトを投げ、応答を JSON として解釈した値を返す。
+ * 解釈に失敗した場合は `PICKUP_MAX_ATTEMPTS` 回まで別ジョブとして試行し直し、それでも失敗すればエラーを投げる。
+ */
+async function promptForPickupJson(
+  sessionPool: SessionPool,
+  priority: JobPriority,
+  preparedText: string,
+  signal: AbortSignal | undefined,
+): Promise<unknown> {
+  for (let attempt = 1; ; attempt++) {
+    const raw = await sessionPool.enqueue(
+      priority,
+      (session) =>
+        session.prompt(buildPickupUserPrompt(preparedText), {
+          responseConstraint: buildPickupResponseConstraint(),
+        }),
+      signal,
+    );
+
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      if (attempt < PICKUP_MAX_ATTEMPTS) continue;
+      throw new Error(`Prompt APIの応答をJSONとして解釈できませんでした(${attempt}回試行): ${raw}`, { cause: error });
+    }
+  }
 }
 
 /**

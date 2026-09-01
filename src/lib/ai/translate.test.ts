@@ -10,11 +10,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildExplainSystemPrompt } from "./prompts";
 import type { SessionPool } from "./session-pool";
-import { createTranslateBaseSessionFactory, translateChatMessage } from "./translate";
+import { createTranslateBaseSessionFactory, TRANSLATE_MAX_ATTEMPTS, translateChatMessage } from "./translate";
 
-/** テスト用の最小限の SessionPool フェイク。enqueue の run をそのまま呼び出し、prompt の引数を記録する */
-function createFakeSessionPool(promptResult: string) {
-  const prompt = vi.fn(async () => promptResult);
+/**
+ * テスト用の最小限の SessionPool フェイク。enqueue の run をそのまま呼び出し、prompt の引数を記録する。
+ * 配列を渡した場合は、呼び出しごとに先頭から順に応答を返す(再試行の検証用)。
+ */
+function createFakeSessionPool(promptResult: string | string[]) {
+  const results = Array.isArray(promptResult) ? [...promptResult] : [promptResult];
+  const prompt = vi.fn(async () => {
+    const next = results.shift();
+    if (next === undefined) throw new Error("テスト用の応答が尽きました");
+    return next;
+  });
   const enqueue = vi.fn(async (_priority: "high" | "low", run: (session: unknown) => Promise<string>) => {
     return run({ prompt });
   });
@@ -70,6 +78,47 @@ describe("translateChatMessage", () => {
     const pool = createFakeSessionPool(JSON.stringify({ text: "訳文がtranslationキーに入っていない" }));
 
     await expect(translateChatMessage(pool, "hello")).rejects.toThrow();
+  });
+
+  describe("JSON 解釈失敗時の再試行(issue #19)", () => {
+    it("応答が正常な場合は1回しか enqueue しない", async () => {
+      const pool = createFakeSessionPool(JSON.stringify({ translation: "マジか！" }));
+
+      await translateChatMessage(pool, "no way");
+
+      expect(pool.enqueue).toHaveBeenCalledTimes(1);
+    });
+
+    it("応答 JSON が途中で切れていた場合は、新しいジョブとして1回だけ再試行し、成功した結果を返す", async () => {
+      const truncated = '{"translation":"マジか！';
+      const pool = createFakeSessionPool([truncated, JSON.stringify({ translation: "マジか！" })]);
+
+      const result = await translateChatMessage(pool, "no way");
+
+      expect(result).toEqual({ translation: "マジか！" });
+      expect(pool.enqueue).toHaveBeenCalledTimes(2);
+      // 2回目も同じ優先度・signal で積み直す
+      expect(pool.enqueue).toHaveBeenNthCalledWith(2, "low", expect.any(Function), undefined);
+    });
+
+    it("再試行しても JSON として解釈できない場合は、それ以上再試行せず試行回数を含めたエラーを投げる", async () => {
+      const pool = createFakeSessionPool(['{"translation":"へー、なしか。', '{"translation":"へー、']);
+
+      await expect(translateChatMessage(pool, "oh no way")).rejects.toThrow(
+        `Prompt APIの応答をJSONとして解釈できませんでした(${TRANSLATE_MAX_ATTEMPTS}回試行): {"translation":"へー、`,
+      );
+      expect(pool.enqueue).toHaveBeenCalledTimes(TRANSLATE_MAX_ATTEMPTS);
+    });
+
+    it("JSON としては解釈できるがスキーマに合わない応答は再試行しない", async () => {
+      const pool = createFakeSessionPool([
+        JSON.stringify({ text: "キー違い" }),
+        JSON.stringify({ translation: "再試行されれば返る訳文" }),
+      ]);
+
+      await expect(translateChatMessage(pool, "hello")).rejects.toThrow();
+      expect(pool.enqueue).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
