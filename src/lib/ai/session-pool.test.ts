@@ -2,12 +2,19 @@
  * src/lib/ai/session-pool.ts のテスト。
  *
  * Prompt API(Gemini Nano)はメインスレッドで動作しWeb Workerが使えないため、
- * 単一のベースセッション + 優先度付き直列キューでUIをブロックしないよう制御する。
+ * 用途ごとのベースセッション + アプリ全体で 1 つの優先度付き直列キュー(`createPromptJobQueue`)で
+ * UIをブロックしないよう制御する。
  * 実際の LanguageModel は使わず、フェイクセッション(手動で resolve/reject できる
- * Deferred Promise)を注入して、直列性・優先度・キュー溢れ・中断を検証する。
+ * Deferred Promise)を注入して、直列性・優先度・キュー溢れ・中断・複数プール間のキュー共有(issue #23)を検証する。
  */
 import { describe, expect, it, vi } from "vitest";
-import { createSessionPool, LowPriorityQueueOverflowError, type PromptSessionLike } from "./session-pool";
+import {
+  createPromptJobQueue,
+  createSessionPool,
+  LowPriorityQueueOverflowError,
+  type PromptJobQueue,
+  type PromptSessionLike,
+} from "./session-pool";
 
 /**
  * キューは `getBaseSession()` → `clone()` → `run()` と複数回 await を挟んでから
@@ -45,11 +52,16 @@ function createFakeSession(log: string[], label: string): PromptSessionLike {
   };
 }
 
+/** テスト用にプールを 1 つ作る。キューを省略した場合はそのプール専用のキューを新しく作る */
+function createPool(createBaseSession: () => Promise<PromptSessionLike>, queue: PromptJobQueue = createPromptJobQueue()) {
+  return createSessionPool({ createBaseSession, queue });
+}
+
 describe("createSessionPool", () => {
   it("enqueueしたジョブにクローンしたセッションを渡し、成功後にクローンをdestroyする", async () => {
     const log: string[] = [];
     const baseSession = createFakeSession(log, "base");
-    const pool = createSessionPool({ createBaseSession: async () => baseSession });
+    const pool = createPool(async () => baseSession);
 
     const result = await pool.enqueue("high", async (session) => {
       const text = await session.prompt("hello");
@@ -64,7 +76,7 @@ describe("createSessionPool", () => {
   it("複数ジョブは同時実行せず、前のジョブが完了してから次を実行する(直列性)", async () => {
     const log: string[] = [];
     const baseSession = createFakeSession(log, "base");
-    const pool = createSessionPool({ createBaseSession: async () => baseSession });
+    const pool = createPool(async () => baseSession);
     const deferred1 = createDeferred<string>();
 
     const order: string[] = [];
@@ -92,7 +104,7 @@ describe("createSessionPool", () => {
   it("高優先度ジョブは、待機中の低優先度ジョブより先に実行される", async () => {
     const log: string[] = [];
     const baseSession = createFakeSession(log, "base");
-    const pool = createSessionPool({ createBaseSession: async () => baseSession });
+    const pool = createPool(async () => baseSession);
     const blocker = createDeferred<string>();
 
     const order: string[] = [];
@@ -125,7 +137,7 @@ describe("createSessionPool", () => {
   it("低優先度キューが上限を超えた場合、最も古い低優先度ジョブを破棄する(高優先度は破棄しない)", async () => {
     const log: string[] = [];
     const baseSession = createFakeSession(log, "base");
-    const pool = createSessionPool({ createBaseSession: async () => baseSession, maxLowPriorityQueueLength: 2 });
+    const pool = createPool(async () => baseSession, createPromptJobQueue({ maxLowPriorityQueueLength: 2 }));
     const blocker = createDeferred<string>();
 
     // ジョブ実行中にしてキューが溜まる状況を作る
@@ -152,7 +164,7 @@ describe("createSessionPool", () => {
     const log: string[] = [];
     const baseSession = createFakeSession(log, "base");
     const createBaseSession = vi.fn(async () => baseSession);
-    const pool = createSessionPool({ createBaseSession });
+    const pool = createPool(createBaseSession);
     const controller = new AbortController();
     controller.abort();
 
@@ -166,7 +178,7 @@ describe("createSessionPool", () => {
   it("待機中にsignalがabortされたジョブは実行されず拒否され、他のジョブには影響しない", async () => {
     const log: string[] = [];
     const baseSession = createFakeSession(log, "base");
-    const pool = createSessionPool({ createBaseSession: async () => baseSession });
+    const pool = createPool(async () => baseSession);
     const blocker = createDeferred<string>();
     const controller = new AbortController();
 
@@ -195,7 +207,7 @@ describe("createSessionPool", () => {
       .fn()
       .mockRejectedValueOnce(new Error("モデルが利用できません"))
       .mockResolvedValueOnce(createFakeSession(log, "base"));
-    const pool = createSessionPool({ createBaseSession });
+    const pool = createPool(createBaseSession);
 
     await expect(pool.enqueue("high", async () => "x")).rejects.toThrow("モデルが利用できません");
 
@@ -208,7 +220,7 @@ describe("createSessionPool", () => {
     const log: string[] = [];
     const baseSession = createFakeSession(log, "base");
     const createBaseSession = vi.fn(async () => baseSession);
-    const pool = createSessionPool({ createBaseSession });
+    const pool = createPool(createBaseSession);
 
     await pool.warmUp();
     expect(createBaseSession).toHaveBeenCalledTimes(1);
@@ -219,12 +231,143 @@ describe("createSessionPool", () => {
   });
 
   it("warmUp() でベースセッション生成に失敗した場合はその例外をそのまま投げる", async () => {
-    const pool = createSessionPool({
-      createBaseSession: async () => {
-        throw new Error("ユーザー操作なしではモデルをダウンロードできません");
-      },
+    const pool = createPool(async () => {
+      throw new Error("ユーザー操作なしではモデルをダウンロードできません");
     });
 
     await expect(pool.warmUp()).rejects.toThrow("ユーザー操作なしではモデルをダウンロードできません");
+  });
+});
+
+describe("createPromptJobQueue", () => {
+  it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "maxLowPriorityQueueLength に非負整数以外(%s)を渡した場合は生成時点で例外を投げる(Fail-Fast)",
+    (invalid) => {
+      expect(() => createPromptJobQueue({ maxLowPriorityQueueLength: invalid })).toThrow(/maxLowPriorityQueueLength/);
+    },
+  );
+
+  it("maxLowPriorityQueueLength に 0 を渡した場合は、待機中の低優先度ジョブをすべて破棄する", async () => {
+    const log: string[] = [];
+    const pool = createPool(async () => createFakeSession(log, "base"), createPromptJobQueue({ maxLowPriorityQueueLength: 0 }));
+    const blocker = createDeferred<string>();
+
+    const pBlocking = pool.enqueue("high", async () => {
+      await blocker.promise;
+      return "blocking done";
+    });
+    await Promise.resolve();
+
+    const pLow = pool.enqueue("low", async () => "low");
+    await expect(pLow).rejects.toBeInstanceOf(LowPriorityQueueOverflowError);
+
+    blocker.resolve("released");
+    expect(await pBlocking).toBe("blocking done");
+  });
+});
+
+/**
+ * issue #23: 翻訳用・Pick up 用のようにベースセッション(システムプロンプト)が異なるプールでも、
+ * 同じキューを共有していれば Gemini Nano への呼び出しはアプリ全体で常に 1 つずつになること。
+ */
+describe("createSessionPool: 複数プールでのキュー共有(issue #23)", () => {
+  it("同じキューを共有する 2 つのプールのジョブは並走せず、積んだ順に直列で実行される", async () => {
+    const log: string[] = [];
+    const queue = createPromptJobQueue();
+    const translatePool = createPool(async () => createFakeSession(log, "translate-base"), queue);
+    const pickupPool = createPool(async () => createFakeSession(log, "pickup-base"), queue);
+    const blocker = createDeferred<string>();
+
+    const order: string[] = [];
+    const pTranslate = translatePool.enqueue("low", async () => {
+      order.push("translate:start");
+      await blocker.promise;
+      order.push("translate:end");
+      return "翻訳結果";
+    });
+    const pPickup = pickupPool.enqueue("low", async () => {
+      order.push("pickup:start");
+      return "抽出結果";
+    });
+
+    // 翻訳ジョブが完了するまで、別プールの Pick up ジョブは開始しない
+    await flushMicrotasks();
+    expect(order).toEqual(["translate:start"]);
+
+    blocker.resolve("released");
+    expect(await pTranslate).toBe("翻訳結果");
+    expect(await pPickup).toBe("抽出結果");
+    expect(order).toEqual(["translate:start", "translate:end", "pickup:start"]);
+  });
+
+  it("各プールは自分のベースセッションからクローンしてジョブに渡す(キューを共有してもセッションは混ざらない)", async () => {
+    const log: string[] = [];
+    const queue = createPromptJobQueue();
+    const translateBase = createFakeSession(log, "translate-base");
+    const pickupBase = createFakeSession(log, "pickup-base");
+    const translatePool = createPool(async () => translateBase, queue);
+    const pickupPool = createPool(async () => pickupBase, queue);
+
+    const translateResult = await translatePool.enqueue("low", (session) => session.prompt("gg"));
+    const pickupResult = await pickupPool.enqueue("low", (session) => session.prompt("gg"));
+
+    expect(translateResult).toMatch(/^response from translate-base-clone/);
+    expect(pickupResult).toMatch(/^response from pickup-base-clone/);
+  });
+
+  it("高優先度ジョブは、別プールで待機中の低優先度ジョブより先に実行される", async () => {
+    const log: string[] = [];
+    const queue = createPromptJobQueue();
+    const translatePool = createPool(async () => createFakeSession(log, "translate-base"), queue);
+    const pickupPool = createPool(async () => createFakeSession(log, "pickup-base"), queue);
+    const blocker = createDeferred<string>();
+
+    const order: string[] = [];
+    const pBlocking = translatePool.enqueue("low", async () => {
+      await blocker.promise;
+      return "blocking done";
+    });
+    await Promise.resolve();
+
+    const pLow = translatePool.enqueue("low", async () => {
+      order.push("translate:low");
+      return "low";
+    });
+    const pHigh = pickupPool.enqueue("high", async () => {
+      order.push("pickup:high");
+      return "high";
+    });
+
+    blocker.resolve("released");
+    await pBlocking;
+    await pHigh;
+    await pLow;
+
+    expect(order).toEqual(["pickup:high", "translate:low"]);
+  });
+
+  it("低優先度キューの上限はキューを共有するプール全体で 1 つであり、溢れた場合はプールを問わず最も古いジョブを破棄する", async () => {
+    const log: string[] = [];
+    const queue = createPromptJobQueue({ maxLowPriorityQueueLength: 2 });
+    const translatePool = createPool(async () => createFakeSession(log, "translate-base"), queue);
+    const pickupPool = createPool(async () => createFakeSession(log, "pickup-base"), queue);
+    const blocker = createDeferred<string>();
+
+    const pBlocking = translatePool.enqueue("high", async () => {
+      await blocker.promise;
+      return "blocking done";
+    });
+    await Promise.resolve();
+
+    const pTranslate1 = translatePool.enqueue("low", async () => "translate1");
+    const pPickup1 = pickupPool.enqueue("low", async () => "pickup1");
+    const pTranslate2 = translatePool.enqueue("low", async () => "translate2"); // 上限(2)を超えるため translate1 が破棄される
+
+    await expect(pTranslate1).rejects.toBeInstanceOf(LowPriorityQueueOverflowError);
+    blocker.resolve("released");
+    await pBlocking;
+
+    expect(await pPickup1).toBe("pickup1");
+    expect(await pTranslate2).toBe("translate2");
   });
 });

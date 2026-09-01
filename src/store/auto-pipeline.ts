@@ -6,6 +6,9 @@
  * - 結果は発言 ID(`TwitchChatMessage.id`)をキーに保持し、ページ側は左列と同じ発言順で `entries[id]` を引いて描画する
  * - ジョブは「自動で全件」を基本とし、`SessionPool` の低優先度キューに積む。
  *   流量が多く追いつかない分はキュー側で古いものから破棄され、`dropped` として明示する
+ * - セッションプールはパイプラインごと(用途ごとのシステムプロンプト)に持つが、ジョブを流す直列キューは
+ *   このモジュールで 1 つだけ作り、全パイプラインで共有する。Gemini Nano への `prompt()` が翻訳と Pick up で
+ *   並走しないようにするため(issue #23)
  * - Prompt API の利用可否は `prompt-api.ts` の共有ストアに集約する。パイプラインは診断を 1 回だけ
  *   `ensurePromptApiDiagnosed` に依頼し、自分のセッションプールのウォームアップだけを担当する。
  *   使えない環境では暗黙のフォールバックをせず、行ごとに `unavailable` を保持する
@@ -22,6 +25,7 @@ import { create, type StoreApi, type UseBoundStore } from "zustand";
 import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
 import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
 import {
+  createPromptJobQueue,
   createSessionPool,
   LowPriorityQueueOverflowError,
   type PromptSessionLike,
@@ -108,6 +112,12 @@ interface ActivePipeline {
   warmUp: () => void;
 }
 
+/**
+ * 全パイプラインで共有する Prompt API の直列キュー(issue #23)。
+ * 言語ペアに依存しないため、パイプラインを再起動してもこのキューは作り直さない
+ */
+const sharedPromptJobQueue = createPromptJobQueue();
+
 export function createAutoPipeline<TDone extends object>(config: AutoPipelineConfig<TDone>): AutoPipeline<TDone> {
   const useStore = create<AutoPipelineState<TDone>>(() => ({ entries: {} }));
 
@@ -122,7 +132,8 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
       if (!hydrated) throw new Error("設定が未復元です。hydrateSettingsStore() を先に呼び出してください");
       return settings;
     },
-    createPool: (settings) => createSessionPool({ createBaseSession: config.createBaseSession(settings) }),
+    createPool: (settings) =>
+      createSessionPool({ createBaseSession: config.createBaseSession(settings), queue: sharedPromptJobQueue }),
     subscribeToChatMessages,
     getMessages: () => useChatConnectionStore.getState().messages,
   };

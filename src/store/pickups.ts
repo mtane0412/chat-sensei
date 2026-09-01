@@ -9,7 +9,8 @@
  *   `terms` が空の `done` にする(emote だけの発言は `pickUpExpressions` 側が LLM を呼ばず空を返す。issue #26)
  * - ジョブ: `pickUpExpressions` を低優先度で実行し、表示中の発言者名(username / displayName)を
  *   除外名として渡す(@ 無しで本文に書かれたユーザー名を抽出結果から落とすため)
- * - セッションプールは翻訳用とは別に持つ(`structured-prompt.ts` に記載の issue #15 方針 (a))
+ * - セッションプール(ベースセッション)は翻訳用とは別に持つ(`structured-prompt.ts` に記載の issue #15 方針 (a))が、
+ *   ジョブを流す直列キューは `auto-pipeline.ts` で翻訳列と共有する(issue #23)
  * - Prompt API の利用可否は `prompt-api.ts` の共有ストアを参照する(翻訳列と共通)
  */
 import { createPickupBaseSessionFactory, pickUpExpressions } from "@/lib/ai/pickup";
