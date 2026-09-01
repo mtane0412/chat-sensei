@@ -113,6 +113,30 @@ export function isEmoteOnlyMessage(text: string, emotes: EmotePosition[]): boole
   );
 }
 
+/**
+ * emote を取り除いたテキスト部分だけを空白 1 つで連結して返す。
+ * 言語判定(Language Detector)に emote 名(英字の固有名)を混ぜると判定が英語に寄るため、判定にはこの結果を使う。
+ */
+export function extractPlainText(text: string, emotes: EmotePosition[]): string {
+  return splitMessageIntoSegments(text, emotes)
+    .filter((segment): segment is TextSegment => segment.type === "text")
+    .map((segment) => segment.text.trim())
+    .filter((part) => part.length > 0)
+    .join(" ");
+}
+
+/** Unicode の「文字」(かな・漢字・アルファベットなど)。絵文字・記号・数字は含まない */
+const LETTER_PATTERN = /\p{L}/u;
+
+/**
+ * 訳す文字を含まない発言か(Twitch emote だけ・Unicode 絵文字だけ・記号や数字だけ)。
+ * こうした発言は言語判定に回すと zh や km のような無関係な言語になる(実配信で観測)ため、
+ * 翻訳・Pick up の前に判定もモデル呼び出しもせずに確定させる
+ */
+export function isTextlessMessage(text: string, emotes: EmotePosition[]): boolean {
+  return !LETTER_PATTERN.test(extractPlainText(text, emotes));
+}
+
 /** LLM に渡す本文の中で emote 1 件を置き換えるプレースホルダと、元の emote(ID・名前)の対応 */
 export interface EmotePlaceholder {
   /** 本文中に埋め込む記号トークン(例: `[[E0]]`) */

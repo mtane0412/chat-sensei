@@ -52,6 +52,14 @@ function describeLanguageModel(diagnosis: EnvironmentDiagnosis): DiagnosisMessag
     };
   }
 
+  if (diagnosis.languageModel.error) {
+    return {
+      id: "language-model",
+      level: "error",
+      message: `The Prompt API could not be checked (${diagnosis.languageModel.error}). It may be disabled in this browser.`,
+    };
+  }
+
   switch (diagnosis.languageModel.availability) {
     case "available":
       return { id: "language-model", level: "ok", message: "The Prompt API is ready to use." };
@@ -73,19 +81,46 @@ function describeLanguageModel(diagnosis: EnvironmentDiagnosis): DiagnosisMessag
   }
 }
 
+/**
+ * Language Detector API の診断メッセージ。翻訳・Pick up は発言ごとの言語判定に依存するため、
+ * 使えない場合は Prompt API と同じく error にする
+ */
 function describeLanguageDetector(diagnosis: EnvironmentDiagnosis): DiagnosisMessage {
-  if (!diagnosis.languageDetector.supported || diagnosis.languageDetector.availability === "unavailable") {
+  if (!diagnosis.languageDetector.supported) {
     return {
       id: "language-detector",
-      level: "warning",
-      message: "The Language Detector API is not available. Automatic language detection is disabled; other features are unaffected.",
+      level: "error",
+      message:
+        "The Language Detector API is not available in this browser (window.LanguageDetector is undefined). Translation and Pick up need it to tell which language each message is in.",
     };
   }
-  return {
-    id: "language-detector",
-    level: "ok",
-    message: "The Language Detector API is available.",
-  };
+  if (diagnosis.languageDetector.error) {
+    return {
+      id: "language-detector",
+      level: "error",
+      message: `The Language Detector API could not be checked (${diagnosis.languageDetector.error}). It may be disabled in this browser (see chrome://flags/#language-detection-api). Translation and Pick up need it to tell which language each message is in.`,
+    };
+  }
+  switch (diagnosis.languageDetector.availability) {
+    case "available":
+      return { id: "language-detector", level: "ok", message: "The Language Detector API is ready to use." };
+    case "downloadable":
+      return {
+        id: "language-detector",
+        level: "warning",
+        message: "The Language Detector API needs to download its model. The download starts on your next action.",
+      };
+    case "downloading":
+      return { id: "language-detector", level: "warning", message: "The Language Detector model is downloading." };
+    case "unavailable":
+    default:
+      return {
+        id: "language-detector",
+        level: "error",
+        message:
+          "The Language Detector API is not available on this device. Translation and Pick up need it to tell which language each message is in.",
+      };
+  }
 }
 
 /**

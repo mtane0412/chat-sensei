@@ -111,6 +111,23 @@ describe("startTranslationPipeline", () => {
     stop();
   });
 
+  it("Unicode 絵文字だけの発言も訳すものが無いため言語判定も LLM 呼び出しもせず、原文をそのまま訳文として done にする", async () => {
+    const { deps, emit, enqueue, detect } = createDeps();
+
+    const stop = startTranslationPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "🦍" }));
+    await flush();
+
+    expect(detect).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(useTranslationStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      segments: [{ type: "text", text: "🦍" }],
+    });
+    stop();
+  });
+
   it("`!` で始まるチャットコマンドは翻訳せず LLM を呼ばず、原文をそのまま訳文として done にする(issue #35)", async () => {
     const { deps, emit, enqueue } = createDeps();
 

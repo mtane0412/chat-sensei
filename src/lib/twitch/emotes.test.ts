@@ -8,7 +8,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildEmoteImageUrl,
+  extractPlainText,
   isEmoteOnlyMessage,
+  isTextlessMessage,
   maskEmotesWithPlaceholders,
   restoreEmotesFromPlaceholders,
   splitMessageIntoSegments,
@@ -211,5 +213,43 @@ describe("isEmoteOnlyMessage", () => {
   it("emote が無い発言は false(空文字列でも翻訳側の判断に委ねる)", () => {
     expect(isEmoteOnlyMessage("hello", [])).toBe(false);
     expect(isEmoteOnlyMessage("", [])).toBe(false);
+  });
+});
+
+describe("extractPlainText", () => {
+  it("emote を取り除いたテキスト部分だけを空白区切りで返す(言語判定に emote 名を混ぜないため)", () => {
+    const text = "Kappa gg chat Kappa";
+    const emotes = [
+      { id: "25", start: 0, end: 4 },
+      { id: "25", start: 14, end: 18 },
+    ];
+
+    expect(extractPlainText(text, emotes)).toBe("gg chat");
+  });
+
+  it("emote だけの発言では空文字を返す", () => {
+    expect(extractPlainText("Kappa", [{ id: "25", start: 0, end: 4 }])).toBe("");
+  });
+});
+
+describe("isTextlessMessage", () => {
+  it("Unicode 絵文字だけの発言は訳す文字が無いので true(言語判定に回すと zh や km になってしまうため)", () => {
+    expect(isTextlessMessage("🦍", [])).toBe(true);
+    expect(isTextlessMessage("☀️ 🌞", [])).toBe(true);
+  });
+
+  it("Twitch emote だけの発言も true", () => {
+    expect(isTextlessMessage("Kappa", [{ id: "25", start: 0, end: 4 }])).toBe(true);
+  });
+
+  it("記号や数字だけの発言も true", () => {
+    expect(isTextlessMessage("!!!", [])).toBe(true);
+    expect(isTextlessMessage("777", [])).toBe(true);
+  });
+
+  it("文字(かな・漢字・アルファベット)を含む発言は false", () => {
+    expect(isTextlessMessage("🦍ありがとー！", [])).toBe(false);
+    expect(isTextlessMessage("太陽神", [])).toBe(false);
+    expect(isTextlessMessage("gg Kappa", [{ id: "25", start: 3, end: 7 }])).toBe(false);
   });
 });

@@ -4,25 +4,34 @@
  * それ以外の流れは同一のため、ここに 1 つだけ実装する(issue #24)。
  *
  * - 結果は発言 ID(`TwitchChatMessage.id`)をキーに保持し、ページ側は左列と同じ発言順で `entries[id]` を引いて描画する
+ * - 発言ごとに Language Detector で言語を判定し(`detect-language.ts`)、学ぶ言語ならその言語専用の
+ *   セッションプールへ、解説言語と同じなら `same-language`、どちらでもなければ `other-language` として
+ *   モデルを呼ばずに確定する。配信によって英語と日本語のようにチャットの言語が混ざるため、学ぶ言語は複数選べる
  * - ジョブは「自動で全件」を基本とし、`SessionPool` の低優先度キューに積む。
  *   流量が多く追いつかない分はキュー側で古いものから破棄され、`dropped` として明示する
- * - セッションプールはパイプラインごと(用途ごとのシステムプロンプト)に持つが、ジョブを流す直列キューは
- *   このモジュールで 1 つだけ作り、全パイプラインで共有する。Gemini Nano への `prompt()` が翻訳と Pick up で
- *   並走しないようにするため(issue #23)
- * - Prompt API の利用可否は `prompt-api.ts` の共有ストアに集約する。パイプラインは診断を 1 回だけ
- *   `ensurePromptApiDiagnosed` に依頼し、自分のセッションプールのウォームアップだけを担当する。
+ * - セッションプールは「パイプライン(用途ごとのシステムプロンプト)× 学ぶ言語」ごとに持ち、必要になった時点で生成する。
+ *   ジョブを流す直列キューはこのモジュールで 1 つだけ作り、全プールで共有する。Gemini Nano への `prompt()` が
+ *   翻訳と Pick up で並走しないようにするため(issue #23)
+ * - Prompt API / Language Detector の利用可否は `prompt-api.ts` の共有ストアに集約する。パイプラインは診断を 1 回だけ
+ *   `ensurePromptApiDiagnosed` に依頼し、自分のセッションプールと Language Detector のウォームアップだけを担当する。
  *   使えない環境では暗黙のフォールバックをせず、行ごとに `unavailable` を保持する
- * - モデルが未ダウンロードの環境では `LanguageModel.create()` にユーザー操作が必要なため、
- *   「接続する」クリックの延長で `warmUp` を呼び、ベースセッションを先に生成する
+ * - モデルが未ダウンロードの環境では `LanguageModel.create()` / `LanguageDetector.create()` にユーザー操作が必要なため、
+ *   「接続する」クリックの延長で `warmUp` を呼び、ベースセッションと Language Detector を先に生成する
  * - `start` は前回の結果をすべて破棄し、表示用リングバッファに残っている発言を新しいパイプラインに再投入する。
- *   言語ペア(`settings.ts` のストア)が変わったときにホーム画面がパイプラインを再起動し、
- *   古い言語ペアの結果を残さず新しい言語ペアで生成し直すため(issue #17)
+ *   言語設定(`settings.ts` のストア)が変わったときにホーム画面がパイプラインを再起動し、
+ *   古い設定の結果を残さず新しい設定で生成し直すため(issue #17)
  *
  * `chat-connection.ts` と同様に、ページ遷移でホーム画面がアンマウントされても結果を失わないよう、
  * React ツリーの外(Zustand ストア)に状態を置く。
  */
 import { create, type StoreApi, type UseBoundStore } from "zustand";
 import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
+import {
+  classifyDetectedLanguage,
+  createBrowserLanguageDetector,
+  type LanguageDetectorLike,
+} from "@/lib/ai/detect-language";
+import type { SupportedLanguage } from "@/lib/ai/prompts";
 import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
 import {
   createPromptJobQueue,
@@ -32,6 +41,7 @@ import {
   type SessionPool,
 } from "@/lib/ai/session-pool";
 import type { Settings } from "@/lib/settings";
+import { extractPlainText } from "@/lib/twitch/emotes";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
 import { ensurePromptApiDiagnosed, markPromptApiUnavailable, usePromptApiStore, type PromptApiStatus } from "./prompt-api";
@@ -44,8 +54,12 @@ export type PipelineEntry<TDone extends object> =
   | { status: "failed"; reason: string }
   /** 低優先度キューの上限で破棄された(流量超過で未処理) */
   | { status: "dropped" }
-  /** Prompt API が利用できない環境で受信した */
-  | { status: "unavailable" };
+  /** Prompt API / Language Detector が利用できない環境で受信した */
+  | { status: "unavailable" }
+  /** 解説言語と同じ言語の発言のため、翻訳・Pick up をしない */
+  | { status: "same-language" }
+  /** 学ぶ言語にも解説言語にも該当しない言語(未判定 `und` を含む)の発言のため、翻訳・Pick up をしない */
+  | { status: "other-language"; detectedLanguage: string };
 
 export interface AutoPipelineState<TDone extends object> {
   /** 発言 ID → 処理状態 */
@@ -56,7 +70,10 @@ export interface AutoPipelineState<TDone extends object> {
 export interface AutoPipelineDeps {
   diagnose: () => Promise<EnvironmentDiagnosis>;
   loadSettings: () => Settings;
-  createPool: (settings: Settings) => SessionPool;
+  /** 学ぶ言語 1 つと解説言語のペアに対応するセッションプールを生成する */
+  createPool: (targetLang: SupportedLanguage, explainLang: SupportedLanguage) => SessionPool;
+  /** 発言の言語判定に使う Language Detector を生成する */
+  createDetector: () => Promise<LanguageDetectorLike>;
   subscribeToChatMessages: (listener: (message: TwitchChatMessage) => void) => () => void;
   /** 表示用リングバッファに現在残っている発言。ここから消えた発言の結果を破棄する */
   getMessages: () => TwitchChatMessage[];
@@ -72,8 +89,8 @@ export interface AutoPipelineJobContext {
 
 /** 翻訳・Pick up など用途ごとに異なる部分の定義 */
 export interface AutoPipelineConfig<TDone extends object> {
-  /** 設定の言語ペアから、この用途専用のベースセッション生成関数を組み立てる */
-  createBaseSession: (settings: Settings) => () => Promise<PromptSessionLike>;
+  /** 学ぶ言語 1 つと解説言語のペアから、この用途専用のベースセッション生成関数を組み立てる */
+  createBaseSession: (targetLang: SupportedLanguage, explainLang: SupportedLanguage) => () => Promise<PromptSessionLike>;
   /**
    * LLM を呼ばずに結果を確定できる発言(emote だけの発言・チャットコマンドなど)はここで結果を返す。
    * `null` を返した発言だけを `runJob` に渡す
@@ -132,8 +149,12 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
       if (!hydrated) throw new Error("設定が未復元です。hydrateSettingsStore() を先に呼び出してください");
       return settings;
     },
-    createPool: (settings) =>
-      createSessionPool({ createBaseSession: config.createBaseSession(settings), queue: sharedPromptJobQueue }),
+    createPool: (targetLang, explainLang) =>
+      createSessionPool({
+        createBaseSession: config.createBaseSession(targetLang, explainLang),
+        queue: sharedPromptJobQueue,
+      }),
+    createDetector: createBrowserLanguageDetector,
     subscribeToChatMessages,
     getMessages: () => useChatConnectionStore.getState().messages,
   };
@@ -156,15 +177,73 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
   function start(deps: AutoPipelineDeps = defaultDeps): () => void {
     const controller = new AbortController();
     const settings = deps.loadSettings();
-    let pool: SessionPool | null = null;
+    /** 学ぶ言語ごとのセッションプール。必要になった時点で生成する */
+    const pools = new Map<SupportedLanguage, SessionPool>();
+    /** Language Detector。生成に失敗したら次回に再試行できるようキャッシュを捨てる */
+    let detectorPromise: Promise<LanguageDetectorLike> | null = null;
     /** 環境診断が終わるまでに受信した発言。診断結果に応じてまとめて処理する */
     let waitingForDiagnosis: TwitchChatMessage[] | null = [];
     /** 診断完了前にウォームアップを要求されたか */
     let warmUpRequested = false;
 
-    function getPool(): SessionPool {
-      pool ??= deps.createPool(settings);
+    function getPool(targetLang: SupportedLanguage): SessionPool {
+      let pool = pools.get(targetLang);
+      if (!pool) {
+        pool = deps.createPool(targetLang, settings.explainLang);
+        pools.set(targetLang, pool);
+      }
       return pool;
+    }
+
+    function getDetector(): Promise<LanguageDetectorLike> {
+      if (!detectorPromise) {
+        detectorPromise = deps.createDetector().catch((error: unknown) => {
+          detectorPromise = null;
+          throw error;
+        });
+      }
+      return detectorPromise;
+    }
+
+    /** 解説言語を除いた学ぶ言語。解説言語と同じ言語の発言は処理しないため、そのプールは作らない */
+    function processableLearningLangs(): SupportedLanguage[] {
+      return settings.learningLangs.filter((lang) => lang !== settings.explainLang);
+    }
+
+    function setFailed(id: string, error: unknown): void {
+      if (controller.signal.aborted) return;
+      if (error instanceof LowPriorityQueueOverflowError) {
+        setEntry(id, { status: "dropped" });
+        return;
+      }
+      setEntry(id, { status: "failed", reason: error instanceof Error ? error.message : String(error) });
+    }
+
+    /** 学ぶ言語と判定した発言を、その言語のセッションプールで処理する */
+    function runJob(message: TwitchChatMessage, id: string, targetLang: SupportedLanguage): Promise<void> {
+      return config
+        .runJob(getPool(targetLang), message, { signal: controller.signal, getMessages: deps.getMessages })
+        .then((result) => setEntry(id, { status: "done", ...result }));
+    }
+
+    /** 発言の言語を判定し、学ぶ言語ならジョブを投入、そうでなければモデルを呼ばずに確定する */
+    async function detectAndRun(message: TwitchChatMessage, id: string): Promise<void> {
+      const detector = await getDetector();
+      const plainText = extractPlainText(message.text, message.emotes);
+      const candidates = await detector.detect(plainText);
+      if (controller.signal.aborted) return;
+      const classification = classifyDetectedLanguage(plainText, candidates, settings);
+      switch (classification.kind) {
+        case "learning":
+          await runJob(message, id, classification.lang);
+          return;
+        case "same-as-explanation":
+          setEntry(id, { status: "same-language" });
+          return;
+        case "other":
+          setEntry(id, { status: "other-language", detectedLanguage: classification.detectedLanguage });
+          return;
+      }
     }
 
     function process(message: TwitchChatMessage, id: string): void {
@@ -174,17 +253,7 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
         return;
       }
       setEntry(id, { status: "pending" });
-      config
-        .runJob(getPool(), message, { signal: controller.signal, getMessages: deps.getMessages })
-        .then((result) => setEntry(id, { status: "done", ...result }))
-        .catch((error: unknown) => {
-          if (controller.signal.aborted) return;
-          if (error instanceof LowPriorityQueueOverflowError) {
-            setEntry(id, { status: "dropped" });
-            return;
-          }
-          setEntry(id, { status: "failed", reason: error instanceof Error ? error.message : String(error) });
-        });
+      detectAndRun(message, id).catch((error: unknown) => setFailed(id, error));
     }
 
     /** 診断待ちの保留に積む。上限を超えた分は古いものから `dropped` にする */
@@ -215,17 +284,20 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
       process(message, message.id);
     }
 
-    /** ベースセッションを先に生成する。失敗した場合は共有の Prompt API 状態を利用不可にして理由を保持する */
+    /**
+     * Language Detector と、処理対象の学ぶ言語ごとのベースセッションを先に生成する。
+     * 失敗した場合は共有の Prompt API 状態を利用不可にして理由を保持する
+     */
     function warmUp(): void {
       if (usePromptApiStore.getState().status.status !== "ready") return;
-      getPool()
-        .warmUp()
-        .catch((error: unknown) => {
-          if (controller.signal.aborted) return;
-          markPromptApiUnavailable(
-            `Could not create a Prompt API session: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        });
+      const markFailed = (what: string) => (error: unknown) => {
+        if (controller.signal.aborted) return;
+        markPromptApiUnavailable(`Could not create ${what}: ${error instanceof Error ? error.message : String(error)}`);
+      };
+      getDetector().catch(markFailed("a Language Detector session"));
+      processableLearningLangs().forEach((lang) => {
+        getPool(lang).warmUp().catch(markFailed("a Prompt API session"));
+      });
     }
 
     /** 診断結果が確定したら、保留していた発言のうち表示中のものを投入するか「利用不可」として確定させる */

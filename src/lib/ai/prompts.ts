@@ -46,7 +46,7 @@ const SYSTEM_PROMPT_BUILDERS: Record<SupportedLanguage, (targetLabel: string) =>
 
 /**
  * `targetLang`(学ぶ言語)と `explainLang`(解説言語)からシステムプロンプトを組み立てる。
- * 同一言語の指定は設定画面側でバリデーションする前提とし、ここでは検証しない。
+ * 学ぶ言語と解説言語が同じ発言はパイプライン側(`store/auto-pipeline.ts`)が言語判定でスキップし、ここには渡さない前提とし、ここでは検証しない。
  */
 export function buildExplainSystemPrompt(targetLang: SupportedLanguage, explainLang: SupportedLanguage): string {
   const targetLabel = LANGUAGE_LABELS[explainLang][targetLang];
