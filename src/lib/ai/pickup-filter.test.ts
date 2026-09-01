@@ -3,7 +3,8 @@
  *
  * Pick up の前後に置く決定的(LLM を使わない)処理を検証する(issue #26)。
  * - `preparePickupInput`: emote・@メンション・URL を本文から除き、LLM に渡す本文を組み立てる
- * - `filterPickupTerms`: LLM が返した語句のうち emote 名・@メンション・文字を含まない語句・笑い声(issue #30)を落とす
+ * - `filterPickupTerms`: LLM が返した語句のうち emote 名・@メンション・文字を含まない語句・笑い声(issue #30)・
+ *   相槌・感嘆詞(issue #33)を落とす
  */
 import { describe, expect, it } from "vitest";
 import { filterPickupTerms, preparePickupInput } from "./pickup-filter";
@@ -168,6 +169,49 @@ describe("filterPickupTerms", () => {
     expect(filterPickupTerms(terms, { text: "haha! (hehe) hahaha... lol!", emoteNames: [], mentionNames: [] })).toEqual([
       { term: "lol!", meaning: "爆笑" },
     ]);
+  });
+
+  it("普遍的な相槌・感嘆詞(oh / wow / hmm / ah / eh / uh / om)を落とし、略語やミーム(lol / pog)は残す(issue #33)", () => {
+    const terms = [
+      { term: "oh", meaning: "驚きを表す感嘆詞" },
+      { term: "Wow", meaning: "驚きを表す感嘆詞" },
+      { term: "hmm", meaning: "考え込むときの相槌" },
+      { term: "ah", meaning: "納得したときの感嘆詞" },
+      { term: "eh", meaning: "疑問を表す間投詞" },
+      { term: "uh", meaning: "言いよどみ" },
+      { term: "om", meaning: "驚きや興奮を表す感嘆詞" },
+      { term: "lol", meaning: "爆笑" },
+      { term: "pog", meaning: "すごい" },
+    ];
+
+    expect(filterPickupTerms(terms, { text: "oh Wow hmm ah eh uh om lol pog", emoteNames: [], mentionNames: [] })).toEqual([
+      { term: "lol", meaning: "爆笑" },
+      { term: "pog", meaning: "すごい" },
+    ]);
+  });
+
+  it("文字を伸ばした相槌・感嘆詞(ohhh / hmmm / wowww)や、前後に記号が付いた形(oh! / wow...)も落とす(issue #33)", () => {
+    const terms = [
+      { term: "ohhh", meaning: "驚きを表す感嘆詞" },
+      { term: "hmmm", meaning: "考え込むときの相槌" },
+      { term: "wowww", meaning: "驚きを表す感嘆詞" },
+      { term: "oh!", meaning: "驚きを表す感嘆詞" },
+      { term: "wow...", meaning: "驚きを表す感嘆詞" },
+      { term: "cool", meaning: "かっこいい" },
+    ];
+
+    expect(filterPickupTerms(terms, { text: "ohhh hmmm wowww oh! wow... cool", emoteNames: [], mentionNames: [] })).toEqual([
+      { term: "cool", meaning: "かっこいい" },
+    ]);
+  });
+
+  it("相槌・感嘆詞を含む複数語の表現(oh my god / wow factor)は落とさない(issue #33)", () => {
+    const terms = [
+      { term: "oh my god", meaning: "なんてこった" },
+      { term: "wow factor", meaning: "驚かせる要素" },
+    ];
+
+    expect(filterPickupTerms(terms, { text: "oh my god wow factor", emoteNames: [], mentionNames: [] })).toEqual(terms);
   });
 
   it("落とす対象が無ければ元の配列と同じ内容を返す", () => {
