@@ -2,11 +2,13 @@
  * src/app/page.tsx(ホーム = 3カラムのチャット閲覧画面)のテスト。
  *
  * 生IRC / 翻訳 / 解説 の3列が描画されること、受信済み発言が生IRC列に
- * 表示されること、翻訳列に発言ごとの翻訳状態が表示されること、
- * 翻訳列・解説列のぼかしをトグルで切り替えられることを検証する。
- * IRC 接続そのものは chat-connection ストアに、翻訳の生成は translations ストアに
- * 閉じているため、ここでは各ストアの state を直接書き換えて注入する。
- * 翻訳パイプラインの開始(`startTranslationPipeline`)はブラウザAPIに触れるためモックする。
+ * 表示されること、翻訳列に発言ごとの翻訳状態が表示されること、解説列で「解説」ボタンから
+ * 解説を要求でき発言ごとの解説状態が表示されること、翻訳列・解説列のぼかしをトグルで
+ * 切り替えられることを検証する。
+ * IRC 接続そのものは chat-connection ストアに、翻訳の生成は translations ストアに、
+ * 解説の生成は explanations ストアに閉じているため、ここでは各ストアの state を直接書き換えて注入する。
+ * 各パイプラインの開始(`startTranslationPipeline` / `startExplanationPipeline`)は
+ * ブラウザAPIに触れるためモックする。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
@@ -15,6 +17,7 @@ import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetTranslationStoreForTests, useTranslationStore } from "@/store/translations";
+import { resetExplanationStoreForTests, useExplanationStore, type ExplanationEntry } from "@/store/explanations";
 
 const mockStopPipeline = vi.fn();
 const mockStartTranslationPipeline = vi.fn(() => mockStopPipeline);
@@ -24,6 +27,16 @@ vi.mock("@/store/translations", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/store/translations")>()),
   startTranslationPipeline: () => mockStartTranslationPipeline(),
   warmUpTranslationPipeline: () => mockWarmUpTranslationPipeline(),
+}));
+
+const mockStopExplanationPipeline = vi.fn();
+const mockStartExplanationPipeline = vi.fn(() => mockStopExplanationPipeline);
+const mockRequestExplanation = vi.fn();
+
+vi.mock("@/store/explanations", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/store/explanations")>()),
+  startExplanationPipeline: () => mockStartExplanationPipeline(),
+  requestExplanation: (message: TwitchChatMessage) => mockRequestExplanation(message),
 }));
 
 import Home from "./page";
@@ -56,11 +69,15 @@ beforeEach(() => {
   mockStartTranslationPipeline.mockClear();
   mockStopPipeline.mockClear();
   mockWarmUpTranslationPipeline.mockClear();
+  mockStartExplanationPipeline.mockClear();
+  mockStopExplanationPipeline.mockClear();
+  mockRequestExplanation.mockClear();
 });
 
 afterEach(() => {
   resetChatConnectionStoreForTests();
   resetTranslationStoreForTests();
+  resetExplanationStoreForTests();
   resetBotFilterStoreForTests();
   window.localStorage.clear();
 });
@@ -227,6 +244,153 @@ describe("Home(翻訳列)", () => {
 
     await user.click(screen.getByRole("switch", { name: "翻訳をぼかす" }));
     expect(translationRow).not.toHaveClass("blur-sm");
+  });
+});
+
+describe("Home(解説列)", () => {
+  /** 解説列のテストで使う、Prompt API が使える状態の解説ストア */
+  function setExplanationReady(entries: Record<string, ExplanationEntry> = {}) {
+    useExplanationStore.setState({ promptApi: { status: "ready" }, entries });
+  }
+
+  it("マウント時に解説パイプラインを開始し、アンマウント時に停止する", () => {
+    const { unmount } = render(<Home />);
+    expect(mockStartExplanationPipeline).toHaveBeenCalledTimes(1);
+
+    unmount();
+    expect(mockStopExplanationPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it("未要求の行には「解説」ボタンがあり、クリックすると対応する発言の解説を要求する", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言, サンプル発言2] });
+    setExplanationReady();
+
+    render(<Home />);
+
+    const rows = within(screen.getByRole("region", { name: "解説" })).getAllByRole("listitem");
+    await user.click(within(rows[1]).getByRole("button", { name: "解説" }));
+
+    expect(mockRequestExplanation).toHaveBeenCalledTimes(1);
+    expect(mockRequestExplanation).toHaveBeenCalledWith(サンプル発言2);
+  });
+
+  it("解説をぼかしていても「解説」ボタンはぼかしの外にあり操作できる", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    setExplanationReady();
+
+    render(<Home />);
+
+    expect(screen.getByRole("switch", { name: "解説をぼかす" })).toBeChecked();
+    const button = within(screen.getByRole("region", { name: "解説" })).getByRole("button", { name: "解説" });
+    expect(button.closest(".blur-sm")).toBeNull();
+
+    await user.click(button);
+    expect(mockRequestExplanation).toHaveBeenCalledWith(サンプル発言);
+  });
+
+  it("生成中の行は「解説中」と表示し、ボタンは出さない", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    setExplanationReady({ "msg-1": { status: "pending" } });
+
+    render(<Home />);
+
+    const column = screen.getByRole("region", { name: "解説" });
+    expect(within(column).getByText("解説中...")).toBeInTheDocument();
+    expect(within(column).queryByRole("button", { name: "解説" })).not.toBeInTheDocument();
+  });
+
+  it("完了した解説を対応する発言の行に表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言, サンプル発言2] });
+    setExplanationReady({
+      "msg-2": {
+        status: "done",
+        result: {
+          translation: "これはマジでそう",
+          literal: "これはとても本物だ",
+          items: [{ term: "so real", kind: "slang", meaning: "激しく同意", note: "共感を示す若者言葉" }],
+          difficulty: 3,
+        },
+      },
+    });
+
+    render(<Home />);
+
+    const rows = within(screen.getByRole("region", { name: "解説" })).getAllByRole("listitem");
+    expect(rows[0]).toHaveAttribute("data-message-id", "msg-1");
+    expect(within(rows[0]).getByRole("button", { name: "解説" })).toBeInTheDocument();
+    expect(rows[1]).toHaveAttribute("data-message-id", "msg-2");
+    expect(rows[1]).toHaveTextContent("これはマジでそう");
+    expect(rows[1]).toHaveTextContent("so real");
+    expect(rows[1]).toHaveTextContent("難易度 3/5");
+  });
+
+  it("失敗した行は理由付きで「解説に失敗」と表示し、「再試行」ボタンで再要求できる", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    setExplanationReady({ "msg-1": { status: "failed", reason: "応答をJSONとして解釈できませんでした" } });
+
+    render(<Home />);
+
+    const column = screen.getByRole("region", { name: "解説" });
+    expect(within(column).getByText(/解説に失敗/)).toBeInTheDocument();
+    expect(within(column).getByText(/応答をJSONとして解釈できませんでした/)).toBeInTheDocument();
+
+    await user.click(within(column).getByRole("button", { name: "再試行" }));
+    expect(mockRequestExplanation).toHaveBeenCalledWith(サンプル発言);
+  });
+
+  it("Prompt API が利用できない環境では、行ごとに「解説不可」と表示してボタンを出さず、列の見出し付近に理由を表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    useExplanationStore.setState({
+      promptApi: { status: "unavailable", reason: "この環境では Prompt API (window.LanguageModel) が見つかりません。" },
+      entries: {},
+    });
+
+    render(<Home />);
+
+    const column = screen.getByRole("region", { name: "解説" });
+    expect(within(column).getByText("解説不可")).toBeInTheDocument();
+    expect(within(column).queryByRole("button", { name: "解説" })).not.toBeInTheDocument();
+    expect(within(column).getByText(/window\.LanguageModel/)).toBeInTheDocument();
+  });
+
+  it("環境診断が終わるまでは「準備中」の無効なボタンを表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    useExplanationStore.setState({ promptApi: { status: "checking" }, entries: {} });
+
+    render(<Home />);
+
+    const column = screen.getByRole("region", { name: "解説" });
+    expect(within(column).getByRole("button", { name: "準備中..." })).toBeDisabled();
+  });
+
+  it("ID を持たない発言の行は「解説不可(IDなし)」と表示する", () => {
+    useChatConnectionStore.setState({ messages: [{ ...サンプル発言, id: null }] });
+    setExplanationReady();
+
+    render(<Home />);
+
+    const column = screen.getByRole("region", { name: "解説" });
+    expect(within(column).getByText("解説不可(IDなし)")).toBeInTheDocument();
+    expect(within(column).queryByRole("button", { name: "解説" })).not.toBeInTheDocument();
+  });
+
+  it("解説をぼかしている間は完了した解説の行がぼかされ、解除すると外れる", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    setExplanationReady({
+      "msg-1": { status: "done", result: { translation: "訳", literal: "直訳", items: [], difficulty: 1 } },
+    });
+
+    render(<Home />);
+
+    const row = within(screen.getByRole("region", { name: "解説" })).getByRole("listitem");
+    expect(row).toHaveClass("blur-sm");
+
+    await user.click(screen.getByRole("switch", { name: "解説をぼかす" }));
+    expect(row).not.toHaveClass("blur-sm");
   });
 });
 

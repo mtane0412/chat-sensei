@@ -5,7 +5,7 @@
  *
  * - 左列「生IRC」: 受信した発言をそのまま(表示名の色・emote画像付きで)表示する
  * - 中央列「翻訳」: 発言ごとの翻訳(translations ストア)を左列と同じ高さの行に表示する
- * - 右列「解説」: 発言の解説を必要に応じて生成して表示する(生成処理は未実装。骨組みのみ)
+ * - 右列「解説」: 各行の「解説」ボタンを押した発言だけ、解説(explanations ストア)を生成して表示する
  *
  * 行の高さ揃えは CSS subgrid で実現する。3列の親グリッドが「見出し1行 + 発言数ぶんの行」を
  * 持ち、各列(section)は `grid-rows-subgrid` で親の行トラックを共有する。これにより
@@ -13,15 +13,18 @@
  * スクロールは3列で共通の1つにまとめる(列ごとに独立させると行の対応が崩れるため)。
  *
  * 翻訳列・解説列は学習のためデフォルトでぼかして表示し、それぞれのトグルで解除できる。
+ * 解説列の「解説」ボタンはぼかし中でも操作できるよう、完了した解説のある行だけをぼかす。
  * 生IRC列の見出しには bot除外設定(BotFilterDialog)を開くアイコンを置く。除外パターンは
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
- * 翻訳結果は translations ストアが保持し、翻訳パイプラインはこの画面のマウント時に開始する。
+ * 翻訳結果は translations ストアが、解説結果は explanations ストアが保持し、
+ * 各パイプラインはこの画面のマウント時に開始する。
  */
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
+import { ExplanationResultView } from "@/components/explanation-result-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +36,12 @@ import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments } from "@/lib/twitch/emotes";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
+import {
+  requestExplanation,
+  startExplanationPipeline,
+  useExplanationStore,
+  type ExplanationEntry,
+} from "@/store/explanations";
 import {
   startTranslationPipeline,
   useTranslationStore,
@@ -67,9 +76,13 @@ export default function Home() {
 
   const translationEntries = useTranslationStore((state) => state.entries);
   const promptApi = useTranslationStore((state) => state.promptApi);
+  const explanationEntries = useExplanationStore((state) => state.entries);
+  const explanationPromptApi = useExplanationStore((state) => state.promptApi);
 
   // 受信した発言を自動で翻訳ジョブに流す。アンマウント時は購読を解除し待機中のジョブを中断する
   useEffect(() => startTranslationPipeline(), []);
+  // 解説の環境診断を行い、「解説」ボタンからの要求を受け付ける。アンマウント時は待機中のジョブを中断する
+  useEffect(() => startExplanationPipeline(), []);
   // bot除外パターンを LocalStorage から復元する(SSR 中に触れないようマウント後に行う)
   useEffect(() => hydrateBotFilterStore(), []);
 
@@ -165,13 +178,29 @@ export default function Home() {
               ))}
             </div>
           </Column>
-          <Column title="解説" blurred={explanationBlurred}>
+          <Column
+            title="解説"
+            blurred={explanationBlurred}
+            headerExtra={
+              explanationPromptApi.status === "unavailable" ? (
+                <p className="text-xs font-normal text-destructive">{explanationPromptApi.reason}</p>
+              ) : null
+            }
+          >
             <div role="list" className="contents">
-              {messages.map((message, index) => (
-                <Row key={messageKey(message, index)} message={message} blurred={explanationBlurred}>
-                  <span className="text-muted-foreground">解説は未実装です。</span>
-                </Row>
-              ))}
+              {messages.map((message, index) => {
+                const entry = message.id === null ? undefined : explanationEntries[message.id];
+                return (
+                  <Row
+                    key={messageKey(message, index)}
+                    message={message}
+                    // ぼかすのは完了した解説だけ。ボタンや状態表示はぼかし中でも見える・操作できるようにする
+                    blurred={explanationBlurred && entry?.status === "done"}
+                  >
+                    <ExplanationCellContent message={message} entry={entry} promptApi={explanationPromptApi} />
+                  </Row>
+                );
+              })}
             </div>
           </Column>
         </div>
@@ -276,6 +305,58 @@ function TranslationCellContent({
       return <span className="text-muted-foreground">未翻訳(流量超過)</span>;
     case "unavailable":
       return <span className="text-muted-foreground">翻訳不可</span>;
+  }
+}
+
+/**
+ * 解説列の1行の中身。未要求の行には「解説」ボタンを置き、
+ * 生成中・完了・失敗・Prompt API 利用不可の各状態を暗黙に隠さず明示する。
+ */
+function ExplanationCellContent({
+  message,
+  entry,
+  promptApi,
+}: {
+  message: TwitchChatMessage;
+  entry: ExplanationEntry | undefined;
+  promptApi: PromptApiStatus;
+}) {
+  if (message.id === null) {
+    return <span className="text-muted-foreground">解説不可(IDなし)</span>;
+  }
+  if (promptApi.status === "unavailable") {
+    return <span className="text-muted-foreground">解説不可</span>;
+  }
+  if (promptApi.status === "checking") {
+    return (
+      <Button size="sm" variant="outline" disabled>
+        準備中...
+      </Button>
+    );
+  }
+  if (!entry) {
+    return (
+      <Button size="sm" variant="outline" onClick={() => requestExplanation(message)}>
+        解説
+      </Button>
+    );
+  }
+  switch (entry.status) {
+    case "pending":
+      return <span className="text-muted-foreground">解説中...</span>;
+    case "done":
+      return <ExplanationResultView result={entry.result} />;
+    case "failed":
+      return (
+        <div className="flex flex-col items-start gap-1">
+          <span className="text-destructive">解説に失敗: {entry.reason}</span>
+          <Button size="sm" variant="outline" onClick={() => requestExplanation(message)}>
+            再試行
+          </Button>
+        </div>
+      );
+    case "unavailable":
+      return <span className="text-muted-foreground">解説不可</span>;
   }
 }
 
