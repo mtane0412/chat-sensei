@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildExplainSystemPrompt,
   buildExplainUserPrompt,
+  buildTranslateSystemPrompt,
+  buildTranslateUserPrompt,
   SUPPORTED_LANGUAGES,
   type SupportedLanguage,
 } from "./prompts";
@@ -104,5 +106,51 @@ describe("buildExplainUserPrompt", () => {
     const prompt = buildExplainUserPrompt("gg no re chat");
 
     expect(prompt).toContain("gg no re chat");
+  });
+});
+
+describe("buildTranslateSystemPrompt", () => {
+  it("解説言語がjaのとき、学ぶ言語から日本語への翻訳を指示する日本語のシステムプロンプトを組み立てる", () => {
+    const prompt = buildTranslateSystemPrompt("en", "ja");
+
+    expect(prompt).toContain("英語");
+    expect(prompt).toContain("日本語");
+    expect(prompt).toMatch(/翻訳/);
+  });
+
+  it("解説言語がenのとき、英語のシステムプロンプトを組み立てる", () => {
+    const prompt = buildTranslateSystemPrompt("ja", "en");
+
+    expect(prompt).toContain("Japanese");
+    expect(prompt).toContain("English");
+    expect(prompt).toMatch(/translat/i);
+  });
+
+  it("解説用のシステムプロンプトとは別物である(語句の列挙など解説向けの指示を含まない)", () => {
+    const prompt = buildTranslateSystemPrompt("en", "ja");
+
+    expect(prompt).not.toBe(buildExplainSystemPrompt("en", "ja"));
+    expect(prompt).not.toMatch(/items/);
+  });
+
+  it("すべてのサポート言語の組み合わせでエラーなくプロンプトを生成できる", () => {
+    for (const targetLang of SUPPORTED_LANGUAGES) {
+      for (const explainLang of SUPPORTED_LANGUAGES) {
+        if (targetLang === explainLang) continue;
+        expect(() => buildTranslateSystemPrompt(targetLang, explainLang)).not.toThrow();
+      }
+    }
+  });
+});
+
+describe("buildTranslateUserPrompt", () => {
+  it("チャット本文をそのまま埋め込んだユーザープロンプトを組み立てる", () => {
+    const prompt = buildTranslateUserPrompt("gg no re chat");
+
+    expect(prompt).toContain("gg no re chat");
+  });
+
+  it("解説用のユーザープロンプトとは異なる文言で翻訳対象であることを示す", () => {
+    expect(buildTranslateUserPrompt("hello")).not.toBe(buildExplainUserPrompt("hello"));
   });
 });

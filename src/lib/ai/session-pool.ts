@@ -45,6 +45,17 @@ export interface SessionPool {
 
 const DEFAULT_MAX_LOW_PRIORITY_QUEUE_LENGTH = 20;
 
+/**
+ * 低優先度キューの上限超過で破棄されたジョブを拒否する際のエラー。
+ * 呼び出し側が `instanceof` で判別し、「未翻訳(流量超過)」のような溢れ固有の表示に切り替えられるようにする。
+ */
+export class LowPriorityQueueOverflowError extends Error {
+  constructor() {
+    super("低優先度キューの上限に達したため、このジョブは破棄されました");
+    this.name = "LowPriorityQueueOverflowError";
+  }
+}
+
 interface QueuedJob {
   run: (session: PromptSessionLike) => Promise<unknown>;
   resolve: (value: unknown) => void;
@@ -83,7 +94,7 @@ export function createSessionPool(deps: SessionPoolDeps): SessionPool {
       if (dropped?.onAbort) {
         dropped.signal?.removeEventListener("abort", dropped.onAbort);
       }
-      dropped?.reject(new Error("低優先度キューの上限に達したため、このジョブは破棄されました"));
+      dropped?.reject(new LowPriorityQueueOverflowError());
     }
   }
 
