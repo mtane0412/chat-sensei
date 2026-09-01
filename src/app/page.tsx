@@ -12,7 +12,8 @@
  * 同じ発言の左列・中央列・右列のセルが常に同じ行に並び、行の高さは3列の最大値に揃う。
  * スクロールは3列で共通の1つにまとめる(列ごとに独立させると行の対応が崩れるため)。
  *
- * 翻訳列・Pick up列は学習のためデフォルトでぼかして表示し、それぞれのトグルで解除できる。
+ * 翻訳列・Pick up列は学習のためデフォルトでぼかして表示し、各列の見出し右端に置いた
+ * 目のアイコンのトグル(BlurToggle)で解除できる。
  * 生IRC列の見出しには bot除外設定(BotFilterDialog)を開くアイコンを置く。除外パターンは
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
@@ -22,12 +23,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
@@ -116,25 +117,6 @@ export default function Home() {
             状態: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
           </p>
         </div>
-
-        <div className="flex items-center gap-2">
-          <Switch
-            id="translation-blur"
-            checked={translationBlurred}
-            onCheckedChange={setTranslationBlurred}
-            aria-label="翻訳をぼかす"
-          />
-          <Label htmlFor="translation-blur">翻訳をぼかす</Label>
-        </div>
-        <div className="flex items-center gap-2">
-          <Switch
-            id="pickup-blur"
-            checked={pickupBlurred}
-            onCheckedChange={setPickupBlurred}
-            aria-label="Pick upをぼかす"
-          />
-          <Label htmlFor="pickup-blur">Pick upをぼかす</Label>
-        </div>
       </div>
 
       <ScrollArea className="h-[70vh]">
@@ -153,6 +135,9 @@ export default function Home() {
           <Column
             title="翻訳"
             blurred={translationBlurred}
+            headerAction={
+              <BlurToggle label="翻訳をぼかす" blurred={translationBlurred} onBlurredChange={setTranslationBlurred} />
+            }
             headerExtra={
               promptApi.status === "unavailable" ? (
                 <p className="text-xs font-normal text-destructive">{promptApi.reason}</p>
@@ -174,6 +159,7 @@ export default function Home() {
           <Column
             title="Pick up"
             blurred={pickupBlurred}
+            headerAction={<BlurToggle label="Pick upをぼかす" blurred={pickupBlurred} onBlurredChange={setPickupBlurred} />}
             headerExtra={
               pickupPromptApi.status === "unavailable" ? (
                 <p className="text-xs font-normal text-destructive">{pickupPromptApi.reason}</p>
@@ -201,6 +187,34 @@ export default function Home() {
 /** 3列で同じ発言を同じ key で描画するための共通キー。ID が無い発言は位置で代用する */
 function messageKey(message: TwitchChatMessage, index: number): string {
   return message.id ?? `no-id-${message.username}-${message.timestampMs}-${index}`;
+}
+
+/**
+ * 列のぼかしを切り替える目のアイコンのトグル。列の見出し右端に置く。
+ * ぼかし中は EyeOff、解除中は Eye を表示し、`role="switch"` + `aria-checked` で状態を公開する。
+ */
+function BlurToggle({
+  label,
+  blurred,
+  onBlurredChange,
+}: {
+  /** スクリーンリーダー向けの名前(例: "翻訳をぼかす") */
+  label: string;
+  blurred: boolean;
+  onBlurredChange: (blurred: boolean) => void;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      role="switch"
+      aria-checked={blurred}
+      aria-label={label}
+      onClick={() => onBlurredChange(!blurred)}
+    >
+      {blurred ? <EyeOffIcon /> : <EyeIcon />}
+    </Button>
+  );
 }
 
 /**
