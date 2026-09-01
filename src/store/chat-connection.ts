@@ -1,9 +1,8 @@
 /**
  * Twitch チャットへの接続状態・受信済み発言を保持する、モジュールスコープの永続ストア。
  *
- * chat-sensei はページ数の少ないシングルパーパスアプリで、ホーム(/)以外にも
- * /deck・/study・/settings への画面遷移がある。これらは Next.js App Router 上の
- * 別ルートであり、遷移するとホーム画面のコンポーネントはアンマウントされる。
+ * 今後ホーム(/)以外の画面(設定など)が追加されると、Next.js App Router 上の
+ * 別ルートへの遷移でホーム画面のコンポーネントはアンマウントされる。
  *
  * 接続状態・発言一覧をホーム画面のコンポーネントローカルな state / ref として
  * 持たせると、アンマウントと同時に `TwitchIrcClient`・WebSocket への唯一の参照が
@@ -35,7 +34,7 @@ interface ChatConnectionState {
   disconnect: () => void;
 }
 
-/** 発言受信時に自動抽出などの追加処理を行うためのリスナー */
+/** 発言受信時に翻訳・解説生成などの追加処理を行うためのリスナー */
 type ChatMessageListener = (message: TwitchChatMessage) => void;
 const messageListeners = new Set<ChatMessageListener>();
 
@@ -80,7 +79,7 @@ export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
 }));
 
 /**
- * 受信した発言(privmsg)を購読する。自動抽出パイプラインのように、
+ * 受信した発言(privmsg)を購読する。バックグラウンドの翻訳・解説生成のように、
  * 画面表示用のリングバッファとは独立に「受信した発言そのもの」を必要とする
  * 処理から利用する。戻り値の関数を呼ぶと購読を解除できる。
  */

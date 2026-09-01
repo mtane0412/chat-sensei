@@ -3,7 +3,7 @@
  *
  * jsdom 環境でクライアントサイド専用の chat-sensei をテストする。
  * `@/` エイリアスは tsconfig.json の paths 設定と一致させている。
- * setupFiles では fake-indexeddb と Testing Library の jest-dom マッチャーを登録する。
+ * setupFiles では Testing Library の jest-dom マッチャーを登録する。
  */
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";

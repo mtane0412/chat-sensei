@@ -19,7 +19,7 @@ function getStorageDeps(): DiagnosisDeps["storage"] {
 
 /**
  * 現在のブラウザ環境を診断する。Chrome 内蔵AIが使えるかどうかを
- * `/settings` 画面の環境診断表示から呼び出すためのエントリーポイント。
+ * 画面側から呼び出すためのエントリーポイント。
  */
 export async function runBrowserDiagnosis(): Promise<EnvironmentDiagnosis> {
   const userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent;
