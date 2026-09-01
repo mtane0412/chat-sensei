@@ -171,12 +171,23 @@ describe("restoreEmotesFromPlaceholders", () => {
     ]);
   });
 
-  it("置換表に無いプレースホルダ風の文字列はテキストとして残す(黙って消さない)", () => {
+  it("置換表に無い [[E数字]] 形式のトークン(モデルの創作)は訳文から取り除く", () => {
     const segments = restoreEmotesFromPlaceholders("やあ [[E9]] [[E0]]", [置換表[0]]);
 
     expect(segments).toEqual([
-      { type: "text", text: "やあ [[E9]] " },
+      { type: "text", text: "やあ " },
       { type: "emote", id: "emotesv2_wave", text: "peepoWave" },
+    ]);
+  });
+
+  it("置換表が空でも、モデルが書き出した [[E数字]] 形式のトークンは直前の空白ごと取り除く", () => {
+    expect(restoreEmotesFromPlaceholders("拍手喝采！[[E0]]", [])).toEqual([{ type: "text", text: "拍手喝采！" }]);
+    expect(restoreEmotesFromPlaceholders("拍手喝采 [[E0]]", [])).toEqual([{ type: "text", text: "拍手喝采" }]);
+  });
+
+  it("モデルが括弧を増やして書き出した [[[E0]]] のような崩れたトークンも取り除く", () => {
+    expect(restoreEmotesFromPlaceholders("疑わしいかった [[[E0]]]", [])).toEqual([
+      { type: "text", text: "疑わしいかった" },
     ]);
   });
 });

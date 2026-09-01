@@ -41,7 +41,11 @@ const pipeline = createAutoPipeline<TranslationDone>({
       : null,
   runJob: async (pool, message, { signal }) => {
     const { maskedText, placeholders } = maskEmotesWithPlaceholders(message.text, message.emotes);
-    const { translation } = await translateChatMessage(pool, maskedText, { priority: "low", signal });
+    const { translation } = await translateChatMessage(pool, maskedText, {
+      priority: "low",
+      signal,
+      placeholderTokens: placeholders.map((placeholder) => placeholder.token),
+    });
     return { segments: restoreEmotesFromPlaceholders(translation, placeholders) };
   },
 });

@@ -113,11 +113,6 @@ export function isEmoteOnlyMessage(text: string, emotes: EmotePosition[]): boole
   );
 }
 
-/** 正規表現のメタ文字をエスケープする */
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** LLM に渡す本文の中で emote 1 件を置き換えるプレースホルダと、元の emote(ID・名前)の対応 */
 export interface EmotePlaceholder {
   /** 本文中に埋め込む記号トークン(例: `[[E0]]`) */
@@ -138,6 +133,12 @@ export interface MaskedEmoteText {
 function buildEmotePlaceholderToken(index: number): string {
   return `[[E${index}]]`;
 }
+
+/**
+ * `buildEmotePlaceholderToken` が作るトークンと同じ形式の文字列(直前の空白を含む)にマッチするパターン。
+ * モデルが `[[[E0]]]` のように括弧を増やして書き出すことがあるため、括弧は2つ以上を許容する
+ */
+const EMOTE_PLACEHOLDER_LIKE_PATTERN = /\s*\[{2,}E\d+\]{2,}/g;
 
 /**
  * 発言本文の emote を `[[E0]]`, `[[E1]]` のようなプレースホルダに置き換える(issue #44)。
@@ -163,40 +164,48 @@ export function maskEmotesWithPlaceholders(text: string, emotes: EmotePosition[]
 /**
  * 訳文中のプレースホルダを `maskEmotesWithPlaceholders` の置換表で emote セグメントに戻す(issue #44)。
  *
- * - 置換表に無いプレースホルダ風の文字列(LLM の創作)はテキストとして残し、黙って消さない
+ * - 置換表に無い `[[E数字]]` 形式の文字列はモデルの創作(実ブラウザ確認で、emote の無い発言の訳文末尾に
+ *   `[[E0]]` や `[[[E0]]]` が現れた)なので、直前の空白ごと訳文から取り除く。チャット本文にこの形式の文字列が
+ *   自然に現れることは想定しない
  * - LLM が訳文から落としたプレースホルダは、emote 画像が失われないよう末尾に空白区切りで補う
  *   (訳文中の正しい位置は分からないため、位置の推測はしない)
  */
 export function restoreEmotesFromPlaceholders(translation: string, placeholders: EmotePlaceholder[]): MessageSegment[] {
-  if (placeholders.length === 0) {
-    return [{ type: "text", text: translation }];
-  }
-
   const byToken = new Map(placeholders.map((placeholder) => [placeholder.token, placeholder]));
-  const pattern = new RegExp(placeholders.map((placeholder) => escapeRegExp(placeholder.token)).join("|"), "g");
 
   const segments: MessageSegment[] = [];
   const restoredTokens = new Set<string>();
+  let pendingText = "";
   let cursor = 0;
-  for (const match of translation.matchAll(pattern)) {
-    const placeholder = byToken.get(match[0]);
-    // パターンは置換表のトークンから組み立てているため必ず見つかるが、型上の未定義を Fail-Fast で弾く
-    if (placeholder === undefined) throw new Error(`プレースホルダに対応する emote がありません: ${match[0]}`);
-    if (match.index > cursor) {
-      segments.push({ type: "text", text: translation.slice(cursor, match.index) });
-    }
-    segments.push({ type: "emote", id: placeholder.id, text: placeholder.text });
-    restoredTokens.add(placeholder.token);
+  const flushText = () => {
+    if (pendingText !== "") segments.push({ type: "text", text: pendingText });
+    pendingText = "";
+  };
+
+  for (const match of translation.matchAll(EMOTE_PLACEHOLDER_LIKE_PATTERN)) {
+    const token = match[0].trimStart();
+    const placeholder = byToken.get(token);
+    const before = translation.slice(cursor, match.index);
     cursor = match.index + match[0].length;
+    if (placeholder === undefined) {
+      // モデルの創作トークン: 直前の空白ごと捨て、その前のテキストだけを引き継ぐ
+      pendingText += before;
+      continue;
+    }
+    // 実在するトークン: トークンの直前に付いていた空白は保持する
+    pendingText += before + match[0].slice(0, match[0].length - token.length);
+    flushText();
+    segments.push({ type: "emote", id: placeholder.id, text: placeholder.text });
+    restoredTokens.add(token);
   }
-  if (cursor < translation.length) {
-    segments.push({ type: "text", text: translation.slice(cursor) });
-  }
+  pendingText += translation.slice(cursor);
+  flushText();
 
   for (const placeholder of placeholders) {
     if (restoredTokens.has(placeholder.token)) continue;
     if (segments.length > 0) segments.push({ type: "text", text: " " });
     segments.push({ type: "emote", id: placeholder.id, text: placeholder.text });
   }
+  if (segments.length === 0) segments.push({ type: "text", text: "" });
   return segments;
 }

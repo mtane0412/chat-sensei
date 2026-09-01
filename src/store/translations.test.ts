@@ -34,6 +34,24 @@ describe("startTranslationPipeline", () => {
     stop();
   });
 
+  it("emote の無い発言ではプレースホルダの説明を LLM に渡さず、モデルが書き出した [[E0]] 風のトークンは訳文から取り除く(issue #44)", async () => {
+    const { deps, emit, prompt } = createDeps({
+      promptResults: [Promise.resolve(JSON.stringify({ translation: "拍手喝采！[[E0]]" }))],
+    });
+
+    const stop = startTranslationPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "clappi" }));
+    await flush();
+
+    expect(prompt).not.toHaveBeenCalledWith(expect.stringMatching(/emote|placeholder/i), expect.anything());
+    expect(useTranslationStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      segments: [{ type: "text", text: "拍手喝采！" }],
+    });
+    stop();
+  });
+
   it("emote を含む発言は emote をプレースホルダに置き換えて LLM に渡し、訳文中のプレースホルダを emote セグメントに戻して保持する(issue #44)", async () => {
     const { deps, emit, prompt } = createDeps({
       promptResults: [Promise.resolve(JSON.stringify({ translation: "@vaniks890 やあ [[E0]]" }))],
@@ -50,8 +68,9 @@ describe("startTranslationPipeline", () => {
     );
     await flush();
 
-    // LLM には emote 名を見せない(名前を意訳して書き換えられるのを防ぐ)
+    // LLM には emote 名を見せず(名前を意訳して書き換えられるのを防ぐ)、実際のトークンの説明だけを添える
     expect(prompt).toHaveBeenCalledWith(expect.stringContaining("@vaniks890 Ello [[E0]]"), expect.anything());
+    expect(prompt).toHaveBeenCalledWith(expect.stringMatching(/\[\[E0\]\].*emote/), expect.anything());
     expect(prompt).not.toHaveBeenCalledWith(expect.stringContaining("peepoWave"), expect.anything());
     expect(useTranslationStore.getState().entries["msg-1"]).toEqual({
       status: "done",

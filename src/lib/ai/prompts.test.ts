@@ -158,10 +158,9 @@ describe("buildTranslateUserPrompt", () => {
 });
 
 describe("buildTranslateSystemPrompt のプレースホルダ指示(issue #44)", () => {
-  it("解説言語がjaのとき、emote 名ではなく [[E0]] のようなプレースホルダをそのまま残す指示を含む", () => {
+  it("解説言語がjaのとき、emote 名ではなくプレースホルダをそのまま残す指示を含む", () => {
     const prompt = buildTranslateSystemPrompt("en", "ja");
 
-    expect(prompt).toContain("[[E0]]");
     expect(prompt).toMatch(/プレースホルダ/);
     expect(prompt).not.toMatch(/emote名/);
   });
@@ -169,15 +168,30 @@ describe("buildTranslateSystemPrompt のプレースホルダ指示(issue #44)",
   it("解説言語がenのとき、placeholder をそのまま残す指示を含む", () => {
     const prompt = buildTranslateSystemPrompt("ja", "en");
 
-    expect(prompt).toContain("[[E0]]");
     expect(prompt).toMatch(/placeholder/i);
     expect(prompt).not.toMatch(/emote names/i);
   });
 
-  it("すべての解説言語で [[E0]] を例示する", () => {
+  it("emote の無い発言でモデルが例を書き写さないよう、システムプロンプトには具体的なトークン([[E0]] など)を例示しない", () => {
     for (const explainLang of SUPPORTED_LANGUAGES) {
-      expect(buildTranslateSystemPrompt("en", explainLang)).toContain("[[E0]]");
+      expect(buildTranslateSystemPrompt("en", explainLang)).not.toMatch(/\[\[E\d+\]\]/);
     }
+  });
+});
+
+describe("buildTranslateUserPrompt のプレースホルダ指示(issue #44)", () => {
+  it("プレースホルダを渡した場合は、その実際のトークンを列挙してそのまま書き写す指示を本文の後ろに付ける", () => {
+    const prompt = buildTranslateUserPrompt("Ello [[E0]] [[E1]]", ["[[E0]]", "[[E1]]"]);
+
+    expect(prompt).toContain('"Ello [[E0]] [[E1]]"');
+    expect(prompt).toMatch(/\[\[E0\]\], \[\[E1\]\].*emote/);
+  });
+
+  it("プレースホルダが無い場合はトークンの説明を付けない(モデルが存在しないトークンを書き出すのを防ぐ)", () => {
+    const prompt = buildTranslateUserPrompt("clappi", []);
+
+    expect(prompt).toBe(buildTranslateUserPrompt("clappi"));
+    expect(prompt).not.toMatch(/emote|placeholder/i);
   });
 });
 
