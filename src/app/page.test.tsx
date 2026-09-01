@@ -3,7 +3,8 @@
  *
  * 生IRC / 翻訳 / Pick up の3列が描画されること、受信済み発言が生IRC列に
  * 表示されること、翻訳列・Pick up列に発言ごとの状態が表示されること、
- * 翻訳列・Pick up列のぼかしをトグルで切り替えられることを検証する。
+ * 翻訳列・Pick up列のぼかしをトグルで切り替えられること、生IRC列の追従トグルで新着時に
+ * スクロール領域が最下部へ送られることを検証する。
  * IRC 接続そのものは chat-connection ストアに、翻訳の生成は translations ストアに、
  * 注目の表現の抽出は pickups ストアに、Prompt API の利用可否は prompt-api ストアに閉じているため、
  * ここでは各ストアの state を直接書き換えて注入する。
@@ -11,7 +12,7 @@
  * 設定ダイアログの環境診断(`runBrowserDiagnosis`)も同様にモックする。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
@@ -109,29 +110,29 @@ describe("Home(3カラム構成)", () => {
     expect(within(rawColumn).getByText("gg no re chat")).toBeInTheDocument();
   });
 
-  it("翻訳列とPick up列は初期状態でぼかされており、トグルで解除できる", async () => {
+  it("翻訳列とPick up列は初期状態では見えており(ぼかし無し)、トグルでぼかせる", async () => {
     const user = userEvent.setup();
     render(<Home />);
 
     const translationColumn = screen.getByRole("region", { name: "Translation" });
     const pickupColumn = screen.getByRole("region", { name: "Pick up" });
-    expect(translationColumn).toHaveAttribute("data-blurred", "true");
-    expect(pickupColumn).toHaveAttribute("data-blurred", "true");
+    expect(translationColumn).toHaveAttribute("data-blurred", "false");
+    expect(pickupColumn).toHaveAttribute("data-blurred", "false");
 
     // トグルは各列の見出し(ヘッダー)内に目のアイコンとして置く
     const translationToggle = within(translationColumn).getByRole("switch", { name: "Blur translation" });
     const pickupToggle = within(pickupColumn).getByRole("switch", { name: "Blur Pick up" });
-    expect(translationToggle).toHaveAttribute("aria-checked", "true");
-    expect(pickupToggle).toHaveAttribute("aria-checked", "true");
+    expect(translationToggle).toHaveAttribute("aria-checked", "false");
+    expect(pickupToggle).toHaveAttribute("aria-checked", "false");
 
     await user.click(translationToggle);
-    expect(translationToggle).toHaveAttribute("aria-checked", "false");
-    expect(translationColumn).toHaveAttribute("data-blurred", "false");
-    expect(pickupColumn).toHaveAttribute("data-blurred", "true");
+    expect(translationToggle).toHaveAttribute("aria-checked", "true");
+    expect(translationColumn).toHaveAttribute("data-blurred", "true");
+    expect(pickupColumn).toHaveAttribute("data-blurred", "false");
 
     await user.click(pickupToggle);
-    expect(pickupToggle).toHaveAttribute("aria-checked", "false");
-    expect(pickupColumn).toHaveAttribute("data-blurred", "false");
+    expect(pickupToggle).toHaveAttribute("aria-checked", "true");
+    expect(pickupColumn).toHaveAttribute("data-blurred", "true");
   });
 
   it("ぼかしトグルはぼかし中は EyeOff、解除中は Eye のアイコンを表示する", async () => {
@@ -139,12 +140,12 @@ describe("Home(3カラム構成)", () => {
     render(<Home />);
 
     const toggle = screen.getByRole("switch", { name: "Blur translation" });
-    expect(toggle.querySelector(".lucide-eye-off")).not.toBeNull();
-    expect(toggle.querySelector(".lucide-eye")).toBeNull();
-
-    await user.click(toggle);
     expect(toggle.querySelector(".lucide-eye")).not.toBeNull();
     expect(toggle.querySelector(".lucide-eye-off")).toBeNull();
+
+    await user.click(toggle);
+    expect(toggle.querySelector(".lucide-eye-off")).not.toBeNull();
+    expect(toggle.querySelector(".lucide-eye")).toBeNull();
   });
 
   it("「接続する」クリック(ユーザー操作)の延長で翻訳・Pick upのセッションをウォームアップする(モデルDLにユーザー操作が必要なため)", async () =>  {
@@ -285,7 +286,7 @@ describe("Home(翻訳列)", () => {
     expect(within(screen.getByRole("region", { name: "Translation" })).getByText("Not translated (no message ID)")).toBeInTheDocument();
   });
 
-  it("翻訳をぼかしている間は翻訳列の各行がぼかされ、解除すると外れる", async () => {
+  it("翻訳のぼかしを入れると翻訳列の各行がぼかされ、解除すると外れる", async () => {
     const user = userEvent.setup();
     useChatConnectionStore.setState({ messages: [サンプル発言] });
     useTranslationStore.setState({ entries: { "msg-1": { status: "done", segments: [{ type: "text", text: "訳文" }] } } });
@@ -293,9 +294,13 @@ describe("Home(翻訳列)", () => {
     render(<Home />);
 
     const translationRow = within(screen.getByRole("region", { name: "Translation" })).getByRole("listitem");
+    expect(translationRow).not.toHaveClass("blur-sm");
+
+    const toggle = screen.getByRole("switch", { name: "Blur translation" });
+    await user.click(toggle);
     expect(translationRow).toHaveClass("blur-sm");
 
-    await user.click(screen.getByRole("switch", { name: "Blur translation" }));
+    await user.click(toggle);
     expect(translationRow).not.toHaveClass("blur-sm");
   });
 });
@@ -392,7 +397,7 @@ describe("Home(Pick up列)", () => {
     expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("Not extracted (no message ID)")).toBeInTheDocument();
   });
 
-  it("Pick upをぼかしている間はPick up列の各行がぼかされ、解除すると外れる", async () => {
+  it("Pick upのぼかしを入れるとPick up列の各行がぼかされ、解除すると外れる", async () => {
     const user = userEvent.setup();
     useChatConnectionStore.setState({ messages: [サンプル発言] });
     usePickupStore.setState({ entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ" }] } } });
@@ -400,10 +405,104 @@ describe("Home(Pick up列)", () => {
     render(<Home />);
 
     const row = within(screen.getByRole("region", { name: "Pick up" })).getByRole("listitem");
+    expect(row).not.toHaveClass("blur-sm");
+
+    const toggle = screen.getByRole("switch", { name: "Blur Pick up" });
+    await user.click(toggle);
     expect(row).toHaveClass("blur-sm");
 
-    await user.click(screen.getByRole("switch", { name: "Blur Pick up" }));
+    await user.click(toggle);
     expect(row).not.toHaveClass("blur-sm");
+  });
+});
+
+describe("Home(新着への追従)", () => {
+  /**
+   * jsdom はレイアウトを計算しないため scrollHeight が常に 0 になる。
+   * スクロール先を検証できるよう、スクロール領域のビューポートに scrollHeight を固定値で与える
+   */
+  function スクロール領域のビューポートを用意する(scrollHeight: number, clientHeight = 500): HTMLElement {
+    const viewport = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (!viewport) throw new Error("スクロール領域のビューポートが見つかりません");
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: scrollHeight });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: clientHeight });
+    return viewport;
+  }
+
+  it("生IRC列の見出しに追従トグルがあり、初期状態でオンになっている", () => {
+    render(<Home />);
+
+    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const toggle = within(rawColumn).getByRole("switch", { name: "Follow new messages" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(toggle.querySelector(".lucide-chevrons-down")).not.toBeNull();
+  });
+
+  it("利用者が上方向へスクロールして最下部から離れると、追従が自動でオフになる", () => {
+    render(<Home />);
+    const viewport = スクロール領域のビューポートを用意する(1000, 500);
+    const toggle = screen.getByRole("switch", { name: "Follow new messages" });
+
+    // 最下部(1000 - 500 = 500)から離れた位置へスクロールする
+    viewport.scrollTop = 200;
+    fireEvent.scroll(viewport);
+
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("最下部に留まったままのスクロールイベントでは、追従はオンのまま", () => {
+    render(<Home />);
+    const viewport = スクロール領域のビューポートを用意する(1000, 500);
+    const toggle = screen.getByRole("switch", { name: "Follow new messages" });
+
+    viewport.scrollTop = 500;
+    fireEvent.scroll(viewport);
+
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("追従がオンのとき、発言が増えるとスクロール領域を最下部まで送る", () => {
+    render(<Home />);
+    const viewport = スクロール領域のビューポートを用意する(1000);
+    viewport.scrollTop = 0;
+
+    act(() => {
+      useChatConnectionStore.setState({ messages: [サンプル発言] });
+    });
+
+    expect(viewport.scrollTop).toBe(1000);
+  });
+
+  it("追従をオフにすると、発言が増えてもスクロール位置を動かさない", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+    const viewport = スクロール領域のビューポートを用意する(1000);
+
+    const toggle = screen.getByRole("switch", { name: "Follow new messages" });
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    viewport.scrollTop = 0;
+
+    act(() => {
+      useChatConnectionStore.setState({ messages: [サンプル発言] });
+    });
+
+    expect(viewport.scrollTop).toBe(0);
+  });
+
+  it("追従をオフからオンに戻した時点で、最下部まで送る", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    render(<Home />);
+    const viewport = スクロール領域のビューポートを用意する(1000);
+
+    const toggle = screen.getByRole("switch", { name: "Follow new messages" });
+    await user.click(toggle);
+    viewport.scrollTop = 0;
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(viewport.scrollTop).toBe(1000);
   });
 });
 
