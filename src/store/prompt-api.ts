@@ -36,7 +36,7 @@ let inFlightDiagnosis: Promise<PromptApiStatus> | null = null;
 /** 環境診断結果から、利用者に見せる「Prompt API が使えない理由」を取り出す */
 function describePromptApiUnavailableReason(diagnosis: EnvironmentDiagnosis): string {
   const message = describeDiagnosis(diagnosis).find((item) => item.id === "language-model");
-  return message?.message ?? "Prompt API を利用できません。";
+  return message?.message ?? "The Prompt API is not available.";
 }
 
 /**
@@ -61,7 +61,7 @@ export function ensurePromptApiDiagnosed(
     .catch(
       (error: unknown): PromptApiStatus => ({
         status: "unavailable",
-        reason: `環境診断に失敗しました: ${error instanceof Error ? error.message : String(error)}`,
+        reason: `Environment check failed: ${error instanceof Error ? error.message : String(error)}`,
       }),
     )
     .then((status) => {

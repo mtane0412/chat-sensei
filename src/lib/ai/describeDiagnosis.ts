@@ -1,6 +1,6 @@
 /**
  * `EnvironmentDiagnosis`(環境診断結果)を、設定画面にそのまま表示できる
- * 日本語メッセージと重大度のリストに変換する純関数。
+ * 英語メッセージ(UI は言語学習用途のため英語で統一)と重大度のリストに変換する純関数。
  *
  * chat-sensei は「AIが使えない環境ではクラウドAPIに切り替える」といった
  * 暗黙のフォールバックを行わないため(CLAUDE.md の Fail-Fast 方針)、
@@ -26,20 +26,20 @@ function describeChromeVersion(diagnosis: EnvironmentDiagnosis): DiagnosisMessag
     return {
       id: "chrome-version",
       level: "ok",
-      message: `Chrome ${diagnosis.chromeVersion} を検出しました(Prompt API 対応)。`,
+      message: `Detected Chrome ${diagnosis.chromeVersion} (supports the Prompt API).`,
     };
   }
   if (diagnosis.chromeVersion === null) {
     return {
       id: "chrome-version",
       level: "error",
-      message: `Chrome を検出できませんでした。Prompt API は Chrome ${MINIMUM_CHROME_VERSION} 以降でのみ動作します。`,
+      message: `Chrome was not detected. The Prompt API only works in Chrome ${MINIMUM_CHROME_VERSION} or later.`,
     };
   }
   return {
     id: "chrome-version",
     level: "error",
-    message: `Chrome ${diagnosis.chromeVersion} を検出しましたが、Prompt API には Chrome ${MINIMUM_CHROME_VERSION} 以降が必要です。Chrome を最新版に更新してください。`,
+    message: `Detected Chrome ${diagnosis.chromeVersion}, but the Prompt API requires Chrome ${MINIMUM_CHROME_VERSION} or later. Please update Chrome.`,
   };
 }
 
@@ -48,27 +48,27 @@ function describeLanguageModel(diagnosis: EnvironmentDiagnosis): DiagnosisMessag
     return {
       id: "language-model",
       level: "error",
-      message: "この環境では Prompt API (window.LanguageModel) が見つかりません。翻訳・Pick up の生成は無効化されます。",
+      message: "The Prompt API (window.LanguageModel) was not found in this environment. Translation and Pick up are disabled.",
     };
   }
 
   switch (diagnosis.languageModel.availability) {
     case "available":
-      return { id: "language-model", level: "ok", message: "Prompt API はすぐに利用できます。" };
+      return { id: "language-model", level: "ok", message: "The Prompt API is ready to use." };
     case "downloadable":
       return {
         id: "language-model",
         level: "warning",
-        message: "Prompt API はモデルのダウンロードが必要です。次の操作でダウンロードを開始します。",
+        message: "The Prompt API needs to download its model. The download starts on your next action.",
       };
     case "downloading":
-      return { id: "language-model", level: "warning", message: "Prompt API のモデルをダウンロード中です。" };
+      return { id: "language-model", level: "warning", message: "The Prompt API model is downloading." };
     case "unavailable":
     default:
       return {
         id: "language-model",
         level: "error",
-        message: "この端末・環境では Prompt API を利用できません(非対応OS、または空き容量不足の可能性があります)。",
+        message: "The Prompt API is not available on this device (unsupported OS or not enough free disk space).",
       };
   }
 }
@@ -78,13 +78,13 @@ function describeLanguageDetector(diagnosis: EnvironmentDiagnosis): DiagnosisMes
     return {
       id: "language-detector",
       level: "warning",
-      message: "Language Detector API が利用できません。自動言語判定は無効化されますが、他の機能には影響しません。",
+      message: "The Language Detector API is not available. Automatic language detection is disabled; other features are unaffected.",
     };
   }
   return {
     id: "language-detector",
     level: "ok",
-    message: "Language Detector API は利用可能です。",
+    message: "The Language Detector API is available.",
   };
 }
 
@@ -102,14 +102,14 @@ function describeStorage(diagnosis: EnvironmentDiagnosis): DiagnosisMessage {
     return {
       id: "storage",
       level: "warning",
-      message: "このサイト用のストレージ割り当てを取得できませんでした。",
+      message: "Could not read the storage quota for this site.",
     };
   }
   const quotaGb = (quota / BYTES_PER_GB).toFixed(1);
   return {
     id: "storage",
     level: "ok",
-    message: `このサイト用のストレージ割り当ては約${quotaGb}GBです(参考値)。これは Prompt API のモデルダウンロードに必要な OS 側の空き容量${MINIMUM_STORAGE_GB}GBとは別の指標のため、ダウンロードに失敗する場合は OS のストレージ空き容量をご確認ください。`,
+    message: `The storage quota for this site is about ${quotaGb}GB (for reference). This is separate from the ${MINIMUM_STORAGE_GB}GB of free OS disk space the Prompt API model download requires, so if the download fails, check your OS free disk space.`,
   };
 }
 

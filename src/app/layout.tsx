@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "chat-sensei",
   description:
-    "Twitch のライブチャットを 生IRC / 翻訳 / Pick up の3カラムで読む、Chrome内蔵AI(Gemini Nano)で完結するクライアントサイド専用ツール。",
+    "Read Twitch live chat in three columns — raw IRC, translation, and Pick up — powered entirely by Chrome's built-in AI (Gemini Nano). Runs fully client-side.",
 };
 
 export default function RootLayout({
@@ -26,7 +26,7 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="ja"
+      lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">

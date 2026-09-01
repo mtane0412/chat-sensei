@@ -57,7 +57,7 @@ export async function pickUpExpressions(
   const normalizedText = prepared.text.toLowerCase();
   const unknownTerm = terms.find((term) => !normalizedText.includes(term.term.toLowerCase()));
   if (unknownTerm) {
-    throw new Error(`Prompt APIが原文に登場しない語句を返しました: ${unknownTerm.term}`);
+    throw new Error(`The Prompt API returned a term that does not appear in the message: ${unknownTerm.term}`);
   }
   return { terms };
 }

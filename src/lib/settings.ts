@@ -20,7 +20,7 @@ export const settingsSchema = z
     explainLang: z.enum(SUPPORTED_LANGUAGES),
   })
   .refine((data) => data.targetLang !== data.explainLang, {
-    message: "学ぶ言語と解説言語には異なる言語を指定してください",
+    message: "The learning language and the explanation language must be different",
     path: ["explainLang"],
   });
 

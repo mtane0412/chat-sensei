@@ -73,7 +73,7 @@ describe("describeDiagnosis", () => {
 
     const lmMessage = messages.find((m) => m.id === "language-model");
     expect(lmMessage?.level).toBe("warning");
-    expect(lmMessage?.message).toContain("ダウンロード");
+    expect(lmMessage?.message).toContain("download");
   });
 
   it("LanguageModel.availability() が 'available' の場合は ok", () => {

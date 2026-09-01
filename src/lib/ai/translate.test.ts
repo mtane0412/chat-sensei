@@ -115,7 +115,7 @@ describe("translateChatMessage", () => {
       const pool = createFakeSessionPool(['{"translation":"へー、なしか。', '{"translation":"へー、']);
 
       await expect(translateChatMessage(pool, "oh no way")).rejects.toThrow(
-        `Prompt APIの応答をJSONとして解釈できませんでした(${STRUCTURED_PROMPT_MAX_ATTEMPTS}回試行): {"translation":"へー、`,
+        `Could not parse the Prompt API response as JSON (${STRUCTURED_PROMPT_MAX_ATTEMPTS} attempts): {"translation":"へー、`,
       );
       expect(pool.enqueue).toHaveBeenCalledTimes(STRUCTURED_PROMPT_MAX_ATTEMPTS);
     });

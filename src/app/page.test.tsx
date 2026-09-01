@@ -94,8 +94,8 @@ describe("Home(3カラム構成)", () => {
   it("生IRC・翻訳・Pick upの3列を見出し付きで表示する", () => {
     render(<Home />);
 
-    expect(screen.getByRole("region", { name: "生IRC" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "翻訳" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Raw IRC" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Translation" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Pick up" })).toBeInTheDocument();
   });
 
@@ -104,7 +104,7 @@ describe("Home(3カラム構成)", () => {
 
     render(<Home />);
 
-    const rawColumn = screen.getByRole("region", { name: "生IRC" });
+    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
     expect(within(rawColumn).getByText("viewer_taro")).toBeInTheDocument();
     expect(within(rawColumn).getByText("gg no re chat")).toBeInTheDocument();
   });
@@ -113,14 +113,14 @@ describe("Home(3カラム構成)", () => {
     const user = userEvent.setup();
     render(<Home />);
 
-    const translationColumn = screen.getByRole("region", { name: "翻訳" });
+    const translationColumn = screen.getByRole("region", { name: "Translation" });
     const pickupColumn = screen.getByRole("region", { name: "Pick up" });
     expect(translationColumn).toHaveAttribute("data-blurred", "true");
     expect(pickupColumn).toHaveAttribute("data-blurred", "true");
 
     // トグルは各列の見出し(ヘッダー)内に目のアイコンとして置く
-    const translationToggle = within(translationColumn).getByRole("switch", { name: "翻訳をぼかす" });
-    const pickupToggle = within(pickupColumn).getByRole("switch", { name: "Pick upをぼかす" });
+    const translationToggle = within(translationColumn).getByRole("switch", { name: "Blur translation" });
+    const pickupToggle = within(pickupColumn).getByRole("switch", { name: "Blur Pick up" });
     expect(translationToggle).toHaveAttribute("aria-checked", "true");
     expect(pickupToggle).toHaveAttribute("aria-checked", "true");
 
@@ -138,7 +138,7 @@ describe("Home(3カラム構成)", () => {
     const user = userEvent.setup();
     render(<Home />);
 
-    const toggle = screen.getByRole("switch", { name: "翻訳をぼかす" });
+    const toggle = screen.getByRole("switch", { name: "Blur translation" });
     expect(toggle.querySelector(".lucide-eye-off")).not.toBeNull();
     expect(toggle.querySelector(".lucide-eye")).toBeNull();
 
@@ -153,8 +153,8 @@ describe("Home(3カラム構成)", () => {
     useChatConnectionStore.setState({ connect: vi.fn() });
     render(<Home />);
 
-    await user.type(screen.getByLabelText("チャンネル名"), "example");
-    await user.click(screen.getByRole("button", { name: "接続する" }));
+    await user.type(screen.getByLabelText("Channel"), "example");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
 
     expect(mockWarmUpTranslationPipeline).toHaveBeenCalledTimes(1);
     expect(mockWarmUpPickupPipeline).toHaveBeenCalledTimes(1);
@@ -183,7 +183,7 @@ describe("Home(翻訳列)", () => {
 
     render(<Home />);
 
-    const translationColumn = screen.getByRole("region", { name: "翻訳" });
+    const translationColumn = screen.getByRole("region", { name: "Translation" });
     const rows = within(translationColumn).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("ナイスゲーム、再戦なし、チャット");
@@ -212,7 +212,7 @@ describe("Home(翻訳列)", () => {
 
     render(<Home />);
 
-    const translationColumn = screen.getByRole("region", { name: "翻訳" });
+    const translationColumn = screen.getByRole("region", { name: "Translation" });
     const image = within(translationColumn).getByRole("img", { name: "sayuwuLul" });
     expect(image).toHaveAttribute("src", expect.stringContaining("/emotesv2_1/"));
     expect(within(translationColumn).queryByText(/sayuwuLul/)).not.toBeInTheDocument();
@@ -225,8 +225,8 @@ describe("Home(翻訳列)", () => {
 
     render(<Home />);
 
-    const rawRow = within(screen.getByRole("region", { name: "生IRC" })).getByRole("listitem");
-    const translationRow = within(screen.getByRole("region", { name: "翻訳" })).getByRole("listitem");
+    const rawRow = within(screen.getByRole("region", { name: "Raw IRC" })).getByRole("listitem");
+    const translationRow = within(screen.getByRole("region", { name: "Translation" })).getByRole("listitem");
     expect(rawRow).toHaveAttribute("data-message-id", "msg-1");
     expect(translationRow).toHaveAttribute("data-message-id", "msg-1");
   });
@@ -237,7 +237,7 @@ describe("Home(翻訳列)", () => {
 
     render(<Home />);
 
-    expect(within(screen.getByRole("region", { name: "翻訳" })).getByText("翻訳中...")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Translation" })).getByText("Translating...")).toBeInTheDocument();
   });
 
   it("失敗した行は理由付きで「翻訳に失敗」と表示する", () => {
@@ -248,8 +248,8 @@ describe("Home(翻訳列)", () => {
 
     render(<Home />);
 
-    const translationColumn = screen.getByRole("region", { name: "翻訳" });
-    expect(within(translationColumn).getByText(/翻訳に失敗/)).toBeInTheDocument();
+    const translationColumn = screen.getByRole("region", { name: "Translation" });
+    expect(within(translationColumn).getByText(/Translation failed/)).toBeInTheDocument();
     expect(within(translationColumn).getByText(/応答をJSONとして解釈できませんでした/)).toBeInTheDocument();
   });
 
@@ -259,7 +259,7 @@ describe("Home(翻訳列)", () => {
 
     render(<Home />);
 
-    expect(within(screen.getByRole("region", { name: "翻訳" })).getByText("未翻訳(流量超過)")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Translation" })).getByText("Not translated (too many messages)")).toBeInTheDocument();
   });
 
   it("Prompt API が利用できない環境では、行ごとに「翻訳不可」と表示し、列の見出し付近に理由を表示する", () => {
@@ -271,8 +271,8 @@ describe("Home(翻訳列)", () => {
 
     render(<Home />);
 
-    const translationColumn = screen.getByRole("region", { name: "翻訳" });
-    expect(within(translationColumn).getByText("翻訳不可")).toBeInTheDocument();
+    const translationColumn = screen.getByRole("region", { name: "Translation" });
+    expect(within(translationColumn).getByText("Translation unavailable")).toBeInTheDocument();
     expect(within(translationColumn).getByText(/window\.LanguageModel/)).toBeInTheDocument();
   });
 
@@ -282,7 +282,7 @@ describe("Home(翻訳列)", () => {
 
     render(<Home />);
 
-    expect(within(screen.getByRole("region", { name: "翻訳" })).getByText("未翻訳(IDなし)")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Translation" })).getByText("Not translated (no message ID)")).toBeInTheDocument();
   });
 
   it("翻訳をぼかしている間は翻訳列の各行がぼかされ、解除すると外れる", async () => {
@@ -292,10 +292,10 @@ describe("Home(翻訳列)", () => {
 
     render(<Home />);
 
-    const translationRow = within(screen.getByRole("region", { name: "翻訳" })).getByRole("listitem");
+    const translationRow = within(screen.getByRole("region", { name: "Translation" })).getByRole("listitem");
     expect(translationRow).toHaveClass("blur-sm");
 
-    await user.click(screen.getByRole("switch", { name: "翻訳をぼかす" }));
+    await user.click(screen.getByRole("switch", { name: "Blur translation" }));
     expect(translationRow).not.toHaveClass("blur-sm");
   });
 });
@@ -335,7 +335,7 @@ describe("Home(Pick up列)", () => {
 
     render(<Home />);
 
-    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("なし")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("None")).toBeInTheDocument();
   });
 
   it("生成中の行は「抽出中」と表示する", () => {
@@ -344,7 +344,7 @@ describe("Home(Pick up列)", () => {
 
     render(<Home />);
 
-    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("抽出中...")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("Extracting...")).toBeInTheDocument();
   });
 
   it("失敗した行は理由付きで「抽出に失敗」と表示する", () => {
@@ -356,7 +356,7 @@ describe("Home(Pick up列)", () => {
     render(<Home />);
 
     const pickupColumn = screen.getByRole("region", { name: "Pick up" });
-    expect(within(pickupColumn).getByText(/抽出に失敗/)).toBeInTheDocument();
+    expect(within(pickupColumn).getByText(/Extraction failed/)).toBeInTheDocument();
     expect(within(pickupColumn).getByText(/応答をJSONとして解釈できませんでした/)).toBeInTheDocument();
   });
 
@@ -366,7 +366,7 @@ describe("Home(Pick up列)", () => {
 
     render(<Home />);
 
-    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("未抽出(流量超過)")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("Not extracted (too many messages)")).toBeInTheDocument();
   });
 
   it("Prompt API が利用できない環境では、行ごとに「抽出不可」と表示し、列の見出し付近に理由を表示する", () => {
@@ -379,7 +379,7 @@ describe("Home(Pick up列)", () => {
     render(<Home />);
 
     const pickupColumn = screen.getByRole("region", { name: "Pick up" });
-    expect(within(pickupColumn).getByText("抽出不可")).toBeInTheDocument();
+    expect(within(pickupColumn).getByText("Extraction unavailable")).toBeInTheDocument();
     expect(within(pickupColumn).getByText(/window\.LanguageModel/)).toBeInTheDocument();
   });
 
@@ -389,7 +389,7 @@ describe("Home(Pick up列)", () => {
 
     render(<Home />);
 
-    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("未抽出(IDなし)")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("Not extracted (no message ID)")).toBeInTheDocument();
   });
 
   it("Pick upをぼかしている間はPick up列の各行がぼかされ、解除すると外れる", async () => {
@@ -402,7 +402,7 @@ describe("Home(Pick up列)", () => {
     const row = within(screen.getByRole("region", { name: "Pick up" })).getByRole("listitem");
     expect(row).toHaveClass("blur-sm");
 
-    await user.click(screen.getByRole("switch", { name: "Pick upをぼかす" }));
+    await user.click(screen.getByRole("switch", { name: "Blur Pick up" }));
     expect(row).not.toHaveClass("blur-sm");
   });
 });
@@ -413,11 +413,11 @@ describe("Home(bot除外設定)", () => {
     useBotFilterStore.getState().setPatterns(["nightbot", "*trans"]);
     render(<Home />);
 
-    const rawColumn = screen.getByRole("region", { name: "生IRC" });
-    await user.click(within(rawColumn).getByRole("button", { name: "bot除外設定" }));
+    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    await user.click(within(rawColumn).getByRole("button", { name: "Bot filter" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "bot除外設定" });
-    expect(within(dialog).getByRole("textbox", { name: "除外するユーザー名" })).toHaveValue("nightbot\n*trans");
+    const dialog = await screen.findByRole("dialog", { name: "Bot filter" });
+    expect(within(dialog).getByRole("textbox", { name: "Usernames to hide" })).toHaveValue("nightbot\n*trans");
   });
 
   it("パターンを編集して保存すると、ストアに反映され LocalStorage にも保存される", async () => {
@@ -425,12 +425,12 @@ describe("Home(bot除外設定)", () => {
     useBotFilterStore.getState().setPatterns([]);
     render(<Home />);
 
-    await user.click(screen.getByRole("button", { name: "bot除外設定" }));
-    const dialog = await screen.findByRole("dialog", { name: "bot除外設定" });
-    const textbox = within(dialog).getByRole("textbox", { name: "除外するユーザー名" });
+    await user.click(screen.getByRole("button", { name: "Bot filter" }));
+    const dialog = await screen.findByRole("dialog", { name: "Bot filter" });
+    const textbox = within(dialog).getByRole("textbox", { name: "Usernames to hide" });
     await user.clear(textbox);
     await user.type(textbox, "StreamElements{enter}*bot");
-    await user.click(within(dialog).getByRole("button", { name: "保存する" }));
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
     expect(useBotFilterStore.getState().patterns).toEqual(["streamelements", "*bot"]);
     expect(JSON.parse(window.localStorage.getItem("chat-sensei:bot-filter") ?? "null")).toEqual([
@@ -452,10 +452,10 @@ describe("Home(bot除外設定)", () => {
     window.localStorage.setItem("chat-sensei:bot-filter", "壊れたデータ");
     render(<Home />);
 
-    await user.click(screen.getByRole("button", { name: "bot除外設定" }));
+    await user.click(screen.getByRole("button", { name: "Bot filter" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "bot除外設定" });
-    expect(within(dialog).getByText(/デフォルトに戻しました/)).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Bot filter" });
+    expect(within(dialog).getByText(/reset to the defaults/)).toBeInTheDocument();
   });
 });
 
@@ -468,13 +468,13 @@ describe("Home(Prompt API の利用可否)", () => {
 
     render(<Home />);
 
-    const translationColumn = screen.getByRole("region", { name: "翻訳" });
+    const translationColumn = screen.getByRole("region", { name: "Translation" });
     const pickupColumn = screen.getByRole("region", { name: "Pick up" });
     expect(within(translationColumn).getByText(/window\.LanguageModel/)).toBeInTheDocument();
     expect(within(pickupColumn).getByText(/window\.LanguageModel/)).toBeInTheDocument();
     // エントリが無い行も、共有の状態を見て両列とも「不可」になる
-    expect(within(translationColumn).getByText("翻訳不可")).toBeInTheDocument();
-    expect(within(pickupColumn).getByText("抽出不可")).toBeInTheDocument();
+    expect(within(translationColumn).getByText("Translation unavailable")).toBeInTheDocument();
+    expect(within(pickupColumn).getByText("Extraction unavailable")).toBeInTheDocument();
   });
 
   it("診断中は両列とも「準備中...」と表示する", () => {
@@ -482,8 +482,8 @@ describe("Home(Prompt API の利用可否)", () => {
 
     render(<Home />);
 
-    expect(within(screen.getByRole("region", { name: "翻訳" })).getByText("準備中...")).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("準備中...")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Translation" })).getByText("Preparing...")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("Preparing...")).toBeInTheDocument();
   });
 });
 
@@ -493,11 +493,11 @@ describe("Home(設定ダイアログ)", () => {
     window.localStorage.setItem("chat-sensei:settings", JSON.stringify({ targetLang: "es", explainLang: "en" }));
     render(<Home />);
 
-    await user.click(screen.getByRole("button", { name: "設定" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "設定" });
-    expect(within(dialog).getByRole("combobox", { name: "学ぶ言語" })).toHaveValue("es");
-    expect(within(dialog).getByRole("combobox", { name: "解説言語" })).toHaveValue("en");
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByRole("combobox", { name: "Learning language" })).toHaveValue("es");
+    expect(within(dialog).getByRole("combobox", { name: "Explanation language" })).toHaveValue("en");
   });
 
   it("マウント時に LocalStorage から言語ペアを復元してから、パイプラインを開始する", () => {
@@ -515,10 +515,10 @@ describe("Home(設定ダイアログ)", () => {
     render(<Home />);
     expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: "設定" }));
-    const dialog = await screen.findByRole("dialog", { name: "設定" });
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "学ぶ言語" }), "de");
-    await user.click(within(dialog).getByRole("button", { name: "保存する" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Learning language" }), "de");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
     expect(mockStopPipeline).toHaveBeenCalledTimes(1);
     expect(mockStopPickupPipeline).toHaveBeenCalledTimes(1);
@@ -530,9 +530,9 @@ describe("Home(設定ダイアログ)", () => {
     const user = userEvent.setup();
     render(<Home />);
 
-    await user.click(screen.getByRole("button", { name: "設定" }));
-    const dialog = await screen.findByRole("dialog", { name: "設定" });
-    await user.click(within(dialog).getByRole("button", { name: "保存する" }));
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
     expect(mockStopPipeline).not.toHaveBeenCalled();
     expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);

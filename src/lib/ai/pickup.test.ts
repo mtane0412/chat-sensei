@@ -112,7 +112,7 @@ describe("pickUpExpressions(JSON 解釈失敗時の再試行、issue #19)", () =
     const pool = createFakeSessionPool(['{"terms":[{"term":"gg"', '{"terms":[']);
 
     await expect(pickUpExpressions(pool, "gg chat")).rejects.toThrow(
-      `Prompt APIの応答をJSONとして解釈できませんでした(${STRUCTURED_PROMPT_MAX_ATTEMPTS}回試行): {"terms":[`,
+      `Could not parse the Prompt API response as JSON (${STRUCTURED_PROMPT_MAX_ATTEMPTS} attempts): {"terms":[`,
     );
     expect(pool.enqueue).toHaveBeenCalledTimes(STRUCTURED_PROMPT_MAX_ATTEMPTS);
   });
@@ -146,7 +146,7 @@ describe("pickUpExpressions(原文との照合)", () => {
   it("原文に登場しない語句が含まれる場合はエラーを投げる(解説言語の語や言い換えを原文の語句として表示しない)", async () => {
     const pool = createFakeSessionPool(JSON.stringify({ terms: [{ term: "了解", meaning: "分かった" }] }));
 
-    await expect(pickUpExpressions(pool, "roger that")).rejects.toThrow(/原文に登場しない/);
+    await expect(pickUpExpressions(pool, "roger that")).rejects.toThrow(/does not appear in the message/);
   });
 });
 

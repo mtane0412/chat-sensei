@@ -103,7 +103,7 @@ describe("runStructuredPrompt", () => {
       await expect(
         runStructuredPrompt(pool, { userPrompt: "hello", schema: greetingSchema, priority: "low" }),
       ).rejects.toThrow(
-        `Prompt APIの応答をJSONとして解釈できませんでした(${STRUCTURED_PROMPT_MAX_ATTEMPTS}回試行): {"greeting":"`,
+        `Could not parse the Prompt API response as JSON (${STRUCTURED_PROMPT_MAX_ATTEMPTS} attempts): {"greeting":"`,
       );
       expect(pool.enqueue).toHaveBeenCalledTimes(STRUCTURED_PROMPT_MAX_ATTEMPTS);
     });

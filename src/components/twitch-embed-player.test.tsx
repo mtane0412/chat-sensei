@@ -13,7 +13,7 @@ describe("TwitchEmbedPlayer", () => {
   it("指定したチャンネル名と現在のホスト名(parent)を含むiframeを表示する", () => {
     render(<TwitchEmbedPlayer channel="zackrawrr" />);
 
-    const iframe = screen.getByTitle("Twitch配信プレイヤー: zackrawrr");
+    const iframe = screen.getByTitle("Twitch player: zackrawrr");
     expect(iframe.tagName).toBe("IFRAME");
     const src = new URL(iframe.getAttribute("src") ?? "");
     expect(src.origin + src.pathname).toBe("https://player.twitch.tv/");
@@ -25,7 +25,7 @@ describe("TwitchEmbedPlayer", () => {
   it("自動再生時にブラウザの自動再生ポリシーでブロックされないよう、既定でミュート再生する", () => {
     render(<TwitchEmbedPlayer channel="zackrawrr" />);
 
-    const iframe = screen.getByTitle("Twitch配信プレイヤー: zackrawrr");
+    const iframe = screen.getByTitle("Twitch player: zackrawrr");
     const src = new URL(iframe.getAttribute("src") ?? "");
     expect(src.searchParams.get("muted")).toBe("true");
   });
@@ -34,7 +34,7 @@ describe("TwitchEmbedPlayer", () => {
     const { rerender } = render(<TwitchEmbedPlayer channel="zackrawrr" />);
     rerender(<TwitchEmbedPlayer channel="shroud" />);
 
-    const iframe = screen.getByTitle("Twitch配信プレイヤー: shroud");
+    const iframe = screen.getByTitle("Twitch player: shroud");
     const src = new URL(iframe.getAttribute("src") ?? "");
     expect(src.searchParams.get("channel")).toBe("shroud");
   });
