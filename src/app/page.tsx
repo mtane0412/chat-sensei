@@ -18,7 +18,8 @@
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
  * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
- * 各パイプラインはこの画面のマウント時に開始する。
+ * 各パイプラインはこの画面のマウント時に開始する。Prompt API の利用可否は両列で共通の
+ * prompt-api ストアを参照し、利用不可の理由は翻訳列・Pick up列それぞれの見出し下に表示する。
  */
 "use client";
 
@@ -35,13 +36,14 @@ import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments, splitTextByEmoteNames, type MessageSegment } from "@/lib/twitch/emotes";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
-import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupEntry } from "@/store/pickups";
+import type { PipelineEntry } from "@/store/auto-pipeline";
+import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupDone } from "@/store/pickups";
+import { usePromptApiStore, type PromptApiStatus } from "@/store/prompt-api";
 import {
   startTranslationPipeline,
   useTranslationStore,
   warmUpTranslationPipeline,
-  type PromptApiStatus,
-  type TranslationEntry,
+  type TranslationDone,
 } from "@/store/translations";
 
 const CONNECTION_STATE_LABEL: Record<ConnectionState, string> = {
@@ -69,9 +71,9 @@ export default function Home() {
   const [pickupBlurred, setPickupBlurred] = useState(true);
 
   const translationEntries = useTranslationStore((state) => state.entries);
-  const promptApi = useTranslationStore((state) => state.promptApi);
   const pickupEntries = usePickupStore((state) => state.entries);
-  const pickupPromptApi = usePickupStore((state) => state.promptApi);
+  // Prompt API の利用可否は翻訳列・Pick up列で共通(環境診断は1回だけ実行する)
+  const promptApi = usePromptApiStore((state) => state.status);
 
   // 受信した発言を自動で翻訳・抽出ジョブに流す。アンマウント時は購読を解除し待機中のジョブを中断する
   useEffect(() => startTranslationPipeline(), []);
@@ -138,19 +140,17 @@ export default function Home() {
             headerAction={
               <BlurToggle label="翻訳をぼかす" blurred={translationBlurred} onBlurredChange={setTranslationBlurred} />
             }
-            headerExtra={
-              promptApi.status === "unavailable" ? (
-                <p className="text-xs font-normal text-destructive">{promptApi.reason}</p>
-              ) : null
-            }
+            headerExtra={<PromptApiUnavailableReason promptApi={promptApi} />}
           >
             <div role="list" className="contents">
               {messages.map((message, index) => (
                 <Row key={messageKey(message, index)} message={message} blurred={translationBlurred}>
-                  <TranslationCellContent
+                  <PipelineCellContent
                     message={message}
                     entry={message.id === null ? undefined : translationEntries[message.id]}
                     promptApi={promptApi}
+                    noun="翻訳"
+                    renderDone={(done) => <TranslationText message={message} translation={done.translation} />}
                   />
                 </Row>
               ))}
@@ -160,19 +160,17 @@ export default function Home() {
             title="Pick up"
             blurred={pickupBlurred}
             headerAction={<BlurToggle label="Pick upをぼかす" blurred={pickupBlurred} onBlurredChange={setPickupBlurred} />}
-            headerExtra={
-              pickupPromptApi.status === "unavailable" ? (
-                <p className="text-xs font-normal text-destructive">{pickupPromptApi.reason}</p>
-              ) : null
-            }
+            headerExtra={<PromptApiUnavailableReason promptApi={promptApi} />}
           >
             <div role="list" className="contents">
               {messages.map((message, index) => (
                 <Row key={messageKey(message, index)} message={message} blurred={pickupBlurred}>
-                  <PickupCellContent
+                  <PipelineCellContent
                     message={message}
                     entry={message.id === null ? undefined : pickupEntries[message.id]}
-                    promptApi={pickupPromptApi}
+                    promptApi={promptApi}
+                    noun="抽出"
+                    renderDone={(done) => <PickupTerms terms={done.terms} />}
                   />
                 </Row>
               ))}
@@ -279,85 +277,78 @@ function Row({
   );
 }
 
-/** 翻訳列の1行の中身。生成中・失敗・キュー溢れ・Prompt API 利用不可の各状態を暗黙に隠さず明示する */
-function TranslationCellContent({
+/** Prompt API が利用できない環境で、列の見出し下に表示する理由。利用可能・診断中は何も表示しない */
+function PromptApiUnavailableReason({ promptApi }: { promptApi: PromptApiStatus }) {
+  if (promptApi.status !== "unavailable") return null;
+  return <p className="text-xs font-normal text-destructive">{promptApi.reason}</p>;
+}
+
+/**
+ * 翻訳列・Pick up列で共通の1行の中身。生成中・失敗・キュー溢れ・Prompt API 利用不可の各状態を
+ * 暗黙に隠さず明示する。表示文言は `noun`(「翻訳」「抽出」)から組み立て、完了時の描画だけを
+ * `renderDone` で列ごとに差し替える。
+ */
+function PipelineCellContent<TDone extends object>({
   message,
   entry,
   promptApi,
+  noun,
+  renderDone,
 }: {
   message: TwitchChatMessage;
-  entry: TranslationEntry | undefined;
+  entry: PipelineEntry<TDone> | undefined;
   promptApi: PromptApiStatus;
+  /** 状態表示の文言に使う処理名(例: "翻訳" → 「翻訳中...」「未翻訳」「翻訳不可」) */
+  noun: string;
+  /** 完了した結果の描画 */
+  renderDone: (done: TDone) => React.ReactNode;
 }) {
   if (message.id === null) {
-    return <span className="text-muted-foreground">未翻訳(IDなし)</span>;
+    return <span className="text-muted-foreground">未{noun}(IDなし)</span>;
   }
   if (!entry) {
-    if (promptApi.status === "unavailable") return <span className="text-muted-foreground">翻訳不可</span>;
+    if (promptApi.status === "unavailable") return <span className="text-muted-foreground">{noun}不可</span>;
     if (promptApi.status === "checking") return <span className="text-muted-foreground">準備中...</span>;
-    return <span className="text-muted-foreground">未翻訳</span>;
+    return <span className="text-muted-foreground">未{noun}</span>;
   }
   switch (entry.status) {
     case "pending":
-      return <span className="text-muted-foreground">翻訳中...</span>;
+      return <span className="text-muted-foreground">{noun}中...</span>;
     case "done":
-      return <TranslationText message={message} translation={entry.translation} />;
+      return renderDone(entry);
     case "failed":
-      return <span className="text-destructive">翻訳に失敗: {entry.reason}</span>;
+      return (
+        <span className="text-destructive">
+          {noun}に失敗: {entry.reason}
+        </span>
+      );
     case "dropped":
-      return <span className="text-muted-foreground">未翻訳(流量超過)</span>;
+      return <span className="text-muted-foreground">未{noun}(流量超過)</span>;
     case "unavailable":
-      return <span className="text-muted-foreground">翻訳不可</span>;
+      return <span className="text-muted-foreground">{noun}不可</span>;
   }
 }
 
-/** Pick up列の1行の中身。翻訳列と同様に、生成中・失敗・キュー溢れ・Prompt API 利用不可の各状態を明示する */
-function PickupCellContent({
-  message,
-  entry,
-  promptApi,
-}: {
-  message: TwitchChatMessage;
-  entry: PickupEntry | undefined;
-  promptApi: PromptApiStatus;
-}) {
-  if (message.id === null) {
-    return <span className="text-muted-foreground">未抽出(IDなし)</span>;
-  }
-  if (!entry) {
-    if (promptApi.status === "unavailable") return <span className="text-muted-foreground">抽出不可</span>;
-    if (promptApi.status === "checking") return <span className="text-muted-foreground">準備中...</span>;
-    return <span className="text-muted-foreground">未抽出</span>;
-  }
-  switch (entry.status) {
-    case "pending":
-      return <span className="text-muted-foreground">抽出中...</span>;
-    case "done":
-      if (entry.terms.length === 0) return <span className="text-muted-foreground">なし</span>;
-      return (
-        <dl className="flex flex-col gap-0.5">
-          {entry.terms.map((term, index) => (
-            <div key={index} className="flex flex-wrap gap-x-2">
-              <dt className="font-semibold">{term.term}</dt>
-              <dd className="text-muted-foreground">{term.meaning}</dd>
-            </div>
-          ))}
-        </dl>
-      );
-    case "failed":
-      return <span className="text-destructive">抽出に失敗: {entry.reason}</span>;
-    case "dropped":
-      return <span className="text-muted-foreground">未抽出(流量超過)</span>;
-    case "unavailable":
-      return <span className="text-muted-foreground">抽出不可</span>;
-  }
+/** Pick up列の完了した結果。該当する表現が無い場合は「なし」と控えめに表示する */
+function PickupTerms({ terms }: { terms: PickupDone["terms"] }) {
+  if (terms.length === 0) return <span className="text-muted-foreground">なし</span>;
+  return (
+    <dl className="flex flex-col gap-0.5">
+      {terms.map((term, index) => (
+        <div key={index} className="flex flex-wrap gap-x-2">
+          <dt className="font-semibold">{term.term}</dt>
+          <dd className="text-muted-foreground">{term.meaning}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 /**
  * 翻訳文の中身。翻訳は emote 名をそのまま残す設計のため、元の発言に含まれていた emote 名が
  * 文字列として現れた箇所を左列と同じ emote 画像に置き換えて表示する(issue #28)
  */
-function TranslationText({ message, translation }: { message: TwitchChatMessage; translation: string }) {
+function TranslationText({ message, translation }: { message: TwitchChatMessage } & TranslationDone) {
   const segments = useMemo(() => {
     const knownEmotes = splitMessageIntoSegments(message.text, message.emotes).filter(
       (segment) => segment.type === "emote",

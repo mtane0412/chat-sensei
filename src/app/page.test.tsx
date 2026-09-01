@@ -5,7 +5,8 @@
  * 表示されること、翻訳列・Pick up列に発言ごとの状態が表示されること、
  * 翻訳列・Pick up列のぼかしをトグルで切り替えられることを検証する。
  * IRC 接続そのものは chat-connection ストアに、翻訳の生成は translations ストアに、
- * 注目の表現の抽出は pickups ストアに閉じているため、ここでは各ストアの state を直接書き換えて注入する。
+ * 注目の表現の抽出は pickups ストアに、Prompt API の利用可否は prompt-api ストアに閉じているため、
+ * ここでは各ストアの state を直接書き換えて注入する。
  * 各パイプラインの開始(`startTranslationPipeline` / `startPickupPipeline`)はブラウザAPIに触れるためモックする。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +16,7 @@ import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
+import { resetPromptApiStoreForTests, usePromptApiStore } from "@/store/prompt-api";
 import { resetTranslationStoreForTests, useTranslationStore } from "@/store/translations";
 
 const mockStopPipeline = vi.fn();
@@ -76,6 +78,7 @@ afterEach(() => {
   resetChatConnectionStoreForTests();
   resetTranslationStoreForTests();
   resetPickupStoreForTests();
+  resetPromptApiStoreForTests();
   resetBotFilterStoreForTests();
   window.localStorage.clear();
 });
@@ -165,7 +168,6 @@ describe("Home(翻訳列)", () => {
   it("完了した翻訳を、対応する発言と同じ順序で翻訳列に表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言, サンプル発言2] });
     useTranslationStore.setState({
-      promptApi: { status: "ready" },
       entries: {
         "msg-1": { status: "done", translation: "ナイスゲーム、再戦なし、チャット" },
         "msg-2": { status: "done", translation: "これはマジでそう" },
@@ -188,10 +190,7 @@ describe("Home(翻訳列)", () => {
       emotes: [{ id: "emotesv2_1", start: 4, end: 12 }],
     };
     useChatConnectionStore.setState({ messages: [emote付き発言] });
-    useTranslationStore.setState({
-      promptApi: { status: "ready" },
-      entries: { "msg-1": { status: "done", translation: "なんでsayuwuLulそんな" } },
-    });
+    useTranslationStore.setState({ entries: { "msg-1": { status: "done", translation: "なんでsayuwuLulそんな" } } });
 
     render(<Home />);
 
@@ -204,10 +203,7 @@ describe("Home(翻訳列)", () => {
 
   it("翻訳列の各行は対応する発言の ID と紐づく(行の高さを左列と揃えるための共通キー)", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    useTranslationStore.setState({
-      promptApi: { status: "ready" },
-      entries: { "msg-1": { status: "done", translation: "訳文" } },
-    });
+    useTranslationStore.setState({ entries: { "msg-1": { status: "done", translation: "訳文" } } });
 
     render(<Home />);
 
@@ -219,7 +215,7 @@ describe("Home(翻訳列)", () => {
 
   it("生成中の行は「翻訳中」と表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    useTranslationStore.setState({ promptApi: { status: "ready" }, entries: { "msg-1": { status: "pending" } } });
+    useTranslationStore.setState({ entries: { "msg-1": { status: "pending" } } });
 
     render(<Home />);
 
@@ -229,7 +225,6 @@ describe("Home(翻訳列)", () => {
   it("失敗した行は理由付きで「翻訳に失敗」と表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
     useTranslationStore.setState({
-      promptApi: { status: "ready" },
       entries: { "msg-1": { status: "failed", reason: "応答をJSONとして解釈できませんでした" } },
     });
 
@@ -242,7 +237,7 @@ describe("Home(翻訳列)", () => {
 
   it("キュー溢れで破棄された行は「未翻訳(流量超過)」と表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    useTranslationStore.setState({ promptApi: { status: "ready" }, entries: { "msg-1": { status: "dropped" } } });
+    useTranslationStore.setState({ entries: { "msg-1": { status: "dropped" } } });
 
     render(<Home />);
 
@@ -251,10 +246,10 @@ describe("Home(翻訳列)", () => {
 
   it("Prompt API が利用できない環境では、行ごとに「翻訳不可」と表示し、列の見出し付近に理由を表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    useTranslationStore.setState({
-      promptApi: { status: "unavailable", reason: "この環境では Prompt API (window.LanguageModel) が見つかりません。" },
-      entries: { "msg-1": { status: "unavailable" } },
+    usePromptApiStore.setState({
+      status: { status: "unavailable", reason: "この環境では Prompt API (window.LanguageModel) が見つかりません。" },
     });
+    useTranslationStore.setState({ entries: { "msg-1": { status: "unavailable" } } });
 
     render(<Home />);
 
@@ -265,7 +260,7 @@ describe("Home(翻訳列)", () => {
 
   it("ID を持たない発言の行は「未翻訳(IDなし)」と表示する", () => {
     useChatConnectionStore.setState({ messages: [{ ...サンプル発言, id: null }] });
-    useTranslationStore.setState({ promptApi: { status: "ready" }, entries: {} });
+    useTranslationStore.setState({ entries: {} });
 
     render(<Home />);
 
@@ -275,10 +270,7 @@ describe("Home(翻訳列)", () => {
   it("翻訳をぼかしている間は翻訳列の各行がぼかされ、解除すると外れる", async () => {
     const user = userEvent.setup();
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    useTranslationStore.setState({
-      promptApi: { status: "ready" },
-      entries: { "msg-1": { status: "done", translation: "訳文" } },
-    });
+    useTranslationStore.setState({ entries: { "msg-1": { status: "done", translation: "訳文" } } });
 
     render(<Home />);
 
@@ -294,7 +286,6 @@ describe("Home(Pick up列)", () => {
   it("抽出された語句と意味のペアを、対応する発言と同じ行に表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言, サンプル発言2] });
     usePickupStore.setState({
-      promptApi: { status: "ready" },
       entries: {
         "msg-1": {
           status: "done",
@@ -322,7 +313,7 @@ describe("Home(Pick up列)", () => {
 
   it("該当する表現が無い行は「なし」と控えめに表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    usePickupStore.setState({ promptApi: { status: "ready" }, entries: { "msg-1": { status: "done", terms: [] } } });
+    usePickupStore.setState({ entries: { "msg-1": { status: "done", terms: [] } } });
 
     render(<Home />);
 
@@ -331,7 +322,7 @@ describe("Home(Pick up列)", () => {
 
   it("生成中の行は「抽出中」と表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    usePickupStore.setState({ promptApi: { status: "ready" }, entries: { "msg-1": { status: "pending" } } });
+    usePickupStore.setState({ entries: { "msg-1": { status: "pending" } } });
 
     render(<Home />);
 
@@ -341,7 +332,6 @@ describe("Home(Pick up列)", () => {
   it("失敗した行は理由付きで「抽出に失敗」と表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
     usePickupStore.setState({
-      promptApi: { status: "ready" },
       entries: { "msg-1": { status: "failed", reason: "応答をJSONとして解釈できませんでした" } },
     });
 
@@ -354,7 +344,7 @@ describe("Home(Pick up列)", () => {
 
   it("キュー溢れで破棄された行は「未抽出(流量超過)」と表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    usePickupStore.setState({ promptApi: { status: "ready" }, entries: { "msg-1": { status: "dropped" } } });
+    usePickupStore.setState({ entries: { "msg-1": { status: "dropped" } } });
 
     render(<Home />);
 
@@ -363,10 +353,10 @@ describe("Home(Pick up列)", () => {
 
   it("Prompt API が利用できない環境では、行ごとに「抽出不可」と表示し、列の見出し付近に理由を表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    usePickupStore.setState({
-      promptApi: { status: "unavailable", reason: "この環境では Prompt API (window.LanguageModel) が見つかりません。" },
-      entries: { "msg-1": { status: "unavailable" } },
+    usePromptApiStore.setState({
+      status: { status: "unavailable", reason: "この環境では Prompt API (window.LanguageModel) が見つかりません。" },
     });
+    usePickupStore.setState({ entries: { "msg-1": { status: "unavailable" } } });
 
     render(<Home />);
 
@@ -377,7 +367,7 @@ describe("Home(Pick up列)", () => {
 
   it("ID を持たない発言の行は「未抽出(IDなし)」と表示する", () => {
     useChatConnectionStore.setState({ messages: [{ ...サンプル発言, id: null }] });
-    usePickupStore.setState({ promptApi: { status: "ready" }, entries: {} });
+    usePickupStore.setState({ entries: {} });
 
     render(<Home />);
 
@@ -387,10 +377,7 @@ describe("Home(Pick up列)", () => {
   it("Pick upをぼかしている間はPick up列の各行がぼかされ、解除すると外れる", async () => {
     const user = userEvent.setup();
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    usePickupStore.setState({
-      promptApi: { status: "ready" },
-      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ" }] } },
-    });
+    usePickupStore.setState({ entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ" }] } } });
 
     render(<Home />);
 
@@ -451,5 +438,33 @@ describe("Home(bot除外設定)", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "bot除外設定" });
     expect(within(dialog).getByText(/デフォルトに戻しました/)).toBeInTheDocument();
+  });
+});
+
+describe("Home(Prompt API の利用可否)", () => {
+  it("利用不可の理由は共有の prompt-api ストアから取り、翻訳列と Pick up 列の両方の見出し付近に同じ理由を表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePromptApiStore.setState({
+      status: { status: "unavailable", reason: "この環境では Prompt API (window.LanguageModel) が見つかりません。" },
+    });
+
+    render(<Home />);
+
+    const translationColumn = screen.getByRole("region", { name: "翻訳" });
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    expect(within(translationColumn).getByText(/window\.LanguageModel/)).toBeInTheDocument();
+    expect(within(pickupColumn).getByText(/window\.LanguageModel/)).toBeInTheDocument();
+    // エントリが無い行も、共有の状態を見て両列とも「不可」になる
+    expect(within(translationColumn).getByText("翻訳不可")).toBeInTheDocument();
+    expect(within(pickupColumn).getByText("抽出不可")).toBeInTheDocument();
+  });
+
+  it("診断中は両列とも「準備中...」と表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+
+    render(<Home />);
+
+    expect(within(screen.getByRole("region", { name: "翻訳" })).getByText("準備中...")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("準備中...")).toBeInTheDocument();
   });
 });
