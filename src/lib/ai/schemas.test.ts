@@ -3,17 +3,10 @@
  *
  * 解説結果・翻訳結果・Pick up(語句と意味のペア)のスキーマ(zod)が JSON.parse された Gemini Nano の出力を
  * 正しく検証できること、および Prompt API の `responseConstraint` に渡す
- * JSON Schema を組み立てられることを検証する。
+ * JSON Schema を `toResponseConstraint` で組み立てられることを検証する。
  */
 import { describe, expect, it } from "vitest";
-import {
-  buildExplanationResponseConstraint,
-  buildPickupResponseConstraint,
-  buildTranslationResponseConstraint,
-  explanationSchema,
-  pickupSchema,
-  translationSchema,
-} from "./schemas";
+import { explanationSchema, pickupSchema, toResponseConstraint, translationSchema } from "./schemas";
 
 describe("explanationSchema", () => {
   it("正しい形のオブジェクトをパースできる", () => {
@@ -60,9 +53,9 @@ describe("explanationSchema", () => {
   });
 });
 
-describe("buildExplanationResponseConstraint", () => {
+describe("toResponseConstraint(explanationSchema)", () => {
   it("Prompt APIのresponseConstraintに渡せるJSON Schemaオブジェクトを返す", () => {
-    const constraint = buildExplanationResponseConstraint();
+    const constraint = toResponseConstraint(explanationSchema);
 
     expect(constraint).toMatchObject({
       type: "object",
@@ -76,7 +69,7 @@ describe("buildExplanationResponseConstraint", () => {
   });
 
   it("メタ情報の$schemaフィールドは含まない(Prompt APIの想定外のため)", () => {
-    const constraint = buildExplanationResponseConstraint() as Record<string, unknown>;
+    const constraint = toResponseConstraint(explanationSchema) as Record<string, unknown>;
 
     expect(constraint.$schema).toBeUndefined();
   });
@@ -98,9 +91,9 @@ describe("translationSchema", () => {
   });
 });
 
-describe("buildTranslationResponseConstraint", () => {
+describe("toResponseConstraint(translationSchema)", () => {
   it("訳文のみを要求するJSON Schemaオブジェクトを返す", () => {
-    const constraint = buildTranslationResponseConstraint();
+    const constraint = toResponseConstraint(translationSchema);
 
     expect(constraint).toMatchObject({
       type: "object",
@@ -110,7 +103,7 @@ describe("buildTranslationResponseConstraint", () => {
   });
 
   it("メタ情報の$schemaフィールドは含まない(Prompt APIの想定外のため)", () => {
-    const constraint = buildTranslationResponseConstraint() as Record<string, unknown>;
+    const constraint = toResponseConstraint(translationSchema) as Record<string, unknown>;
 
     expect(constraint.$schema).toBeUndefined();
   });
@@ -147,9 +140,9 @@ describe("pickupSchema", () => {
   });
 });
 
-describe("buildPickupResponseConstraint", () => {
+describe("toResponseConstraint(pickupSchema)", () => {
   it("語句と意味のペアの配列を要求するJSON Schemaオブジェクトを返す", () => {
-    const constraint = buildPickupResponseConstraint();
+    const constraint = toResponseConstraint(pickupSchema);
 
     expect(constraint).toMatchObject({
       type: "object",
@@ -168,7 +161,7 @@ describe("buildPickupResponseConstraint", () => {
   });
 
   it("メタ情報の$schemaフィールドは含まない(Prompt APIの想定外のため)", () => {
-    const constraint = buildPickupResponseConstraint() as Record<string, unknown>;
+    const constraint = toResponseConstraint(pickupSchema) as Record<string, unknown>;
 
     expect(constraint.$schema).toBeUndefined();
   });

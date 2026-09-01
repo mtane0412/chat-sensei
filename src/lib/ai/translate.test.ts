@@ -2,7 +2,8 @@
  * src/lib/ai/translate.ts のテスト。
  *
  * `translateChatMessage`: SessionPool 経由でチャット本文の翻訳を生成し、
- * Gemini Nano が返したJSON文字列を zod でパース・検証するところまでを検証する。
+ * Gemini Nano が返したJSON文字列を zod でパース・検証するところまでを検証する
+ * (共通処理 `runStructuredPrompt` に翻訳用のプロンプト・スキーマが正しく渡ることの確認)。
  * `createTranslateBaseSessionFactory`: 言語ペアから翻訳専用のシステムプロンプトで
  * `LanguageModel.create()` を呼び出すセッションファクトリを組み立てられることを検証する
  * (`LanguageModel` はブラウザ組み込みAPIのため `vi.stubGlobal` でモックする)。
@@ -10,7 +11,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildExplainSystemPrompt } from "./prompts";
 import type { SessionPool } from "./session-pool";
-import { createTranslateBaseSessionFactory, TRANSLATE_MAX_ATTEMPTS, translateChatMessage } from "./translate";
+import { STRUCTURED_PROMPT_MAX_ATTEMPTS } from "./structured-prompt";
+import { createTranslateBaseSessionFactory, translateChatMessage } from "./translate";
 
 /**
  * テスト用の最小限の SessionPool フェイク。enqueue の run をそのまま呼び出し、prompt の引数を記録する。
@@ -105,9 +107,9 @@ describe("translateChatMessage", () => {
       const pool = createFakeSessionPool(['{"translation":"へー、なしか。', '{"translation":"へー、']);
 
       await expect(translateChatMessage(pool, "oh no way")).rejects.toThrow(
-        `Prompt APIの応答をJSONとして解釈できませんでした(${TRANSLATE_MAX_ATTEMPTS}回試行): {"translation":"へー、`,
+        `Prompt APIの応答をJSONとして解釈できませんでした(${STRUCTURED_PROMPT_MAX_ATTEMPTS}回試行): {"translation":"へー、`,
       );
-      expect(pool.enqueue).toHaveBeenCalledTimes(TRANSLATE_MAX_ATTEMPTS);
+      expect(pool.enqueue).toHaveBeenCalledTimes(STRUCTURED_PROMPT_MAX_ATTEMPTS);
     });
 
     it("JSON としては解釈できるがスキーマに合わない応答は再試行しない", async () => {

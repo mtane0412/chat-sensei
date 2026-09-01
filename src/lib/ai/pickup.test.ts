@@ -2,15 +2,17 @@
  * src/lib/ai/pickup.ts のテスト。
  *
  * `pickUpExpressions`: SessionPool 経由でチャット本文から注目の表現(語句と意味のペア)を
- * 抽出し、Gemini Nano が返したJSON文字列を zod でパース・検証するところまでを検証する。
+ * 抽出し、Gemini Nano が返したJSON文字列を zod でパース・検証するところまでを検証する
+ * (共通処理 `runStructuredPrompt` に Pick up 用のプロンプト・スキーマが正しく渡ることの確認)。
  * `createPickupBaseSessionFactory`: 言語ペアから Pick up 専用のシステムプロンプトで
  * `LanguageModel.create()` を呼び出すセッションファクトリを組み立てられることを検証する
  * (`LanguageModel` はブラウザ組み込みAPIのため `vi.stubGlobal` でモックする)。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createPickupBaseSessionFactory, PICKUP_MAX_ATTEMPTS, pickUpExpressions } from "./pickup";
+import { createPickupBaseSessionFactory, pickUpExpressions } from "./pickup";
 import { buildExplainSystemPrompt, buildTranslateSystemPrompt } from "./prompts";
 import type { SessionPool } from "./session-pool";
+import { STRUCTURED_PROMPT_MAX_ATTEMPTS } from "./structured-prompt";
 
 /** テスト用の最小限の SessionPool フェイク。enqueue の run をそのまま呼び出し、prompt の引数を記録する */
 /** 配列を渡した場合は、呼び出しごとに先頭から順に応答を返す(再試行の検証用) */
@@ -110,9 +112,9 @@ describe("pickUpExpressions(JSON 解釈失敗時の再試行、issue #19)", () =
     const pool = createFakeSessionPool(['{"terms":[{"term":"gg"', '{"terms":[']);
 
     await expect(pickUpExpressions(pool, "gg chat")).rejects.toThrow(
-      `Prompt APIの応答をJSONとして解釈できませんでした(${PICKUP_MAX_ATTEMPTS}回試行): {"terms":[`,
+      `Prompt APIの応答をJSONとして解釈できませんでした(${STRUCTURED_PROMPT_MAX_ATTEMPTS}回試行): {"terms":[`,
     );
-    expect(pool.enqueue).toHaveBeenCalledTimes(PICKUP_MAX_ATTEMPTS);
+    expect(pool.enqueue).toHaveBeenCalledTimes(STRUCTURED_PROMPT_MAX_ATTEMPTS);
   });
 
   it("JSON としては解釈できるがスキーマに合わない応答や、原文に無い語句を返した応答は再試行しない", async () => {
