@@ -190,18 +190,43 @@ describe("filterPickupTerms", () => {
     ]);
   });
 
-  it("文字を伸ばした相槌・感嘆詞(ohhh / hmmm / wowww)や、前後に記号が付いた形(oh! / wow...)も落とす(issue #33)", () => {
+  it("文字を伸ばした相槌・感嘆詞(ohhh / hmmm / wowww)、綴り揺れ(woah / eww)、前後に記号が付いた形(oh! / wow...)も落とす(issue #33)", () => {
     const terms = [
       { term: "ohhh", meaning: "驚きを表す感嘆詞" },
       { term: "hmmm", meaning: "考え込むときの相槌" },
       { term: "wowww", meaning: "驚きを表す感嘆詞" },
+      { term: "woah", meaning: "驚きを表す感嘆詞" },
+      { term: "eww", meaning: "嫌悪を表す感嘆詞" },
       { term: "oh!", meaning: "驚きを表す感嘆詞" },
       { term: "wow...", meaning: "驚きを表す感嘆詞" },
       { term: "cool", meaning: "かっこいい" },
     ];
 
-    expect(filterPickupTerms(terms, { text: "ohhh hmmm wowww oh! wow... cool", emoteNames: [], mentionNames: [] })).toEqual([
+    expect(filterPickupTerms(terms, { text: "ohhh hmmm wowww woah eww oh! wow... cool", emoteNames: [], mentionNames: [] })).toEqual([
       { term: "cool", meaning: "かっこいい" },
+    ]);
+  });
+
+  it("辞書の語に綴りが近いだけの語(ohm / uh-oh / boo / o7)は落とさない(issue #33)", () => {
+    const terms = [
+      { term: "ohm", meaning: "電気抵抗の単位" },
+      { term: "uh-oh", meaning: "まずいことが起きたときの声" },
+      { term: "boo", meaning: "ブーイング" },
+      { term: "o7", meaning: "敬礼の顔文字" },
+    ];
+
+    expect(filterPickupTerms(terms, { text: "ohm uh-oh boo o7", emoteNames: [], mentionNames: [] })).toEqual(terms);
+  });
+
+  it("文字を伸ばした笑い声(hahaaa / HAHAHAAA)も落とす(issue #33)", () => {
+    const terms = [
+      { term: "hahaaa", meaning: "笑い声" },
+      { term: "HAHAHAAA", meaning: "笑い声" },
+      { term: "sticky", meaning: "スタン状態にする" },
+    ];
+
+    expect(filterPickupTerms(terms, { text: "hahaaa HAHAHAAA sticky", emoteNames: [], mentionNames: [] })).toEqual([
+      { term: "sticky", meaning: "スタン状態にする" },
     ]);
   });
 
