@@ -7,7 +7,7 @@
  * Deferred Promise)を注入して、直列性・優先度・キュー溢れ・中断を検証する。
  */
 import { describe, expect, it, vi } from "vitest";
-import { createSessionPool, type PromptSessionLike } from "./session-pool";
+import { createSessionPool, LowPriorityQueueOverflowError, type PromptSessionLike } from "./session-pool";
 
 /**
  * キューは `getBaseSession()` → `clone()` → `run()` と複数回 await を挟んでから
@@ -139,7 +139,8 @@ describe("createSessionPool", () => {
     const pLow2 = pool.enqueue("low", async () => "low2");
     const pLow3 = pool.enqueue("low", async () => "low3"); // 上限(2)を超えるため low1 が破棄される
 
-    await expect(pLow1).rejects.toThrow();
+    // 呼び出し側が「流量超過で未翻訳」など溢れ固有の表示に切り替えられるよう、専用エラーで拒否する
+    await expect(pLow1).rejects.toBeInstanceOf(LowPriorityQueueOverflowError);
     blocker.resolve("released");
     await pBlocking;
 
@@ -201,5 +202,29 @@ describe("createSessionPool", () => {
     const result = await pool.enqueue("high", async (session) => session.prompt("retry"));
     expect(result).toBe("response from base-clone1");
     expect(createBaseSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("warmUp() はジョブを積まずにベースセッションを生成し、以後の enqueue はそのセッションを使い回す", async () => {
+    const log: string[] = [];
+    const baseSession = createFakeSession(log, "base");
+    const createBaseSession = vi.fn(async () => baseSession);
+    const pool = createSessionPool({ createBaseSession });
+
+    await pool.warmUp();
+    expect(createBaseSession).toHaveBeenCalledTimes(1);
+    expect(log).toEqual([]); // clone/destroy は行わない
+
+    await pool.enqueue("high", async (session) => session.prompt("hello"));
+    expect(createBaseSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("warmUp() でベースセッション生成に失敗した場合はその例外をそのまま投げる", async () => {
+    const pool = createSessionPool({
+      createBaseSession: async () => {
+        throw new Error("ユーザー操作なしではモデルをダウンロードできません");
+      },
+    });
+
+    await expect(pool.warmUp()).rejects.toThrow("ユーザー操作なしではモデルをダウンロードできません");
   });
 });

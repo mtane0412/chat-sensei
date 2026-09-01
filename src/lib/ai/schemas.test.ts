@@ -1,14 +1,16 @@
 /**
  * src/lib/ai/schemas.ts のテスト。
  *
- * 解説結果のスキーマ(zod)が JSON.parse された Gemini Nano の出力を
+ * 解説結果・翻訳結果のスキーマ(zod)が JSON.parse された Gemini Nano の出力を
  * 正しく検証できること、および Prompt API の `responseConstraint` に渡す
  * JSON Schema を組み立てられることを検証する。
  */
 import { describe, expect, it } from "vitest";
 import {
   buildExplanationResponseConstraint,
+  buildTranslationResponseConstraint,
   explanationSchema,
+  translationSchema,
 } from "./schemas";
 
 describe("explanationSchema", () => {
@@ -73,6 +75,40 @@ describe("buildExplanationResponseConstraint", () => {
 
   it("メタ情報の$schemaフィールドは含まない(Prompt APIの想定外のため)", () => {
     const constraint = buildExplanationResponseConstraint() as Record<string, unknown>;
+
+    expect(constraint.$schema).toBeUndefined();
+  });
+});
+
+describe("translationSchema", () => {
+  it("訳文だけを持つ最小構造をパースできる", () => {
+    const raw = { translation: "ナイスプレー、チャット" };
+
+    expect(translationSchema.parse(raw)).toEqual(raw);
+  });
+
+  it("translationが欠けている場合はパースエラーになる", () => {
+    expect(() => translationSchema.parse({})).toThrow();
+  });
+
+  it("translationが文字列でない場合はパースエラーになる", () => {
+    expect(() => translationSchema.parse({ translation: 123 })).toThrow();
+  });
+});
+
+describe("buildTranslationResponseConstraint", () => {
+  it("訳文のみを要求するJSON Schemaオブジェクトを返す", () => {
+    const constraint = buildTranslationResponseConstraint();
+
+    expect(constraint).toMatchObject({
+      type: "object",
+      properties: { translation: { type: "string" } },
+      required: ["translation"],
+    });
+  });
+
+  it("メタ情報の$schemaフィールドは含まない(Prompt APIの想定外のため)", () => {
+    const constraint = buildTranslationResponseConstraint() as Record<string, unknown>;
 
     expect(constraint.$schema).toBeUndefined();
   });

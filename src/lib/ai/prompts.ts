@@ -2,6 +2,9 @@
  * Prompt API(Gemini Nano)に渡すシステムプロンプト・ユーザープロンプトを
  * 「学ぶ言語(targetLang)」と「解説言語(explainLang)」の組み合わせから組み立てる純関数群。
  *
+ * 解説用(`buildExplain*`)と翻訳用(`buildTranslate*`)は用途が異なるため別々に用意する。
+ * 翻訳用は訳文だけを求める短い指示にし、語句の列挙など解説向けの指示は含めない。
+ *
  * Prompt API が入出力として対応する言語は en/ja/es/de/fr の5つ(公式ドキュメントで確認済み)。
  * システムプロンプトは解説言語のネイティブ話者が読める言語で書く必要があるため、
  * 5言語それぞれにテンプレートを用意する。
@@ -54,4 +57,36 @@ export function buildExplainSystemPrompt(targetLang: SupportedLanguage, explainL
  */
 export function buildExplainUserPrompt(chatMessageText: string): string {
   return `Chat message to analyze: "${chatMessageText}"`;
+}
+
+/** 解説言語ごとの翻訳用システムプロンプトテンプレート。引数は「学ぶ言語の名前(解説言語表記)」と「解説言語の名前(解説言語表記)」 */
+const TRANSLATE_SYSTEM_PROMPT_BUILDERS: Record<SupportedLanguage, (targetLabel: string, explainLabel: string) => string> = {
+  en: (targetLabel, explainLabel) =>
+    `You are a translator for live Twitch chat. The user will show you one chat message that actually appeared in a live stream, written in ${targetLabel}. Translate the whole message into natural, casual ${explainLabel} that preserves the tone (slang, jokes, excitement). Keep emote names, @mentions, and URLs unchanged. Do not add explanations or notes. Respond only in the requested JSON structure.`,
+  ja: (targetLabel, explainLabel) =>
+    `あなたはTwitchのライブ配信チャットの翻訳者です。ユーザーはライブ配信で実際に流れた${targetLabel}のチャット発言を1件見せます。発言全体を、スラング・冗談・興奮といった口調を保ったまま自然でくだけた${explainLabel}に翻訳してください。emote名・@メンション・URLはそのまま残してください。解説や注釈は加えないでください。指定されたJSON構造だけで答えてください。`,
+  es: (targetLabel, explainLabel) =>
+    `Eres un traductor de chat en vivo de Twitch. El usuario te mostrará un mensaje de chat que realmente apareció en una transmisión en vivo, escrito en ${targetLabel}. Traduce el mensaje completo a un ${explainLabel} natural e informal que conserve el tono (jerga, bromas, entusiasmo). Mantén sin cambios los nombres de emotes, las menciones (@) y las URL. No añadas explicaciones ni notas. Responde únicamente con la estructura JSON solicitada.`,
+  de: (targetLabel, explainLabel) =>
+    `Du bist ein Übersetzer für Twitch-Livechats. Der Nutzer zeigt dir eine Chat-Nachricht, die tatsächlich in einem Livestream auf ${targetLabel} geschrieben wurde. Übersetze die gesamte Nachricht in natürliches, lockeres ${explainLabel} und bewahre dabei den Ton (Slang, Witze, Begeisterung). Lass Emote-Namen, @-Erwähnungen und URLs unverändert. Füge keine Erklärungen oder Anmerkungen hinzu. Antworte ausschließlich in der angeforderten JSON-Struktur.`,
+  fr: (targetLabel, explainLabel) =>
+    `Tu es un traducteur pour le chat en direct de Twitch. L'utilisateur te montrera un message de chat qui est réellement apparu dans un stream en direct, écrit en ${targetLabel}. Traduis le message complet en ${explainLabel} naturel et familier, en conservant le ton (argot, blagues, enthousiasme). Laisse les noms d'emotes, les mentions (@) et les URL inchangés. N'ajoute ni explications ni notes. Réponds uniquement dans la structure JSON demandée.`,
+};
+
+/**
+ * 翻訳用のシステムプロンプトを `targetLang`(学ぶ言語)と `explainLang`(訳文の言語)から組み立てる。
+ * 解説用の `buildExplainSystemPrompt` とは独立したテンプレートを使う。
+ */
+export function buildTranslateSystemPrompt(targetLang: SupportedLanguage, explainLang: SupportedLanguage): string {
+  const targetLabel = LANGUAGE_LABELS[explainLang][targetLang];
+  const explainLabel = LANGUAGE_LABELS[explainLang][explainLang];
+  return TRANSLATE_SYSTEM_PROMPT_BUILDERS[explainLang](targetLabel, explainLabel);
+}
+
+/**
+ * 翻訳対象のチャット本文からユーザープロンプトを組み立てる。
+ * 解説用と同様に引用符で囲み、指示ではなくデータであることを明示する。
+ */
+export function buildTranslateUserPrompt(chatMessageText: string): string {
+  return `Chat message to translate: "${chatMessageText}"`;
 }

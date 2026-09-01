@@ -41,9 +41,27 @@ export interface SessionPool {
    * `run` にはクローンされたセッションが渡され、実行後に自動で破棄される。
    */
   enqueue<T>(priority: JobPriority, run: (session: PromptSessionLike) => Promise<T>, signal?: AbortSignal): Promise<T>;
+  /**
+   * ジョブを積まずにベースセッションだけを生成する。
+   * Prompt API はモデルが未ダウンロード(`downloadable`)のとき `LanguageModel.create()` に
+   * ユーザー操作(user activation)を要求するため、クリックハンドラの延長で呼び出して
+   * ベースセッションを先に作っておく用途に使う。生成に失敗した場合は例外をそのまま投げる。
+   */
+  warmUp(): Promise<void>;
 }
 
 const DEFAULT_MAX_LOW_PRIORITY_QUEUE_LENGTH = 20;
+
+/**
+ * 低優先度キューの上限超過で破棄されたジョブを拒否する際のエラー。
+ * 呼び出し側が `instanceof` で判別し、「未翻訳(流量超過)」のような溢れ固有の表示に切り替えられるようにする。
+ */
+export class LowPriorityQueueOverflowError extends Error {
+  constructor() {
+    super("低優先度キューの上限に達したため、このジョブは破棄されました");
+    this.name = "LowPriorityQueueOverflowError";
+  }
+}
 
 interface QueuedJob {
   run: (session: PromptSessionLike) => Promise<unknown>;
@@ -83,7 +101,7 @@ export function createSessionPool(deps: SessionPoolDeps): SessionPool {
       if (dropped?.onAbort) {
         dropped.signal?.removeEventListener("abort", dropped.onAbort);
       }
-      dropped?.reject(new Error("低優先度キューの上限に達したため、このジョブは破棄されました"));
+      dropped?.reject(new LowPriorityQueueOverflowError());
     }
   }
 
@@ -120,6 +138,9 @@ export function createSessionPool(deps: SessionPoolDeps): SessionPool {
   }
 
   return {
+    async warmUp() {
+      await getBaseSession();
+    },
     enqueue<T>(priority: JobPriority, run: (session: PromptSessionLike) => Promise<T>, signal?: AbortSignal): Promise<T> {
       return new Promise<T>((resolve, reject) => {
         if (signal?.aborted) {
