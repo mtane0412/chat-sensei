@@ -108,12 +108,33 @@ describe("Home(3カラム構成)", () => {
     expect(translationColumn).toHaveAttribute("data-blurred", "true");
     expect(pickupColumn).toHaveAttribute("data-blurred", "true");
 
-    await user.click(screen.getByRole("switch", { name: "翻訳をぼかす" }));
+    // トグルは各列の見出し(ヘッダー)内に目のアイコンとして置く
+    const translationToggle = within(translationColumn).getByRole("switch", { name: "翻訳をぼかす" });
+    const pickupToggle = within(pickupColumn).getByRole("switch", { name: "Pick upをぼかす" });
+    expect(translationToggle).toHaveAttribute("aria-checked", "true");
+    expect(pickupToggle).toHaveAttribute("aria-checked", "true");
+
+    await user.click(translationToggle);
+    expect(translationToggle).toHaveAttribute("aria-checked", "false");
     expect(translationColumn).toHaveAttribute("data-blurred", "false");
     expect(pickupColumn).toHaveAttribute("data-blurred", "true");
 
-    await user.click(screen.getByRole("switch", { name: "Pick upをぼかす" }));
+    await user.click(pickupToggle);
+    expect(pickupToggle).toHaveAttribute("aria-checked", "false");
     expect(pickupColumn).toHaveAttribute("data-blurred", "false");
+  });
+
+  it("ぼかしトグルはぼかし中は EyeOff、解除中は Eye のアイコンを表示する", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+
+    const toggle = screen.getByRole("switch", { name: "翻訳をぼかす" });
+    expect(toggle.querySelector(".lucide-eye-off")).not.toBeNull();
+    expect(toggle.querySelector(".lucide-eye")).toBeNull();
+
+    await user.click(toggle);
+    expect(toggle.querySelector(".lucide-eye")).not.toBeNull();
+    expect(toggle.querySelector(".lucide-eye-off")).toBeNull();
   });
 
   it("「接続する」クリック(ユーザー操作)の延長で翻訳・Pick upのセッションをウォームアップする(モデルDLにユーザー操作が必要なため)", async () =>  {
