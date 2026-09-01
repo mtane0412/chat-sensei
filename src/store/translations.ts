@@ -21,6 +21,7 @@ import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
 import { createSessionPool, LowPriorityQueueOverflowError, type SessionPool } from "@/lib/ai/session-pool";
 import { createTranslateBaseSessionFactory, translateChatMessage } from "@/lib/ai/translate";
 import { loadSettings, type Settings } from "@/lib/settings";
+import { isEmoteOnlyMessage } from "@/lib/twitch/emotes";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
 
@@ -124,6 +125,12 @@ export function startTranslationPipeline(deps: TranslationPipelineDeps = DEFAULT
   }
 
   function translate(message: TwitchChatMessage, id: string): void {
+    // emote だけの発言は訳すものが無い。LLM に渡すと emote 名を訳してしまうことがあるため、
+    // 原文をそのまま訳文として確定させる(ページ側が emote 名を画像として描画する、issue #28)
+    if (isEmoteOnlyMessage(message.text, message.emotes)) {
+      setEntry(id, { status: "done", translation: message.text });
+      return;
+    }
     setEntry(id, { status: "pending" });
     translateChatMessage(getPool(), message.text, { priority: "low", signal: controller.signal })
       .then((result) => setEntry(id, { status: "done", translation: result.translation }))

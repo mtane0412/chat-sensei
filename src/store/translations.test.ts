@@ -159,6 +159,31 @@ describe("startTranslationPipeline", () => {
     stop();
   });
 
+  it("emote だけの発言は訳すものが無いため LLM を呼ばず、原文をそのまま訳文として done にする(issue #28)", async () => {
+    const { deps, emit, enqueue } = createDeps();
+
+    const stop = startTranslationPipeline(deps);
+    await flush();
+    emit(
+      createMessage({
+        id: "msg-1",
+        text: "sayuwuKuru sayuwuKuru",
+        emotes: [
+          { id: "emotesv2_1", start: 0, end: 9 },
+          { id: "emotesv2_1", start: 11, end: 20 },
+        ],
+      }),
+    );
+    await flush();
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(useTranslationStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      translation: "sayuwuKuru sayuwuKuru",
+    });
+    stop();
+  });
+
   it("翻訳ジョブが完了するまでは pending として保持する", async () => {
     const deferred = createDeferred<string>();
     const { deps, emit } = createDeps({ promptResults: [deferred.promise] });

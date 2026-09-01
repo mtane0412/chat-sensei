@@ -6,7 +6,7 @@
  * 描画用セグメントに変換する純関数を検証する。
  */
 import { describe, expect, it } from "vitest";
-import { buildEmoteImageUrl, splitMessageIntoSegments, splitTextByEmoteNames } from "./emotes";
+import { buildEmoteImageUrl, isEmoteOnlyMessage, splitMessageIntoSegments, splitTextByEmoteNames } from "./emotes";
 import type { EmotePosition } from "./irc-parser";
 
 describe("buildEmoteImageUrl", () => {
@@ -111,5 +111,27 @@ describe("splitTextByEmoteNames", () => {
     const segments = splitTextByEmoteNames("kappa lol", 既知のemote);
 
     expect(segments).toEqual([{ type: "text", text: "kappa lol" }]);
+  });
+});
+
+describe("isEmoteOnlyMessage", () => {
+  it("emote だけ(空白区切りの繰り返しを含む)の発言は true", () => {
+    const emotes: EmotePosition[] = [
+      { id: "25", start: 0, end: 4 },
+      { id: "25", start: 6, end: 10 },
+    ];
+
+    expect(isEmoteOnlyMessage("Kappa Kappa", emotes)).toBe(true);
+  });
+
+  it("emote 以外の文字がある発言は false", () => {
+    const emotes: EmotePosition[] = [{ id: "25", start: 5, end: 9 }];
+
+    expect(isEmoteOnlyMessage("nice Kappa", emotes)).toBe(false);
+  });
+
+  it("emote が無い発言は false(空文字列でも翻訳側の判断に委ねる)", () => {
+    expect(isEmoteOnlyMessage("hello", [])).toBe(false);
+    expect(isEmoteOnlyMessage("", [])).toBe(false);
   });
 });

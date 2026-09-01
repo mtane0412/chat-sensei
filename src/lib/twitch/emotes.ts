@@ -76,6 +76,18 @@ export function splitMessageIntoSegments(text: string, emotes: EmotePosition[]):
   return segments;
 }
 
+/**
+ * emote だけ(空白を除いてすべてが emote)の発言かを判定する。
+ * 訳すべきテキストが無いため、翻訳側は LLM を呼ばずに原文をそのまま扱える(issue #28)。
+ * emote が無い発言は、本文が空であっても false を返す(emote 以外の理由での空は呼び出し側の判断に委ねる)。
+ */
+export function isEmoteOnlyMessage(text: string, emotes: EmotePosition[]): boolean {
+  if (emotes.length === 0) return false;
+  return splitMessageIntoSegments(text, emotes).every(
+    (segment) => segment.type === "emote" || segment.text.trim() === "",
+  );
+}
+
 /** 正規表現のメタ文字をエスケープする(emote 名は英数字のみだが念のため) */
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
