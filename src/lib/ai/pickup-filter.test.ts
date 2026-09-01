@@ -102,6 +102,26 @@ describe("filterPickupTerms", () => {
     expect(filterPickupTerms(terms, 前処理済み)).toEqual([{ term: "sticky", meaning: "スタン状態にする" }]);
   });
 
+  it("! で始まる語句(チャットコマンド)を落とす", () => {
+    const terms = [
+      { term: "!chimkin", meaning: "鶏肉のミーム" },
+      { term: "sticky", meaning: "スタン状態にする" },
+    ];
+
+    expect(filterPickupTerms(terms, 前処理済み)).toEqual([{ term: "sticky", meaning: "スタン状態にする" }]);
+  });
+
+  it("追加で指定した除外名(表示中の発言者名など)と一致する語句を落とす(大文字小文字は区別しない)", () => {
+    const terms = [
+      { term: "space_toilet_master", meaning: "配信の常連" },
+      { term: "sticky", meaning: "スタン状態にする" },
+    ];
+
+    expect(filterPickupTerms(terms, 前処理済み, ["Space_Toilet_Master"])).toEqual([
+      { term: "sticky", meaning: "スタン状態にする" },
+    ]);
+  });
+
   it("落とす対象が無ければ元の配列と同じ内容を返す", () => {
     const terms = [{ term: "sticky", meaning: "スタン状態にする" }];
 

@@ -178,6 +178,34 @@ describe("startPickupPipeline", () => {
     stop();
   });
 
+  it("表示中の発言者名(username / displayName)を除外名として渡し、モデルが返しても結果から落とす(issue #26)", async () => {
+    const { deps, emit, setMessages } = createDeps({
+      promptResults: [
+        Promise.resolve(
+          JSON.stringify({
+            terms: [
+              { term: "space_toilet_master", meaning: "配信の常連" },
+              { term: "gg", meaning: "good game の略" },
+            ],
+          }),
+        ),
+      ],
+    });
+    const stop = startPickupPipeline(deps);
+    await flush();
+    const 常連の発言 = createMessage({ id: "msg-0", username: "space_toilet_master", displayName: "Space_Toilet_Master" });
+    const 歓迎の発言 = createMessage({ id: "msg-1", text: "Welcome back space_toilet_master! gg" });
+    setMessages([常連の発言, 歓迎の発言]);
+    emit(歓迎の発言);
+    await flush();
+
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "gg", meaning: "good game の略" }],
+    });
+    stop();
+  });
+
   it("抽出ジョブが完了するまでは pending として保持する", async () => {
     const deferred = createDeferred<string>();
     const { deps, emit } = createDeps({ promptResults: [deferred.promise] });

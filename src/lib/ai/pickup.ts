@@ -26,6 +26,8 @@ export interface PickupOptions {
   signal?: AbortSignal;
   /** Twitch IRC の `emotes` タグから得た emote の位置。省略時は emote の除去を行わない */
   emotes?: EmotePosition[];
+  /** 結果から落とす名前(表示中の発言者名など)。@ 無しで本文に書かれたユーザー名は LLM が語句として返しやすい */
+  excludedNames?: string[];
 }
 
 /**
@@ -61,7 +63,7 @@ export async function pickUpExpressions(
     throw new Error(`Prompt APIの応答をJSONとして解釈できませんでした: ${raw}`, { cause: error });
   }
 
-  const terms = filterPickupTerms(pickupSchema.parse(parsed).terms, prepared);
+  const terms = filterPickupTerms(pickupSchema.parse(parsed).terms, prepared, options.excludedNames ?? []);
   const normalizedText = prepared.text.toLowerCase();
   const unknownTerm = terms.find((term) => !normalizedText.includes(term.term.toLowerCase()));
   if (unknownTerm) {

@@ -139,6 +139,23 @@ describe("pickUpExpressions(決定的な足切りと後段フィルタ、issue #
     expect(result.terms).toEqual([{ term: "sticky", meaning: "スタン状態にする" }]);
   });
 
+  it("excludedNames に指定した発言者名を、モデルが語句として返しても結果から落とす", async () => {
+    const pool = createFakeSessionPool(
+      JSON.stringify({
+        terms: [
+          { term: "space_toilet_master", meaning: "配信の常連" },
+          { term: "sticky", meaning: "スタン状態にする" },
+        ],
+      }),
+    );
+
+    const result = await pickUpExpressions(pool, "Welcome back space_toilet_master! sticky", {
+      excludedNames: ["space_toilet_master"],
+    });
+
+    expect(result.terms).toEqual([{ term: "sticky", meaning: "スタン状態にする" }]);
+  });
+
   it("emotes を省略した場合は emote 除去を行わず、本文をそのまま渡す", async () => {
     const pool = createFakeSessionPool(JSON.stringify({ terms: [] }));
 
