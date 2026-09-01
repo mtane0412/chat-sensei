@@ -129,7 +129,7 @@ export function startPickupPipeline(deps: PickupPipelineDeps = DEFAULT_DEPS): ()
 
   function pickUp(message: TwitchChatMessage, id: string): void {
     setEntry(id, { status: "pending" });
-    pickUpExpressions(getPool(), message.text, { priority: "low", signal: controller.signal })
+    pickUpExpressions(getPool(), message.text, { priority: "low", signal: controller.signal, emotes: message.emotes })
       .then((result) => setEntry(id, { status: "done", terms: result.terms }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;

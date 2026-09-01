@@ -165,6 +165,19 @@ describe("startPickupPipeline", () => {
     stop();
   });
 
+  it("emote だけの発言は LLM を呼ばずに terms が空の done として保持する(issue #26)", async () => {
+    const { deps, emit, enqueue } = createDeps();
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "Kappa", emotes: [{ id: "25", start: 0, end: 4 }] }));
+    await flush();
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({ status: "done", terms: [] });
+    stop();
+  });
+
   it("抽出ジョブが完了するまでは pending として保持する", async () => {
     const deferred = createDeferred<string>();
     const { deps, emit } = createDeps({ promptResults: [deferred.promise] });

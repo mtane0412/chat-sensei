@@ -1,0 +1,110 @@
+/**
+ * src/lib/ai/pickup-filter.ts のテスト。
+ *
+ * Pick up の前後に置く決定的(LLM を使わない)処理を検証する(issue #26)。
+ * - `preparePickupInput`: emote・@メンション・URL を本文から除き、LLM に渡す本文を組み立てる
+ * - `filterPickupTerms`: LLM が返した語句のうち emote 名・@メンション・文字を含まない語句を落とす
+ */
+import { describe, expect, it } from "vitest";
+import { filterPickupTerms, preparePickupInput } from "./pickup-filter";
+import type { EmotePosition } from "@/lib/twitch/irc-parser";
+
+describe("preparePickupInput", () => {
+  it("emote が無く特殊なトークンも無い本文はそのまま返す", () => {
+    const prepared = preparePickupInput("bro is cooked lmao", []);
+
+    expect(prepared).toEqual({ text: "bro is cooked lmao", emoteNames: [], mentionNames: [] });
+  });
+
+  it("emotes タグの位置にある emote 名を本文から除き、除いた emote 名を保持する", () => {
+    // "xqcPeepo DID THAT NOT STICKY HIM" の xqcPeepo(0-7文字目)が emote
+    const emotes: EmotePosition[] = [{ id: "emotesv2_1", start: 0, end: 7 }];
+
+    const prepared = preparePickupInput("xqcPeepo DID THAT NOT STICKY HIM", emotes);
+
+    expect(prepared.text).toBe("DID THAT NOT STICKY HIM");
+    expect(prepared.emoteNames).toEqual(["xqcPeepo"]);
+  });
+
+  it("同じ emote が複数回登場しても emote 名は重複なく保持する", () => {
+    const emotes: EmotePosition[] = [
+      { id: "25", start: 0, end: 4 },
+      { id: "25", start: 10, end: 14 },
+    ];
+
+    const prepared = preparePickupInput("Kappa lol Kappa", emotes);
+
+    expect(prepared.text).toBe("lol");
+    expect(prepared.emoteNames).toEqual(["Kappa"]);
+  });
+
+  it("emote だけの発言は本文が空文字列になる", () => {
+    const emotes: EmotePosition[] = [{ id: "25", start: 0, end: 4 }];
+
+    const prepared = preparePickupInput("Kappa", emotes);
+
+    expect(prepared.text).toBe("");
+    expect(prepared.emoteNames).toEqual(["Kappa"]);
+  });
+
+  it("@メンションを本文から除き、@ を外したユーザー名を保持する", () => {
+    const prepared = preparePickupInput("@AUBREY that was a W", []);
+
+    expect(prepared.text).toBe("that was a W");
+    expect(prepared.mentionNames).toEqual(["AUBREY"]);
+  });
+
+  it("URL を本文から除く", () => {
+    const prepared = preparePickupInput("check this https://example.com/clip lol", []);
+
+    expect(prepared.text).toBe("check this lol");
+  });
+
+  it("除去によって生じた連続する空白は1つにまとめ、前後の空白を落とす", () => {
+    const emotes: EmotePosition[] = [{ id: "25", start: 4, end: 8 }];
+
+    const prepared = preparePickupInput("gg  Kappa  chat ", emotes);
+
+    expect(prepared.text).toBe("gg chat");
+  });
+});
+
+describe("filterPickupTerms", () => {
+  const 前処理済み = { text: "DID THAT NOT STICKY HIM", emoteNames: ["xqcPeepo"], mentionNames: ["AUBREY"] };
+
+  it("emote 名と一致する語句を落とす(大文字小文字は区別しない)", () => {
+    const terms = [
+      { term: "xqcpeepo", meaning: "特定の配信者関連の絵文字" },
+      { term: "sticky", meaning: "スタン状態にする" },
+    ];
+
+    expect(filterPickupTerms(terms, 前処理済み)).toEqual([{ term: "sticky", meaning: "スタン状態にする" }]);
+  });
+
+  it("@ で始まる語句と、@メンションのユーザー名と一致する語句を落とす", () => {
+    const terms = [
+      { term: "@AUBREY", meaning: "特定の視聴者への呼称" },
+      { term: "aubrey", meaning: "特定の視聴者への呼称" },
+      { term: "sticky", meaning: "スタン状態にする" },
+    ];
+
+    expect(filterPickupTerms(terms, 前処理済み)).toEqual([{ term: "sticky", meaning: "スタン状態にする" }]);
+  });
+
+  it("文字を1つも含まない語句(数字や記号だけ)を落とす", () => {
+    const terms = [
+      { term: "67", meaning: "日付や時間を示す可能性" },
+      { term: "10:30", meaning: "時刻" },
+      { term: "???", meaning: "困惑" },
+      { term: "sticky", meaning: "スタン状態にする" },
+    ];
+
+    expect(filterPickupTerms(terms, 前処理済み)).toEqual([{ term: "sticky", meaning: "スタン状態にする" }]);
+  });
+
+  it("落とす対象が無ければ元の配列と同じ内容を返す", () => {
+    const terms = [{ term: "sticky", meaning: "スタン状態にする" }];
+
+    expect(filterPickupTerms(terms, 前処理済み)).toEqual(terms);
+  });
+});
