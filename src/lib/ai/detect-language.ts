@@ -52,6 +52,29 @@ export function containsKana(text: string): boolean {
 /** 漢字(CJK 統合漢字) */
 const HAN_PATTERN = /\p{Script=Han}/u;
 
+/**
+ * 短い Latin 文字列の規則を適用する本文の最大長(文字数)。
+ * 実測で拾いたい "KEKW" "sheesh" "oooohhh ok"(4〜10 文字)を含み、判定器を信頼したい "hallo alles goed"(16 文字)を含まない値
+ */
+export const SHORT_LATIN_TEXT_MAX_LENGTH = 12;
+
+/** Latin 文字と空白・数字・一般的な記号だけで構成されているか(他の文字体系を 1 文字でも含めば false) */
+const LATIN_ONLY_PATTERN = /^[\p{Script=Latin}\p{N}\p{P}\p{S}\s]+$/u;
+
+/** Prompt API 対応言語のうち Latin 文字で書く言語 */
+const LATIN_SCRIPT_LANGUAGES: readonly SupportedLanguage[] = ["en", "es", "de", "fr"];
+
+/** 短い Latin 文字列の規則で採用する言語。学ぶ言語(解説言語を除く)の先頭の Latin 文字言語、無ければ Latin 文字の解説言語 */
+function resolveShortLatinText(text: string, settings: Settings): LanguageClassification | null {
+  if (text.length > SHORT_LATIN_TEXT_MAX_LENGTH || !LATIN_ONLY_PATTERN.test(text)) return null;
+  const learning = settings.learningLangs.find(
+    (lang) => lang !== settings.explainLang && LATIN_SCRIPT_LANGUAGES.includes(lang),
+  );
+  if (learning) return { kind: "learning", lang: learning };
+  if (LATIN_SCRIPT_LANGUAGES.includes(settings.explainLang)) return { kind: "same-as-explanation" };
+  return null;
+}
+
 /** 日本語が学ぶ言語か解説言語に設定されているか */
 function isJapaneseConfigured(settings: Settings): boolean {
   return settings.explainLang === "ja" || settings.learningLangs.includes("ja");
@@ -115,7 +138,7 @@ export function classifyDetectedLanguage(
     if (lang === settings.explainLang) return { kind: "same-as-explanation" };
     if (isProcessableLearningLanguage(lang, settings)) return { kind: "learning", lang };
   }
-  return { kind: "other", detectedLanguage: detected };
+  return resolveShortLatinText(text, settings) ?? { kind: "other", detectedLanguage: detected };
 }
 
 /**
