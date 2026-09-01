@@ -221,6 +221,28 @@ describe("createAutoPipeline().start", () => {
     stop();
   });
 
+  it("開始時に前回の結果をすべて破棄し、表示中の発言を新しいパイプラインに再投入する(言語ペア変更後の再生成)", async () => {
+    const first = createDeps({ promptResults: [Promise.resolve("古い訳"), Promise.resolve("最初の言語ペアの訳")] });
+    const stop = start(first.deps);
+    await flush();
+    first.emit(createMessage({ id: "msg-0", text: "hi" }));
+    first.emit(createMessage({ id: "msg-1", text: "gg chat" }));
+    await flush();
+    expect(useStore.getState().entries["msg-1"]).toEqual({ status: "done", result: "最初の言語ペアの訳" });
+    stop();
+
+    // 言語ペアを変えて再開する。表示用リングバッファには msg-1 と ID を持たない発言だけが残っている(msg-0 は溢れて消えた)
+    const second = createDeps({ promptResults: [Promise.resolve("新しい言語ペアの訳")] });
+    second.setMessages([createMessage({ id: "msg-1", text: "gg chat" }), createMessage({ id: null })]);
+    const stopAgain = start(second.deps);
+    expect(useStore.getState().entries["msg-1"]).toEqual({ status: "pending" });
+    await flush();
+
+    expect(second.enqueue).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().entries).toEqual({ "msg-1": { status: "done", result: "新しい言語ペアの訳" } });
+    stopAgain();
+  });
+
   it("停止すると発言の購読を解除し、以後の発言ではジョブを投入しない", async () => {
     const { deps, emit, enqueue, listeners } = createDeps();
 

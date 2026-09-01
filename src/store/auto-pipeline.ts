@@ -11,6 +11,9 @@
  *   使えない環境では暗黙のフォールバックをせず、行ごとに `unavailable` を保持する
  * - モデルが未ダウンロードの環境では `LanguageModel.create()` にユーザー操作が必要なため、
  *   「接続する」クリックの延長で `warmUp` を呼び、ベースセッションを先に生成する
+ * - `start` は前回の結果をすべて破棄し、表示用リングバッファに残っている発言を新しいパイプラインに再投入する。
+ *   言語ペア(`settings.ts` のストア)が変わったときにホーム画面がパイプラインを再起動し、
+ *   古い言語ペアの結果を残さず新しい言語ペアで生成し直すため(issue #17)
  *
  * `chat-connection.ts` と同様に、ページ遷移でホーム画面がアンマウントされても結果を失わないよう、
  * React ツリーの外(Zustand ストア)に状態を置く。
@@ -24,10 +27,11 @@ import {
   type PromptSessionLike,
   type SessionPool,
 } from "@/lib/ai/session-pool";
-import { loadSettings, type Settings } from "@/lib/settings";
+import type { Settings } from "@/lib/settings";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
 import { ensurePromptApiDiagnosed, markPromptApiUnavailable, usePromptApiStore, type PromptApiStatus } from "./prompt-api";
+import { useSettingsStore } from "./settings";
 
 /** 発言 1 件ぶんの処理状態。`TDone` は完了時に保持する結果の形(訳文・語句一覧など) */
 export type PipelineEntry<TDone extends object> =
@@ -78,8 +82,9 @@ export interface AutoPipelineConfig<TDone extends object> {
 export interface AutoPipeline<TDone extends object> {
   useStore: UseBoundStore<StoreApi<AutoPipelineState<TDone>>>;
   /**
-   * パイプラインを開始する。戻り値の関数を呼ぶと発言の購読を解除し、待機中のジョブを中断する。
-   * ホーム画面のマウント時に 1 回呼び出す想定
+   * パイプラインを開始する。前回の結果をすべて破棄し、表示中の発言を再投入したうえで新しい発言の購読を始める。
+   * 戻り値の関数を呼ぶと発言の購読を解除し、待機中のジョブを中断する。
+   * ホーム画面のマウント時と、言語ペアの変更時に呼び出す想定(呼び出し前に前回の停止関数を呼ぶこと)
    */
   start: (deps?: AutoPipelineDeps) => () => void;
   /**
@@ -110,7 +115,13 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
 
   const defaultDeps: AutoPipelineDeps = {
     diagnose: runBrowserDiagnosis,
-    loadSettings: () => loadSettings().settings,
+    loadSettings: () => {
+      // 言語ペアは settings ストアが正本。未復元のまま起動すると LocalStorage の設定を無視してしまうため、
+      // 暗黙にデフォルトへ倒さず呼び出し順の誤りとして失敗させる
+      const { hydrated, settings } = useSettingsStore.getState();
+      if (!hydrated) throw new Error("設定が未復元です。hydrateSettingsStore() を先に呼び出してください");
+      return settings;
+    },
     createPool: (settings) => createSessionPool({ createBaseSession: config.createBaseSession(settings) }),
     subscribeToChatMessages,
     getMessages: () => useChatConnectionStore.getState().messages,
@@ -223,6 +234,9 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
       });
     }
 
+    // 前回(別の言語ペアなど)の結果は残さず、表示中の発言を新しいパイプラインで処理し直す
+    useStore.setState({ entries: {} });
+    deps.getMessages().forEach(handleMessage);
     const unsubscribe = deps.subscribeToChatMessages(handleMessage);
 
     void ensurePromptApiDiagnosed(deps.diagnose).then((promptApi) => {

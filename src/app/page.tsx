@@ -20,12 +20,16 @@
  * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
  * 各パイプラインはこの画面のマウント時に開始する。Prompt API の利用可否は両列で共通の
  * prompt-api ストアを参照し、利用不可の理由は翻訳列・Pick up列それぞれの見出し下に表示する。
+ * 接続フォームの横には設定ダイアログ(SettingsDialog)を開くアイコンを置く。言語ペアは settings ストアが
+ * LocalStorage から復元し、パイプラインは復元後に開始する。言語ペアが変わると両パイプラインを
+ * 停止して新しい言語ペアで開始し直す(生成済みの翻訳・Pick up は破棄され、表示中の発言は再生成される)。
  */
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
+import { SettingsDialog } from "@/components/settings-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,6 +43,7 @@ import { useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
 import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupDone } from "@/store/pickups";
 import { usePromptApiStore, type PromptApiStatus } from "@/store/prompt-api";
+import { hydrateSettingsStore, useSettingsStore } from "@/store/settings";
 import {
   startTranslationPipeline,
   useTranslationStore,
@@ -75,11 +80,29 @@ export default function Home() {
   // Prompt API の利用可否は翻訳列・Pick up列で共通(環境診断は1回だけ実行する)
   const promptApi = usePromptApiStore((state) => state.status);
 
-  // 受信した発言を自動で翻訳・抽出ジョブに流す。アンマウント時は購読を解除し待機中のジョブを中断する
-  useEffect(() => startTranslationPipeline(), []);
-  useEffect(() => startPickupPipeline(), []);
-  // bot除外パターンを LocalStorage から復元する(SSR 中に触れないようマウント後に行う)
+  // 言語ペア・bot除外パターンを LocalStorage から復元する(SSR 中に触れないようマウント後に行う)
+  useEffect(() => hydrateSettingsStore(), []);
   useEffect(() => hydrateBotFilterStore(), []);
+
+  const settingsHydrated = useSettingsStore((state) => state.hydrated);
+  const targetLang = useSettingsStore((state) => state.settings.targetLang);
+  const explainLang = useSettingsStore((state) => state.settings.explainLang);
+
+  // 受信した発言を自動で翻訳・抽出ジョブに流す。言語ペアの復元後に開始し、言語ペアが変わるたびに
+  // 停止 → 開始し直す(セッションプールのシステムプロンプトに言語ペアを含むため)。
+  // 変更時に既に接続済みなら、設定の保存というユーザー操作の延長でセッションを先に生成しておく
+  useEffect(() => {
+    if (!settingsHydrated) return;
+    const stop = startTranslationPipeline();
+    if (isConnectingOrConnected(useChatConnectionStore.getState().connectionState)) warmUpTranslationPipeline();
+    return stop;
+  }, [settingsHydrated, targetLang, explainLang]);
+  useEffect(() => {
+    if (!settingsHydrated) return;
+    const stop = startPickupPipeline();
+    if (isConnectingOrConnected(useChatConnectionStore.getState().connectionState)) warmUpPickupPipeline();
+    return stop;
+  }, [settingsHydrated, targetLang, explainLang]);
 
   const handleConnect = useCallback(() => {
     const channel = channelInput.trim();
@@ -97,7 +120,7 @@ export default function Home() {
       <div className="flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="channel-input">チャンネル名</Label>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <Input
               id="channel-input"
               placeholder="例: zackrawrr"
@@ -114,6 +137,7 @@ export default function Home() {
                 接続する
               </Button>
             )}
+            <SettingsDialog />
           </div>
           <p className="text-xs text-muted-foreground" role="status">
             状態: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
