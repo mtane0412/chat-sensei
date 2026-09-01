@@ -56,7 +56,7 @@ function collapseRepeatedLetters(word: string): string {
  * - 単独で意味を持たず、学習者が辞書を引く価値が無い語に限定する。`lol` / `pog` のような略語・ミームは入れない
  * - `om` は「oh my」「oh man」の短縮形で驚き・感嘆を表す相槌として使われるため入れる
  * - 語は自然な綴りで書き、照合と同じ `collapseRepeatedLetters` を通して登録する(`hmm` → `hm`、`aww` → `aw`)
- * - 英語の相槌のみを収録している。対象言語(`prompts.ts` の `TargetLang`)固有の相槌は未対応で、
+ * - 英語の相槌のみを収録している。対象言語(`prompts.ts` の `SupportedLanguage`)固有の相槌は未対応で、
  *   必要になったら `targetLang` ごとの辞書に拡張する
  */
 const INTERJECTIONS = new Set(
