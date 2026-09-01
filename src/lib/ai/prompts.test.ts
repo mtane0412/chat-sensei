@@ -219,6 +219,36 @@ describe("buildPickupSystemPrompt", () => {
     expect(prompt).not.toContain("put effort into");
   });
 
+  it("解説言語がjaのとき、複数語でも各語の意味を足しただけで分かる普通の句は含めない指示を含む(issue #34)", () => {
+    const prompt = buildPickupSystemPrompt("en", "ja");
+
+    // 「複数語を優先」の直後に否定条件を置き、「複数語なら何でもよい」と解釈されないようにする
+    expect(prompt).toMatch(/足しただけ/);
+    expect(prompt).toMatch(/推測できない/);
+    expect(prompt).toContain('"sleep closest to"');
+  });
+
+  it("解説言語がenのとき、複数語でも各語の意味を足しただけで分かる普通の句は含めない指示を含む(issue #34)", () => {
+    const prompt = buildPickupSystemPrompt("ja", "en");
+
+    expect(prompt).toMatch(/adding up the meanings/i);
+    expect(prompt).toMatch(/cannot guess/i);
+  });
+
+  it("学ぶ言語が英語のとき、すべての解説言語で除外する普通の句の例として sleep closest to を示す(issue #34)", () => {
+    for (const explainLang of SUPPORTED_LANGUAGES) {
+      expect(buildPickupSystemPrompt("en", explainLang)).toContain('"sleep closest to"');
+    }
+  });
+
+  it("学ぶ言語が英語以外のとき、除外する普通の句の例は学ぶ言語の表現になる(英語の例を混ぜない)(issue #34)", () => {
+    // 学ぶ言語が日本語なら日本語の普通の句を例示し、英語の "sleep closest to" は登場しない
+    const prompt = buildPickupSystemPrompt("ja", "en");
+
+    expect(prompt).toContain("一番近くで寝る");
+    expect(prompt).not.toContain("sleep closest to");
+  });
+
   it("解説用・翻訳用のシステムプロンプトとは別物である", () => {
     const prompt = buildPickupSystemPrompt("en", "ja");
 
