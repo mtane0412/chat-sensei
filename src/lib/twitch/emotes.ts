@@ -125,6 +125,18 @@ export function extractPlainText(text: string, emotes: EmotePosition[]): string 
     .join(" ");
 }
 
+/** Unicode の「文字」(かな・漢字・アルファベットなど)。絵文字・記号・数字は含まない */
+const LETTER_PATTERN = /\p{L}/u;
+
+/**
+ * 訳す文字を含まない発言か(Twitch emote だけ・Unicode 絵文字だけ・記号や数字だけ)。
+ * こうした発言は言語判定に回すと zh や km のような無関係な言語になる(実配信で観測)ため、
+ * 翻訳・Pick up の前に判定もモデル呼び出しもせずに確定させる
+ */
+export function isTextlessMessage(text: string, emotes: EmotePosition[]): boolean {
+  return !LETTER_PATTERN.test(extractPlainText(text, emotes));
+}
+
 /** LLM に渡す本文の中で emote 1 件を置き換えるプレースホルダと、元の emote(ID・名前)の対応 */
 export interface EmotePlaceholder {
   /** 本文中に埋め込む記号トークン(例: `[[E0]]`) */

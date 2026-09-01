@@ -49,6 +49,25 @@ export function containsKana(text: string): boolean {
   return KANA_PATTERN.test(text);
 }
 
+/** 漢字(CJK 統合漢字) */
+const HAN_PATTERN = /\p{Script=Han}/u;
+
+/** 日本語が学ぶ言語か解説言語に設定されているか */
+function isJapaneseConfigured(settings: Settings): boolean {
+  return settings.explainLang === "ja" || settings.learningLangs.includes("ja");
+}
+
+/**
+ * 判定器の最上位候補と本文から、規則で上書きした言語を決める。
+ * かなを含めば日本語、漢字を含み zh 判定で日本語が設定にあれば日本語、それ以外は最上位候補の主言語部分
+ */
+function resolveDetectedLanguage(text: string, top: string | undefined, settings: Settings): string {
+  if (containsKana(text)) return "ja";
+  const detected = top === undefined ? UNDETERMINED_LANGUAGE : primaryLanguageSubtag(top);
+  if (detected === "zh" && HAN_PATTERN.test(text) && isJapaneseConfigured(settings)) return "ja";
+  return detected;
+}
+
 export type LanguageClassification =
   /** 学ぶ言語のひとつ。`lang` のセッションプールで翻訳・Pick up する */
   | { kind: "learning"; lang: SupportedLanguage }
@@ -73,7 +92,7 @@ function isProcessableLearningLanguage(lang: string, settings: Settings): lang i
 
 /**
  * 本文・Language Detector の判定結果(信頼度順)・言語設定から、発言の扱いを決める。
- * 本文はかな規則にだけ使い、それ以外は判定器の候補列で決める。
+ * 本文はかな規則・漢字規則にだけ使い、それ以外は判定器の候補列で決める。
  * 解説言語との一致を学ぶ言語より先に判定するため、学ぶ言語に解説言語が含まれていても「同じ言語」になる。
  * 最上位候補がどちらでもないときは、候補列を信頼度順に見て `MIN_FALLBACK_CONFIDENCE` 以上の学ぶ言語・解説言語の
  * うち先に見つかったものを採用し、無ければ最上位候補の言語を添えて「対象外」にする。
@@ -83,12 +102,7 @@ export function classifyDetectedLanguage(
   candidates: readonly DetectedLanguageCandidate[],
   settings: Settings,
 ): LanguageClassification {
-  const top = candidates[0]?.detectedLanguage;
-  const detected = containsKana(text)
-    ? "ja"
-    : top === undefined
-      ? UNDETERMINED_LANGUAGE
-      : primaryLanguageSubtag(top);
+  const detected = resolveDetectedLanguage(text, candidates[0]?.detectedLanguage, settings);
 
   if (detected === settings.explainLang) return { kind: "same-as-explanation" };
   if (isProcessableLearningLanguage(detected, settings)) return { kind: "learning", lang: detected };

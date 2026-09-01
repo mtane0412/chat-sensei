@@ -4,8 +4,9 @@
  * パイプラインの流れ(診断待ちの保留・低優先度キューへの投入・結果の保持・ウォームアップ・破棄)は
  * `auto-pipeline.ts` の共通ファクトリに任せ、ここでは翻訳固有の部分だけを定義する。
  *
- * - LLM を呼ばずに確定させる発言: emote だけの発言(issue #28)と `!` で始まるチャットコマンド(issue #35)は
- *   原文をそのまま訳文として `done` にする(LLM に渡すと emote 名やコマンドを訳・音訳してしまうため)
+ * - LLM を呼ばずに確定させる発言: 訳す文字を含まない発言(emote だけ = issue #28、Unicode 絵文字だけ、記号だけ)と
+ *   `!` で始まるチャットコマンド(issue #35)は原文をそのまま訳文として `done` にする
+ *   (LLM に渡すと emote 名やコマンドを訳・音訳してしまい、言語判定に回すと無関係な言語になるため)
  * - ジョブ: emote を `[[E0]]` のようなプレースホルダに置き換えた本文で `translateChatMessage` を低優先度で実行し、
  *   訳文中のプレースホルダを emote セグメントに戻した `segments` を保持する(issue #44。LLM に emote 名を
  *   見せると意訳して書き換えることがあり、名前の一致では復元できないため)
@@ -16,7 +17,7 @@
 import { createTranslateBaseSessionFactory, translateChatMessage } from "@/lib/ai/translate";
 import { isChatCommandMessage } from "@/lib/twitch/chat-command";
 import {
-  isEmoteOnlyMessage,
+  isTextlessMessage,
   maskEmotesWithPlaceholders,
   restoreEmotesFromPlaceholders,
   splitMessageIntoSegments,
@@ -38,7 +39,7 @@ export type TranslationPipelineDeps = AutoPipelineDeps;
 const pipeline = createAutoPipeline<TranslationDone>({
   createBaseSession: (targetLang, explainLang) => createTranslateBaseSessionFactory(targetLang, explainLang),
   resolveWithoutModel: (message) =>
-    isEmoteOnlyMessage(message.text, message.emotes) || isChatCommandMessage(message.text)
+    isTextlessMessage(message.text, message.emotes) || isChatCommandMessage(message.text)
       ? { segments: splitMessageIntoSegments(message.text, message.emotes) }
       : null,
   runJob: async (pool, message, { signal }) => {

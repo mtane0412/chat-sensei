@@ -5,9 +5,9 @@
  * パイプラインの流れ(診断待ちの保留・低優先度キューへの投入・結果の保持・ウォームアップ・破棄)は
  * `auto-pipeline.ts` の共通ファクトリに任せ、ここでは Pick up 固有の部分だけを定義する。
  *
- * - LLM を呼ばずに確定させる発言: emote だけの発言(issue #26)と `!` で始まるチャットコマンド(issue #35)は
- *   注目の表現が無いため `terms` が空の `done` にする。emote だけの発言は言語判定に回すと未判定(und)で
- *   対象外になってしまうため、`pickUpExpressions` 任せにせず判定の前に確定させる
+ * - LLM を呼ばずに確定させる発言: 訳す文字を含まない発言(emote だけ = issue #26、Unicode 絵文字だけ、記号だけ)と
+ *   `!` で始まるチャットコマンド(issue #35)は注目の表現が無いため `terms` が空の `done` にする。
+ *   言語判定に回すと未判定(und)や無関係な言語で対象外になってしまうため、`pickUpExpressions` 任せにせず判定の前に確定させる
  * - ジョブ: `pickUpExpressions` を低優先度で実行し、表示中の発言者名(username / displayName)を
  *   除外名として渡す(@ 無しで本文に書かれたユーザー名を抽出結果から落とすため)
  * - セッションプール(ベースセッション)は翻訳用とは別に持つ(`structured-prompt.ts` に記載の issue #15 方針 (a))が、
@@ -19,7 +19,7 @@
 import { createPickupBaseSessionFactory, pickUpExpressions } from "@/lib/ai/pickup";
 import type { PickupTerm } from "@/lib/ai/schemas";
 import { isChatCommandMessage } from "@/lib/twitch/chat-command";
-import { isEmoteOnlyMessage } from "@/lib/twitch/emotes";
+import { isTextlessMessage } from "@/lib/twitch/emotes";
 import { createAutoPipeline, type AutoPipelineDeps, type PipelineEntry } from "./auto-pipeline";
 
 /** 抽出の完了時に保持する結果。該当する表現が無い場合は `terms` が空配列 */
@@ -36,7 +36,7 @@ export type PickupPipelineDeps = AutoPipelineDeps;
 const pipeline = createAutoPipeline<PickupDone>({
   createBaseSession: (targetLang, explainLang) => createPickupBaseSessionFactory(targetLang, explainLang),
   resolveWithoutModel: (message) =>
-    isEmoteOnlyMessage(message.text, message.emotes) || isChatCommandMessage(message.text) ? { terms: [] } : null,
+    isTextlessMessage(message.text, message.emotes) || isChatCommandMessage(message.text) ? { terms: [] } : null,
   runJob: (pool, message, { signal, getMessages }) =>
     pickUpExpressions(pool, message.text, {
       priority: "low",

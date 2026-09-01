@@ -72,6 +72,50 @@ describe("classifyDetectedLanguage(かな規則)", () => {
   });
 });
 
+describe("classifyDetectedLanguage(漢字規則)", () => {
+  // Language Detector は「太陽神」のような漢字だけの発言を zh と判定し、候補列の ja も救済しきい値に届かないことがある(実配信で観測)。
+  // chat-sensei では中国語を学ぶ言語・解説言語に選べないため、漢字を含み zh と判定された発言は日本語が設定にあれば日本語とみなす
+  it("漢字を含む本文が zh と判定され、日本語が学ぶ言語にあれば日本語として処理する", () => {
+    const result = classifyDetectedLanguage(
+      "太陽神",
+      [{ detectedLanguage: "zh-Hans", confidence: 0.9 }, { detectedLanguage: "ja", confidence: 0.03 }],
+      { learningLangs: ["ja"], explainLang: "en" },
+    );
+
+    expect(result).toEqual({ kind: "learning", lang: "ja" });
+  });
+
+  it("漢字を含む本文が zh と判定され、日本語が解説言語なら「同じ言語」にする", () => {
+    const result = classifyDetectedLanguage(
+      "太陽神〜！！",
+      [{ detectedLanguage: "zh-Hant", confidence: 0.95 }],
+      英語を学ぶ日本語話者の設定,
+    );
+
+    expect(result).toEqual({ kind: "same-as-explanation" });
+  });
+
+  it("日本語が学ぶ言語にも解説言語にも無い設定では、zh 判定をそのまま「対象外(zh)」にする", () => {
+    const result = classifyDetectedLanguage(
+      "太陽神",
+      [{ detectedLanguage: "zh-Hans", confidence: 0.9 }],
+      { learningLangs: ["en"], explainLang: "es" },
+    );
+
+    expect(result).toEqual({ kind: "other", detectedLanguage: "zh" });
+  });
+
+  it("漢字を含まない本文の zh 判定には適用しない", () => {
+    const result = classifyDetectedLanguage(
+      "abc",
+      [{ detectedLanguage: "zh-Hans", confidence: 0.9 }],
+      英語を学ぶ日本語話者の設定,
+    );
+
+    expect(result).toEqual({ kind: "other", detectedLanguage: "zh" });
+  });
+});
+
 describe("classifyDetectedLanguage", () => {
   it("最上位候補が学ぶ言語なら、その言語で処理する", () => {
     const result = classifyDetectedLanguage(
@@ -112,11 +156,11 @@ describe("classifyDetectedLanguage", () => {
     expect(result).toEqual({ kind: "learning", lang: "en" });
   });
 
-  it("対象外の言語の発言に学ぶ言語がごく低い信頼度で混ざっていても採用しない(実測: 牛逼 = zh-Hans 0.907 / ja 0.022、muito bom = pt 0.982 / en 0.006)", () => {
-    const 中国語 = classifyDetectedLanguage(
-      "牛逼",
-      [{ detectedLanguage: "zh-Hans", confidence: 0.907 }, { detectedLanguage: "ja", confidence: 0.022 }],
-      { learningLangs: ["ja"], explainLang: "en" },
+  it("対象外の言語の発言に学ぶ言語がごく低い信頼度で混ざっていても採用しない(実測: hallo alles goed = nl 0.809 / en 0.048、muito bom = pt 0.982 / en 0.006)", () => {
+    const オランダ語 = classifyDetectedLanguage(
+      "hallo alles goed",
+      [{ detectedLanguage: "nl", confidence: 0.809 }, { detectedLanguage: "en", confidence: 0.048 }],
+      英語を学ぶ日本語話者の設定,
     );
     const ポルトガル語 = classifyDetectedLanguage(
       "muito bom",
@@ -124,7 +168,7 @@ describe("classifyDetectedLanguage", () => {
       英語を学ぶ日本語話者の設定,
     );
 
-    expect(中国語).toEqual({ kind: "other", detectedLanguage: "zh" });
+    expect(オランダ語).toEqual({ kind: "other", detectedLanguage: "nl" });
     expect(ポルトガル語).toEqual({ kind: "other", detectedLanguage: "pt" });
   });
 

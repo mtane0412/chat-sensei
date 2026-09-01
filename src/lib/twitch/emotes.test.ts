@@ -10,6 +10,7 @@ import {
   buildEmoteImageUrl,
   extractPlainText,
   isEmoteOnlyMessage,
+  isTextlessMessage,
   maskEmotesWithPlaceholders,
   restoreEmotesFromPlaceholders,
   splitMessageIntoSegments,
@@ -228,5 +229,27 @@ describe("extractPlainText", () => {
 
   it("emote だけの発言では空文字を返す", () => {
     expect(extractPlainText("Kappa", [{ id: "25", start: 0, end: 4 }])).toBe("");
+  });
+});
+
+describe("isTextlessMessage", () => {
+  it("Unicode 絵文字だけの発言は訳す文字が無いので true(言語判定に回すと zh や km になってしまうため)", () => {
+    expect(isTextlessMessage("🦍", [])).toBe(true);
+    expect(isTextlessMessage("☀️ 🌞", [])).toBe(true);
+  });
+
+  it("Twitch emote だけの発言も true", () => {
+    expect(isTextlessMessage("Kappa", [{ id: "25", start: 0, end: 4 }])).toBe(true);
+  });
+
+  it("記号や数字だけの発言も true", () => {
+    expect(isTextlessMessage("!!!", [])).toBe(true);
+    expect(isTextlessMessage("777", [])).toBe(true);
+  });
+
+  it("文字(かな・漢字・アルファベット)を含む発言は false", () => {
+    expect(isTextlessMessage("🦍ありがとー！", [])).toBe(false);
+    expect(isTextlessMessage("太陽神", [])).toBe(false);
+    expect(isTextlessMessage("gg Kappa", [{ id: "25", start: 3, end: 7 }])).toBe(false);
   });
 });
