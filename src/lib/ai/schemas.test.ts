@@ -8,9 +8,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildExplanationResponseConstraint,
-  buildTriageResponseConstraint,
   explanationSchema,
-  triageResultSchema,
 } from "./schemas";
 
 describe("explanationSchema", () => {
@@ -75,32 +73,6 @@ describe("buildExplanationResponseConstraint", () => {
 
   it("メタ情報の$schemaフィールドは含まない(Prompt APIの想定外のため)", () => {
     const constraint = buildExplanationResponseConstraint() as Record<string, unknown>;
-
-    expect(constraint.$schema).toBeUndefined();
-  });
-});
-
-describe("triageResultSchema", () => {
-  it("真偽値をパースできる", () => {
-    expect(triageResultSchema.parse(true)).toBe(true);
-    expect(triageResultSchema.parse(false)).toBe(false);
-  });
-
-  it("真偽値以外はパースエラーになる", () => {
-    expect(() => triageResultSchema.parse("true")).toThrow();
-    expect(() => triageResultSchema.parse(1)).toThrow();
-  });
-});
-
-describe("buildTriageResponseConstraint", () => {
-  it("真偽値のみを許すJSON Schemaオブジェクトを返す", () => {
-    const constraint = buildTriageResponseConstraint();
-
-    expect(constraint).toEqual({ type: "boolean" });
-  });
-
-  it("メタ情報の$schemaフィールドは含まない(Prompt APIの想定外のため)", () => {
-    const constraint = buildTriageResponseConstraint() as Record<string, unknown>;
 
     expect(constraint.$schema).toBeUndefined();
   });

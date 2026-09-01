@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildExplainSystemPrompt,
   buildExplainUserPrompt,
-  buildTriageUserPrompt,
   SUPPORTED_LANGUAGES,
   type SupportedLanguage,
 } from "./prompts";
@@ -105,32 +104,5 @@ describe("buildExplainUserPrompt", () => {
     const prompt = buildExplainUserPrompt("gg no re chat");
 
     expect(prompt).toContain("gg no re chat");
-  });
-});
-
-describe("buildTriageUserPrompt", () => {
-  it("チャット本文をそのまま埋め込んだユーザープロンプトを組み立てる", () => {
-    const prompt = buildTriageUserPrompt("gg no re chat");
-
-    expect(prompt).toContain("gg no re chat");
-  });
-
-  it("真偽値での回答を明示的に指示する", () => {
-    const prompt = buildTriageUserPrompt("gg no re chat");
-
-    expect(prompt).toMatch(/true/i);
-    expect(prompt).toMatch(/false/i);
-  });
-
-  it("@メンションのみで実質的な内容がない発言はfalseと判定する基準を明示する", () => {
-    const prompt = buildTriageUserPrompt("@kitano85 hiiii :)");
-
-    expect(prompt).toMatch(/@mention|mention/i);
-  });
-
-  it("代名詞・前置詞・数字など基礎語彙のみの発言はfalseと判定する基準を明示する", () => {
-    const prompt = buildTriageUserPrompt("I spent 300 in skincare last time");
-
-    expect(prompt).toMatch(/basic vocabulary|beginner already knows/i);
   });
 });

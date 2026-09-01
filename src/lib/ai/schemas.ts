@@ -43,19 +43,3 @@ export function buildExplanationResponseConstraint(): Record<string, unknown> {
   delete jsonSchema.$schema;
   return jsonSchema;
 }
-
-/**
- * triage(自動抽出パイプラインにおける学習価値判定)の応答スキーマ。
- * `explainChatMessage` と同様、`JSON.parse` した Prompt API の応答をここで検証する。
- */
-export const triageResultSchema = z.boolean();
-
-/**
- * triage用の `responseConstraint`(真偽値のみを許すJSON Schema)を組み立てる。
- * `buildExplanationResponseConstraint` と同じく `$schema` メタ情報は取り除く。
- */
-export function buildTriageResponseConstraint(): Record<string, unknown> {
-  const jsonSchema: Record<string, unknown> = { ...z.toJSONSchema(triageResultSchema) };
-  delete jsonSchema.$schema;
-  return jsonSchema;
-}

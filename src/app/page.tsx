@@ -1,48 +1,28 @@
 /**
- * ホームページ(/) = ライブチャット画面。
+ * ホームページ(/) = 3カラムのチャット閲覧画面。
  *
- * Twitch チャンネル名を入力して匿名接続し、流れてくる発言を
- * 表示名の色・emote画像付きでリアルタイム表示する。
- * サーバーへの送信は行わず、`irc-client.ts` が直接ブラウザから
- * `wss://irc-ws.chat.twitch.tv` へ接続する。
+ * Twitch チャンネル名を入力して匿名接続し、流れてくる発言を3列で表示する。
  *
- * 発言をクリックすると、設定済みの言語ペアで Prompt API(Gemini Nano)による
- * 構造化解説をダイアログ表示する(手動ピック)。Prompt API が利用できない
- * 環境では、理由を明示したうえで生成を行わない(暗黙のフォールバックはしない)。
+ * - 左列「生IRC」: 受信した発言をそのまま(表示名の色・emote画像付きで)表示する
+ * - 中央列「翻訳」: 発言の翻訳を表示する(生成処理は未実装。骨組みのみ)
+ * - 右列「解説」: 発言の解説を必要に応じて生成して表示する(生成処理は未実装。骨組みのみ)
  *
- * 自動抽出(バックグラウンド)が生成した候補は、チャットログの横に常設の
- * `CandidatePanel` としてリアルタイムに表示する(`candidates` テーブルを
- * Dexie の liveQuery で購読するため、手動での再取得は不要)。
+ * 翻訳列・解説列は学習のためデフォルトでぼかして表示し、それぞれのトグルで解除できる。
+ * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が保持する。
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { useCallback, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments } from "@/lib/twitch/emotes";
-import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
-import { describeDiagnosis } from "@/lib/ai/describeDiagnosis";
-import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
-import { createExplainBaseSessionFactory, explainChatMessage } from "@/lib/ai/explain";
-import { createSessionPool, type SessionPool } from "@/lib/ai/session-pool";
-import { createAutoExtractionPipeline, type AutoExtractionPipeline } from "@/lib/ai/auto-extraction";
-import type { ExplanationItem, ExplanationResult } from "@/lib/ai/schemas";
-import { loadSettings } from "@/lib/settings";
-import { createCard } from "@/lib/db/cards";
-import { acceptCandidate, rejectCandidate, subscribeToCandidates } from "@/lib/db/candidates";
-import type { Candidate } from "@/lib/db/schema";
-import { subscribeToChatMessages, useChatConnectionStore } from "@/store/chat-connection";
-import { TwitchEmbedPlayer } from "@/components/twitch-embed-player";
-import { CandidatePanel } from "@/components/candidate-panel";
+import { useChatConnectionStore } from "@/store/chat-connection";
 
 const CONNECTION_STATE_LABEL: Record<ConnectionState, string> = {
   idle: "待機中",
@@ -57,389 +37,109 @@ function isConnectingOrConnected(state: ConnectionState): boolean {
   return state === "connecting" || state === "open" || state === "reconnecting";
 }
 
-/** 発言クリックから開く解説ダイアログの状態 */
-type ExplanationDialogState =
-  | { status: "idle" }
-  | { status: "unavailable"; sourceMessage: TwitchChatMessage; reason: string }
-  | { status: "loading"; sourceMessage: TwitchChatMessage }
-  | { status: "success"; sourceMessage: TwitchChatMessage; result: ExplanationResult }
-  | { status: "error"; sourceMessage: TwitchChatMessage; errorMessage: string };
-
 export default function Home() {
   const [channelInput, setChannelInput] = useState("");
-  // 接続状態・受信済み発言はページ遷移(コンポーネントのアンマウント)をまたいで
-  // 保持する必要があるため、コンポーネントローカルではなくモジュールスコープの
-  // ストア(chat-connection.ts)で管理する。詳細はストアのコメントを参照。
   const connectionState = useChatConnectionStore((state) => state.connectionState);
   const messages = useChatConnectionStore((state) => state.messages);
-  const channel = useChatConnectionStore((state) => state.channel);
   const connect = useChatConnectionStore((state) => state.connect);
   const disconnect = useChatConnectionStore((state) => state.disconnect);
 
-  // --- AI解説(手動ピック)・自動抽出(バックグラウンド)で共有する参照 ---
-  const [aiDiagnosis, setAiDiagnosis] = useState<EnvironmentDiagnosis | null>(null);
-  // 下記のsubscribeToChatMessagesのリスナーはマウント時に1度だけ生成されるクロージャのため、
-  // 最新のaiDiagnosisをrefにも同期しておき、自動抽出の実行可否をそこから判定する。
-  const aiDiagnosisRef = useRef<EnvironmentDiagnosis | null>(null);
-  const sessionPoolRef = useRef<SessionPool | null>(null);
-  const autoExtractionPipelineRef = useRef<AutoExtractionPipeline | null>(null);
-  const autoExtractionAbortControllerRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    aiDiagnosisRef.current = aiDiagnosis;
-  }, [aiDiagnosis]);
-
-  useEffect(() => {
-    runBrowserDiagnosis()
-      .then((diagnosis) => setAiDiagnosis(diagnosis))
-      .catch(() => setAiDiagnosis(null));
-  }, []);
-
-  // セッションプールは設定(言語ペア)を使って初回利用時に一度だけ生成する。
-  // 手動ピック(explain, high優先度)と自動抽出(triage/explain, low優先度)はこのプールを共有し、
-  // Prompt APIの呼び出しを常に直列化する。
-  const getSessionPool = useCallback((): SessionPool => {
-    if (!sessionPoolRef.current) {
-      const { settings } = loadSettings();
-      sessionPoolRef.current = createSessionPool({
-        createBaseSession: createExplainBaseSessionFactory(settings.targetLang, settings.explainLang),
-      });
-    }
-    return sessionPoolRef.current;
-  }, []);
-
-  const getAutoExtractionPipeline = useCallback((): AutoExtractionPipeline => {
-    if (!autoExtractionPipelineRef.current) {
-      autoExtractionPipelineRef.current = createAutoExtractionPipeline({ sessionPool: getSessionPool() });
-    }
-    return autoExtractionPipelineRef.current;
-  }, [getSessionPool]);
-
-  // 受信した発言(privmsg)を購読し、自動抽出パイプラインに投入する。
-  // 接続そのものはストア側で維持されるため、ここでは「表示中の画面がHomeである間だけ」
-  // 自動抽出を行う(refに保持したaiDiagnosisRef/設定は、呼び出し時点で最新の値を参照する)。
-  useEffect(() => {
-    const unsubscribe = subscribeToChatMessages((message) => {
-      const { settings } = loadSettings();
-      if (settings.autoExtraction.enabled && aiDiagnosisRef.current?.overallReady) {
-        getAutoExtractionPipeline()
-          .processMessage(message, {
-            strictness: settings.autoExtraction.strictness,
-            targetLang: settings.targetLang,
-            explainLang: settings.explainLang,
-            signal: autoExtractionAbortControllerRef.current?.signal,
-          })
-          .catch(() => {
-            // 自動抽出はベストエフォートのバックグラウンド処理のため、
-            // 個別発言の失敗(Prompt APIエラー・中断)はUIに通知せず読み捨てる
-          });
-      }
-    });
-    return unsubscribe;
-  }, [getAutoExtractionPipeline]);
-
-  // --- 自動抽出候補のリアルタイムパネル ---
-  // 自動抽出パイプラインが`candidates`テーブルに書き込むと、liveQuery経由でここが更新される。
-  // 手動で一覧を再取得する必要はなく、採用/却下によるテーブル変更も同じ経路で自動反映される。
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-
-  useEffect(() => {
-    const unsubscribe = subscribeToCandidates((next) => setCandidates(next));
-    return unsubscribe;
-  }, []);
-
-  const handleAcceptCandidate = useCallback((id: number) => {
-    acceptCandidate(id);
-  }, []);
-
-  const handleRejectCandidate = useCallback((id: number) => {
-    rejectCandidate(id);
-  }, []);
+  // 翻訳列・解説列のぼかし。学習のため初期状態はどちらもぼかす
+  const [translationBlurred, setTranslationBlurred] = useState(true);
+  const [explanationBlurred, setExplanationBlurred] = useState(true);
 
   const handleConnect = useCallback(() => {
     const channel = channelInput.trim();
     if (!channel) return;
-    // チャンネルを切り替えるので、前のチャンネルに紐づく自動抽出ジョブを中断する
-    autoExtractionAbortControllerRef.current?.abort();
-    autoExtractionAbortControllerRef.current = new AbortController();
     connect(channel);
   }, [channelInput, connect]);
 
-  const handleDisconnect = useCallback(() => {
-    autoExtractionAbortControllerRef.current?.abort();
-    disconnect();
-  }, [disconnect]);
-
   const connected = isConnectingOrConnected(connectionState);
 
-  // --- AI解説(手動ピック) ---
-  const explainAbortControllerRef = useRef<AbortController | null>(null);
-  const [dialogState, setDialogState] = useState<ExplanationDialogState>({ status: "idle" });
-
-  const handleMessageClick = useCallback(
-    (message: TwitchChatMessage) => {
-      // 別の発言をクリックした場合、前のジョブは中断してから新しいジョブを開始する
-      explainAbortControllerRef.current?.abort();
-      const controller = new AbortController();
-      explainAbortControllerRef.current = controller;
-
-      if (!aiDiagnosis?.overallReady) {
-        const reason = aiDiagnosis
-          ? (describeDiagnosis(aiDiagnosis).find((m) => m.id === "language-model")?.message ??
-            "Prompt API を利用できません。")
-          : "環境診断が完了していません。少し待ってから再度お試しください。";
-        setDialogState({ status: "unavailable", sourceMessage: message, reason });
-        return;
-      }
-
-      setDialogState({ status: "loading", sourceMessage: message });
-      explainChatMessage(getSessionPool(), message.text, { priority: "high", signal: controller.signal })
-        .then((result) => {
-          if (controller.signal.aborted) return;
-          setDialogState({ status: "success", sourceMessage: message, result });
-        })
-        .catch((error: unknown) => {
-          if (controller.signal.aborted) return;
-          setDialogState({
-            status: "error",
-            sourceMessage: message,
-            errorMessage: error instanceof Error ? error.message : String(error),
-          });
-        });
-    },
-    [aiDiagnosis, getSessionPool],
-  );
-
-  const handleDialogOpenChange = useCallback((open: boolean) => {
-    if (!open) {
-      explainAbortControllerRef.current?.abort();
-      setDialogState({ status: "idle" });
-    }
-  }, []);
-
-  // 解説内の語句をカード化(単語帳に保存)する。言語ペアはカード化時点の設定を保存する。
-  const handleSaveCard = useCallback(async (item: ExplanationItem, sourceMessage: TwitchChatMessage) => {
-    const { settings } = loadSettings();
-    await createCard({
-      term: item.term,
-      kind: item.kind,
-      meaning: item.meaning,
-      note: item.note,
-      sourceMessageText: sourceMessage.text,
-      sourceChannel: sourceMessage.channel,
-      sourceAuthor: sourceMessage.displayName,
-      targetLang: settings.targetLang,
-      explainLang: settings.explainLang,
-      tags: [],
-    });
-  }, []);
-
   return (
-    <div
-      className={cn(
-        "flex w-full flex-1 justify-center transition-[padding] duration-150",
-        // 解説パネル(幅24rem = max-w-sm、下記Dialogのwidth指定と合わせる)が画面右に固定表示される間、
-        // この外側コンテナに右パディングを付け、中央寄せの基準を左へ寄せる。本文ボックス(max-w-3xl)
-        // 自体の幅はここでは変えないため、余白に十分な広さがあるビューポートでは本文が不必要に
-        // 圧縮されず、パネルの手前まで実寸で表示される(幅が足りない場合のみ w-full により自然に縮む)。
-        // 狭い画面(md未満)ではパネルが画面全幅のオーバーレイになるため、余白確保は不要。
-        dialogState.status !== "idle" && "md:pr-96",
-      )}
-    >
-      <div
-        className={cn(
-          "flex w-full max-w-3xl flex-col gap-4 p-6 transition-[max-width] duration-150",
-          // 自動抽出候補パネル(幅lg:20rem)をチャットログの横に並べる余白を確保するため、
-          // 候補が1件以上ある間だけ広い画面幅(lg以上)でコンテナ全体を広げる。
-          candidates.length > 0 && "lg:max-w-5xl",
-        )}
-      >
-        <Card>
-          <CardHeader>
-            <CardTitle>chat-sensei</CardTitle>
-            <CardDescription>
-              Twitch のチャンネル名を入力してライブチャットに接続します(ログイン不要)。発言をクリックするとAI解説が表示されます。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="channel-input">チャンネル名</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="channel-input"
-                  placeholder="例: zackrawrr"
-                  value={channelInput}
-                  onChange={(e) => setChannelInput(e.target.value)}
-                  disabled={connected}
-                />
-                {connected ? (
-                  <Button onClick={handleDisconnect} variant="outline">
-                    切断する
-                  </Button>
-                ) : (
-                  <Button onClick={handleConnect} disabled={channelInput.trim().length === 0}>
-                    接続する
-                  </Button>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground" role="status">
-                状態: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {channel && (
-          <Card className="overflow-hidden p-0">
-            <TwitchEmbedPlayer channel={channel} />
-          </Card>
-        )}
-
-        <div className="flex flex-1 flex-col gap-4 lg:flex-row">
-          <Card className="flex flex-1 flex-col overflow-hidden">
-            <ScrollArea className="h-[60vh]">
-              <ol className="flex flex-col gap-1 p-4">
-                {messages.map((message) => (
-                  <ChatMessageRow
-                    key={message.id ?? `${message.username}-${message.timestampMs}`}
-                    message={message}
-                    onSelect={handleMessageClick}
-                  />
-                ))}
-              </ol>
-            </ScrollArea>
-          </Card>
-
-          <CandidatePanel candidates={candidates} onAccept={handleAcceptCandidate} onReject={handleRejectCandidate} />
-        </div>
-      </div>
-
-      {/*
-        解説パネルは非モーダル(modal=false)にする。base-ui Dialogはmodal時、
-        パネル外の要素(配信embedのiframeを含む)にinert/aria-hidden="true"を付与するため、
-        中央モーダルのままだとパネルを開くたびに配信embedの再生が止まってしまう。
-        非モーダル化に加え、中央オーバーレイではなく画面右側に固定表示するパネルUIへ変更することで、
-        パネルを開いたままプレイヤー・チャットログの両方を操作できるようにする。
-      */}
-      <Dialog open={dialogState.status !== "idle"} onOpenChange={handleDialogOpenChange} modal={false}>
-        <DialogContent
-          showOverlay={false}
-          className="inset-y-0 right-0 left-auto h-dvh w-full max-w-none sm:max-w-full md:max-w-sm translate-x-0 translate-y-0 grid-rows-[auto_1fr] gap-4 overflow-y-auto rounded-none rounded-l-xl border-l shadow-lg data-open:slide-in-from-right data-closed:slide-out-to-right"
-        >
-          <DialogHeader>
-            <DialogTitle>チャット解説</DialogTitle>
-            {dialogState.status !== "idle" && (
-              <DialogDescription>元の発言: {dialogState.sourceMessage.text}</DialogDescription>
-            )}
-          </DialogHeader>
-
-          {dialogState.status === "loading" && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-              解説を生成中...
-            </div>
-          )}
-
-          {dialogState.status === "unavailable" && (
-            <p className="text-sm text-muted-foreground">{dialogState.reason}</p>
-          )}
-
-          {dialogState.status === "error" && (
-            <p className="text-sm text-destructive">{dialogState.errorMessage}</p>
-          )}
-
-          {dialogState.status === "success" && (
-            <ExplanationResultView
-              result={dialogState.result}
-              sourceMessage={dialogState.sourceMessage}
-              onSaveCard={handleSaveCard}
+    <div className="flex w-full flex-1 flex-col gap-4 p-6">
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="channel-input">チャンネル名</Label>
+          <div className="flex gap-2">
+            <Input
+              id="channel-input"
+              placeholder="例: zackrawrr"
+              value={channelInput}
+              onChange={(e) => setChannelInput(e.target.value)}
+              disabled={connected}
             />
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function ExplanationResultView({
-  result,
-  sourceMessage,
-  onSaveCard,
-}: {
-  result: ExplanationResult;
-  sourceMessage: TwitchChatMessage;
-  onSaveCard: (item: ExplanationItem, sourceMessage: TwitchChatMessage) => Promise<void>;
-}) {
-  // 項目インデックスごとのカード化状態。保存開始と同時に"pending"にしてボタンを無効化し、
-  // 連打による重複保存を防ぐ(CodeRabbit指摘対応)。
-  const [cardStatuses, setCardStatuses] = useState<Record<number, "pending" | "saved" | "error">>({});
-
-  const handleSaveCardClick = useCallback(
-    async (item: ExplanationItem, index: number) => {
-      setCardStatuses((prev) => ({ ...prev, [index]: "pending" }));
-      try {
-        await onSaveCard(item, sourceMessage);
-        setCardStatuses((prev) => ({ ...prev, [index]: "saved" }));
-      } catch {
-        setCardStatuses((prev) => ({ ...prev, [index]: "error" }));
-      }
-    },
-    [onSaveCard, sourceMessage],
-  );
-
-  return (
-    <div className="flex flex-col gap-3 text-sm">
-      <div>
-        <p className="font-medium">訳</p>
-        <p className="text-muted-foreground">{result.translation}</p>
-      </div>
-      <div>
-        <p className="font-medium">直訳</p>
-        <p className="text-muted-foreground">{result.literal}</p>
-      </div>
-      {result.items.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <p className="font-medium">注目ポイント</p>
-          {result.items.map((item, index) => {
-            const status = cardStatuses[index];
-            return (
-              <div key={index} className="rounded-md border p-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold">{item.term}</span>
-                    <Badge variant="secondary">{item.kind}</Badge>
-                  </div>
-                  <Button
-                    onClick={() => handleSaveCardClick(item, index)}
-                    disabled={status === "pending" || status === "saved"}
-                    size="sm"
-                    variant="outline"
-                  >
-                    {status === "saved" && "保存済み"}
-                    {status === "pending" && "保存中..."}
-                    {status === "error" && "再試行"}
-                    {status === undefined && "カード化"}
-                  </Button>
-                </div>
-                <p className="text-muted-foreground">{item.meaning}</p>
-                <p className="text-xs text-muted-foreground">{item.note}</p>
-                {status === "error" && <p className="text-xs text-destructive">カードの保存に失敗しました</p>}
-              </div>
-            );
-          })}
+            {connected ? (
+              <Button onClick={disconnect} variant="outline">
+                切断する
+              </Button>
+            ) : (
+              <Button onClick={handleConnect} disabled={channelInput.trim().length === 0}>
+                接続する
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground" role="status">
+            状態: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
+          </p>
         </div>
-      )}
+
+        <div className="flex items-center gap-2">
+          <Switch
+            id="translation-blur"
+            checked={translationBlurred}
+            onCheckedChange={setTranslationBlurred}
+            aria-label="翻訳をぼかす"
+          />
+          <Label htmlFor="translation-blur">翻訳をぼかす</Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id="explanation-blur"
+            checked={explanationBlurred}
+            onCheckedChange={setExplanationBlurred}
+            aria-label="解説をぼかす"
+          />
+          <Label htmlFor="explanation-blur">解説をぼかす</Label>
+        </div>
+      </div>
+
+      <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-3">
+        <Column title="生IRC" blurred={false}>
+          <ol className="flex flex-col gap-1 p-4">
+            {messages.map((message) => (
+              <ChatMessageRow key={message.id ?? `${message.username}-${message.timestampMs}`} message={message} />
+            ))}
+          </ol>
+        </Column>
+        <Column title="翻訳" blurred={translationBlurred}>
+          <p className="p-4 text-sm text-muted-foreground">翻訳は未実装です。</p>
+        </Column>
+        <Column title="解説" blurred={explanationBlurred}>
+          <p className="p-4 text-sm text-muted-foreground">解説は未実装です。</p>
+        </Column>
+      </div>
     </div>
   );
 }
 
-function ChatMessageRow({
-  message,
-  onSelect,
-}: {
-  message: TwitchChatMessage;
-  onSelect: (message: TwitchChatMessage) => void;
-}) {
+/** 3カラムのうちの1列。`blurred` が true のあいだ本文をぼかして表示する */
+function Column({ title, blurred, children }: { title: string; blurred: boolean; children: React.ReactNode }) {
+  return (
+    <section
+      aria-label={title}
+      data-blurred={blurred}
+      className="flex flex-col overflow-hidden rounded-xl border bg-card"
+    >
+      <h2 className="border-b px-4 py-2 text-sm font-semibold">{title}</h2>
+      <ScrollArea className="h-[70vh]">
+        <div className={cn("transition-[filter]", blurred && "blur-sm select-none")}>{children}</div>
+      </ScrollArea>
+    </section>
+  );
+}
+
+function ChatMessageRow({ message }: { message: TwitchChatMessage }) {
   const segments = useMemo(
     () => splitMessageIntoSegments(message.text, message.emotes),
     [message.text, message.emotes],
@@ -447,29 +147,23 @@ function ChatMessageRow({
 
   return (
     <li className="text-sm leading-relaxed break-words">
-      <button
-        type="button"
-        onClick={() => onSelect(message)}
-        className="w-full rounded px-1 text-left hover:bg-muted/50"
-      >
-        <span className="font-semibold" style={message.color ? { color: message.color } : undefined}>
-          {message.displayName}
-        </span>
-        <span>: </span>
-        {segments.map((segment, index) =>
-          segment.type === "text" ? (
-            <span key={index}>{segment.text}</span>
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element -- Twitch CDNの外部画像のためnext/imageのドメイン許可設定は不要な単純imgで表示する
-            <img
-              key={index}
-              src={buildEmoteImageUrl(segment.id)}
-              alt={segment.text}
-              className="mx-0.5 inline-block h-6 align-text-bottom"
-            />
-          ),
-        )}
-      </button>
+      <span className="font-semibold" style={message.color ? { color: message.color } : undefined}>
+        {message.displayName}
+      </span>
+      <span>: </span>
+      {segments.map((segment, index) =>
+        segment.type === "text" ? (
+          <span key={index}>{segment.text}</span>
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element -- Twitch CDNの外部画像のためnext/imageのドメイン許可設定は不要な単純imgで表示する
+          <img
+            key={index}
+            src={buildEmoteImageUrl(segment.id)}
+            alt={segment.text}
+            className="mx-0.5 inline-block h-6 align-text-bottom"
+          />
+        ),
+      )}
     </li>
   );
 }

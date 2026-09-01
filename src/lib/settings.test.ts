@@ -24,7 +24,6 @@ describe("loadSettings", () => {
     saveSettings({
       targetLang: "es",
       explainLang: "ja",
-      autoExtraction: { enabled: false, strictness: "normal" },
     });
 
     const result = loadSettings();
@@ -33,7 +32,6 @@ describe("loadSettings", () => {
       settings: {
         targetLang: "es",
         explainLang: "ja",
-        autoExtraction: { enabled: false, strictness: "normal" },
       },
       wasCorrupted: false,
     });
@@ -75,7 +73,6 @@ describe("clearSettings", () => {
     saveSettings({
       targetLang: "es",
       explainLang: "ja",
-      autoExtraction: { enabled: true, strictness: "strict" },
     });
 
     clearSettings();
@@ -91,54 +88,7 @@ describe("saveSettings", () => {
       saveSettings({
         targetLang: "en",
         explainLang: "en",
-        autoExtraction: { enabled: false, strictness: "normal" },
       }),
     ).toThrow();
-  });
-});
-
-describe("自動抽出設定(autoExtraction)", () => {
-  it("保存されたデータが無い場合はデフォルトで無効(strictness: normal)を返す", () => {
-    const result = loadSettings();
-
-    expect(result.settings.autoExtraction).toEqual({ enabled: false, strictness: "normal" });
-  });
-
-  it("autoExtractionを含まない旧バージョンの保存データは、後方互換としてデフォルト値を補って読み込む(壊れているとは扱わない)", () => {
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ targetLang: "es", explainLang: "ja" }));
-
-    const result = loadSettings();
-
-    expect(result).toEqual({
-      settings: {
-        targetLang: "es",
-        explainLang: "ja",
-        autoExtraction: { enabled: false, strictness: "normal" },
-      },
-      wasCorrupted: false,
-    });
-  });
-
-  it("autoExtractionを含む設定を保存・復元できる", () => {
-    saveSettings({
-      targetLang: "en",
-      explainLang: "ja",
-      autoExtraction: { enabled: true, strictness: "strict" },
-    });
-
-    const result = loadSettings();
-
-    expect(result.settings.autoExtraction).toEqual({ enabled: true, strictness: "strict" });
-  });
-
-  it("strictnessが対応値以外の場合はデフォルト設定に戻す", () => {
-    window.localStorage.setItem(
-      SETTINGS_STORAGE_KEY,
-      JSON.stringify({ targetLang: "en", explainLang: "ja", autoExtraction: { enabled: true, strictness: "extreme" } }),
-    );
-
-    const result = loadSettings();
-
-    expect(result).toEqual({ settings: DEFAULT_SETTINGS, wasCorrupted: true });
   });
 });

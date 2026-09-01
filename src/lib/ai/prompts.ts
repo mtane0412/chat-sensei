@@ -55,14 +55,3 @@ export function buildExplainSystemPrompt(targetLang: SupportedLanguage, explainL
 export function buildExplainUserPrompt(chatMessageText: string): string {
   return `Chat message to analyze: "${chatMessageText}"`;
 }
-
-/**
- * 自動抽出パイプラインのtriage(学習価値判定)用ユーザープロンプトを組み立てる。
- * triage は explain と同じベースセッション(1セッションのみという設計)を共有するため、
- * システムプロンプトを切り替えず、このユーザープロンプト内でタスクを完結させる。
- * `responseConstraint` が真偽値を強制するため出力形式自体は壊れないが、
- * 判定基準を明示することで真偽の精度を上げる狙いがある。
- */
-export function buildTriageUserPrompt(chatMessageText: string): string {
-  return `You will judge ONE chat message that actually appeared in a live Twitch stream. Decide whether it contains something worth teaching a language learner, such as slang, an abbreviation, an idiom, a notable emote usage, or a notable grammar point. Respond true only if the message contains a specific word or phrase a learner could not easily guess from basic vocabulary. Respond false if it is just plain conversation, a greeting, a simple reaction, noise with nothing new to learn, a message that is only an @mention of another user with no other substantial content, or a message made up only of basic vocabulary a beginner already knows (pronouns, simple prepositions, numbers, common verbs). Chat message to judge: "${chatMessageText}"`;
-}

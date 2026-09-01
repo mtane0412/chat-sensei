@@ -12,7 +12,7 @@ import { buildExplanationResponseConstraint, explanationSchema, type Explanation
 import type { JobPriority, PromptSessionLike, SessionPool } from "./session-pool";
 
 export interface ExplainOptions {
-  /** 手動ピック(既定: high)か自動抽出(low)か */
+  /** 利用者の明示的な操作(既定: high)かバックグラウンド生成(low)か */
   priority?: JobPriority;
   signal?: AbortSignal;
 }
