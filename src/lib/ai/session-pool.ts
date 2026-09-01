@@ -100,6 +100,10 @@ function abortReason(signal: AbortSignal): unknown {
 
 export function createPromptJobQueue(options: PromptJobQueueOptions = {}): PromptJobQueue {
   const maxLowPriorityQueueLength = options.maxLowPriorityQueueLength ?? DEFAULT_MAX_LOW_PRIORITY_QUEUE_LENGTH;
+  // 負数・小数・NaN・Infinity は溢れ判定(`lowQueue.length > 上限`)の意味が壊れるため、暗黙に丸めず生成時点で失敗させる
+  if (!Number.isInteger(maxLowPriorityQueueLength) || maxLowPriorityQueueLength < 0) {
+    throw new Error(`maxLowPriorityQueueLength は 0 以上の整数である必要があります: ${maxLowPriorityQueueLength}`);
+  }
 
   const highQueue: QueuedJob[] = [];
   const lowQueue: QueuedJob[] = [];

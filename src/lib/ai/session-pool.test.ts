@@ -239,6 +239,33 @@ describe("createSessionPool", () => {
   });
 });
 
+describe("createPromptJobQueue", () => {
+  it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "maxLowPriorityQueueLength に非負整数以外(%s)を渡した場合は生成時点で例外を投げる(Fail-Fast)",
+    (invalid) => {
+      expect(() => createPromptJobQueue({ maxLowPriorityQueueLength: invalid })).toThrow(/maxLowPriorityQueueLength/);
+    },
+  );
+
+  it("maxLowPriorityQueueLength に 0 を渡した場合は、待機中の低優先度ジョブをすべて破棄する", async () => {
+    const log: string[] = [];
+    const pool = createPool(async () => createFakeSession(log, "base"), createPromptJobQueue({ maxLowPriorityQueueLength: 0 }));
+    const blocker = createDeferred<string>();
+
+    const pBlocking = pool.enqueue("high", async () => {
+      await blocker.promise;
+      return "blocking done";
+    });
+    await Promise.resolve();
+
+    const pLow = pool.enqueue("low", async () => "low");
+    await expect(pLow).rejects.toBeInstanceOf(LowPriorityQueueOverflowError);
+
+    blocker.resolve("released");
+    expect(await pBlocking).toBe("blocking done");
+  });
+});
+
 /**
  * issue #23: 翻訳用・Pick up 用のようにベースセッション(システムプロンプト)が異なるプールでも、
  * 同じキューを共有していれば Gemini Nano への呼び出しはアプリ全体で常に 1 つずつになること。
