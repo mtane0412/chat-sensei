@@ -176,8 +176,8 @@ describe("Home(翻訳列)", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言, サンプル発言2] });
     useTranslationStore.setState({
       entries: {
-        "msg-1": { status: "done", translation: "ナイスゲーム、再戦なし、チャット" },
-        "msg-2": { status: "done", translation: "これはマジでそう" },
+        "msg-1": { status: "done", segments: [{ type: "text", text: "ナイスゲーム、再戦なし、チャット" }] },
+        "msg-2": { status: "done", segments: [{ type: "text", text: "これはマジでそう" }] },
       },
     });
 
@@ -190,14 +190,25 @@ describe("Home(翻訳列)", () => {
     expect(rows[1]).toHaveTextContent("これはマジでそう");
   });
 
-  it("翻訳文中に残った emote 名は、左列と同じ emote 画像として表示する(issue #28)", () => {
+  it("訳文の emote セグメントは、左列と同じ emote 画像として表示する(issue #28 → #44)", () => {
     const emote付き発言: TwitchChatMessage = {
       ...サンプル発言,
       text: "why sayuwuLul lol",
       emotes: [{ id: "emotesv2_1", start: 4, end: 12 }],
     };
     useChatConnectionStore.setState({ messages: [emote付き発言] });
-    useTranslationStore.setState({ entries: { "msg-1": { status: "done", translation: "なんでsayuwuLulそんな" } } });
+    useTranslationStore.setState({
+      entries: {
+        "msg-1": {
+          status: "done",
+          segments: [
+            { type: "text", text: "なんで" },
+            { type: "emote", id: "emotesv2_1", text: "sayuwuLul" },
+            { type: "text", text: "そんな" },
+          ],
+        },
+      },
+    });
 
     render(<Home />);
 
@@ -210,7 +221,7 @@ describe("Home(翻訳列)", () => {
 
   it("翻訳列の各行は対応する発言の ID と紐づく(行の高さを左列と揃えるための共通キー)", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    useTranslationStore.setState({ entries: { "msg-1": { status: "done", translation: "訳文" } } });
+    useTranslationStore.setState({ entries: { "msg-1": { status: "done", segments: [{ type: "text", text: "訳文" }] } } });
 
     render(<Home />);
 
@@ -277,7 +288,7 @@ describe("Home(翻訳列)", () => {
   it("翻訳をぼかしている間は翻訳列の各行がぼかされ、解除すると外れる", async () => {
     const user = userEvent.setup();
     useChatConnectionStore.setState({ messages: [サンプル発言] });
-    useTranslationStore.setState({ entries: { "msg-1": { status: "done", translation: "訳文" } } });
+    useTranslationStore.setState({ entries: { "msg-1": { status: "done", segments: [{ type: "text", text: "訳文" }] } } });
 
     render(<Home />);
 

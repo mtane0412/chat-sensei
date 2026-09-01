@@ -4,8 +4,9 @@
  * `irc-parser.ts` が emotes タグから抽出した位置情報(EmotePosition[])を、
  * (1) 実際に読み込む画像CDN URL、(2) テキスト/画像が交互に並ぶ描画用セグメント
  * に変換する。ライブチャットUIはこのセグメント列をそのまま描画すればよい。
- * また、翻訳文のように位置情報を持たないテキストに対しては、元の発言に含まれていた
- * emote 名を手がかりに同じセグメント列へ分割する(`splitTextByEmoteNames`、issue #28)。
+ * また、翻訳の LLM に emote 名を書き換えられないよう、送信前に emote をプレースホルダへ置き換え、
+ * 受信後に訳文中のプレースホルダを emote セグメントへ戻す
+ * (`maskEmotesWithPlaceholders` / `restoreEmotesFromPlaceholders`、issue #28 → #44)。
  *
  * 注意: Twitch の emotes タグの開始・終了位置は Unicode コードポイント単位である。
  * JavaScript の文字列インデックスは UTF-16 コードユニット単位のため、サロゲートペアとなる
@@ -112,48 +113,90 @@ export function isEmoteOnlyMessage(text: string, emotes: EmotePosition[]): boole
   );
 }
 
-/** 正規表現のメタ文字をエスケープする(emote 名は英数字のみだが念のため) */
+/** 正規表現のメタ文字をエスケープする */
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** LLM に渡す本文の中で emote 1 件を置き換えるプレースホルダと、元の emote(ID・名前)の対応 */
+export interface EmotePlaceholder {
+  /** 本文中に埋め込む記号トークン(例: `[[E0]]`) */
+  token: string;
+  id: string;
+  /** 元の emote 名(復元後の alt テキストに使う) */
+  text: string;
+}
+
+export interface MaskedEmoteText {
+  /** emote をすべてプレースホルダに置き換えた本文 */
+  maskedText: string;
+  /** 出現順のプレースホルダ一覧。emote が無ければ空 */
+  placeholders: EmotePlaceholder[];
+}
+
+/** 出現順の連番から、記号だけで構成され翻訳で意訳されにくいプレースホルダを作る */
+function buildEmotePlaceholderToken(index: number): string {
+  return `[[E${index}]]`;
+}
+
 /**
- * 位置情報を持たないテキスト(翻訳文など)を、既知の emote 名を手がかりにテキスト/emote セグメントに分割する。
+ * 発言本文の emote を `[[E0]]`, `[[E1]]` のようなプレースホルダに置き換える(issue #44)。
  *
- * - `knownEmotes` は元の発言の `splitMessageIntoSegments` から得た emote セグメント(名前と ID の対応)
- * - 名前の照合は大文字小文字を区別する(Twitch の emote 名は大文字小文字を区別するため)
- * - 英数字の単語の一部(例: `Kappajapan` 内の `Kappa`)は emote とみなさないが、
- *   日本語などの非英数字には隣接していてもよい(翻訳文では `なんでsayuwuLulそんな` のように連結されるため)
- * - 同じ名前が複数の ID で登録されている場合は先勝ちとする
+ * 翻訳の LLM に emote 名(`peepoWave` など)をそのまま見せると、名前の一部を意訳して書き換える
+ * (`🥺Wave` など)ことがあり、訳文から emote を復元できなくなる。emote の位置は `emotes` タグから
+ * 正確に分かるため、送信前に決定的に記号へ置き換え、受信後に `restoreEmotesFromPlaceholders` で戻す。
+ * 同じ emote が複数回現れても出現ごとに別のトークンを割り当てる(訳文中の位置をそのまま保つため)。
  */
-export function splitTextByEmoteNames(text: string, knownEmotes: Array<Pick<EmoteSegment, "id" | "text">>): MessageSegment[] {
-  if (knownEmotes.length === 0 || text === "") {
-    return [{ type: "text", text }];
+export function maskEmotesWithPlaceholders(text: string, emotes: EmotePosition[]): MaskedEmoteText {
+  const placeholders: EmotePlaceholder[] = [];
+  const maskedText = splitMessageIntoSegments(text, emotes)
+    .map((segment) => {
+      if (segment.type === "text") return segment.text;
+      const token = buildEmotePlaceholderToken(placeholders.length);
+      placeholders.push({ token, id: segment.id, text: segment.text });
+      return token;
+    })
+    .join("");
+  return { maskedText, placeholders };
+}
+
+/**
+ * 訳文中のプレースホルダを `maskEmotesWithPlaceholders` の置換表で emote セグメントに戻す(issue #44)。
+ *
+ * - 置換表に無いプレースホルダ風の文字列(LLM の創作)はテキストとして残し、黙って消さない
+ * - LLM が訳文から落としたプレースホルダは、emote 画像が失われないよう末尾に空白区切りで補う
+ *   (訳文中の正しい位置は分からないため、位置の推測はしない)
+ */
+export function restoreEmotesFromPlaceholders(translation: string, placeholders: EmotePlaceholder[]): MessageSegment[] {
+  if (placeholders.length === 0) {
+    return [{ type: "text", text: translation }];
   }
 
-  const idByName = new Map<string, string>();
-  for (const emote of knownEmotes) {
-    if (!idByName.has(emote.text)) idByName.set(emote.text, emote.id);
-  }
-  // 長い名前を先に並べ、ある emote 名が別の emote 名の接頭辞になっている場合でも長い方を優先する
-  const names = [...idByName.keys()].sort((a, b) => b.length - a.length);
-  const pattern = new RegExp(`(?<![A-Za-z0-9_])(?:${names.map(escapeRegExp).join("|")})(?![A-Za-z0-9_])`, "g");
+  const byToken = new Map(placeholders.map((placeholder) => [placeholder.token, placeholder]));
+  const pattern = new RegExp(placeholders.map((placeholder) => escapeRegExp(placeholder.token)).join("|"), "g");
 
   const segments: MessageSegment[] = [];
+  const restoredTokens = new Set<string>();
   let cursor = 0;
-  for (const match of text.matchAll(pattern)) {
-    const name = match[0];
-    const id = idByName.get(name);
-    // パターンは idByName のキーから組み立てているため必ず見つかるが、型上の未定義を Fail-Fast で弾く
-    if (id === undefined) throw new Error(`emote 名に対応する ID がありません: ${name}`);
+  for (const match of translation.matchAll(pattern)) {
+    const placeholder = byToken.get(match[0]);
+    // パターンは置換表のトークンから組み立てているため必ず見つかるが、型上の未定義を Fail-Fast で弾く
+    if (placeholder === undefined) throw new Error(`プレースホルダに対応する emote がありません: ${match[0]}`);
     if (match.index > cursor) {
-      segments.push({ type: "text", text: text.slice(cursor, match.index) });
+      segments.push({ type: "text", text: translation.slice(cursor, match.index) });
     }
-    segments.push({ type: "emote", id, text: name });
-    cursor = match.index + name.length;
+    segments.push({ type: "emote", id: placeholder.id, text: placeholder.text });
+    restoredTokens.add(placeholder.token);
+    cursor = match.index + match[0].length;
   }
-  if (cursor < text.length || segments.length === 0) {
-    segments.push({ type: "text", text: text.slice(cursor) });
+  if (cursor < translation.length) {
+    segments.push({ type: "text", text: translation.slice(cursor) });
+  }
+
+  for (const placeholder of placeholders) {
+    if (restoredTokens.has(placeholder.token)) continue;
+    if (segments.length > 0) segments.push({ type: "text", text: " " });
+    segments.push({ type: "emote", id: placeholder.id, text: placeholder.text });
   }
   return segments;
 }

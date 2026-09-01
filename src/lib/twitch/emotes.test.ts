@@ -6,7 +6,13 @@
  * 描画用セグメントに変換する純関数を検証する。
  */
 import { describe, expect, it } from "vitest";
-import { buildEmoteImageUrl, isEmoteOnlyMessage, splitMessageIntoSegments, splitTextByEmoteNames } from "./emotes";
+import {
+  buildEmoteImageUrl,
+  isEmoteOnlyMessage,
+  maskEmotesWithPlaceholders,
+  restoreEmotesFromPlaceholders,
+  splitMessageIntoSegments,
+} from "./emotes";
 import type { EmotePosition } from "./irc-parser";
 
 describe("buildEmoteImageUrl", () => {
@@ -93,49 +99,85 @@ describe("splitMessageIntoSegments", () => {
   });
 });
 
-describe("splitTextByEmoteNames", () => {
-  /** 元の発言に含まれていた emote(名前と ID の対応) */
-  const 既知のemote = [
-    { id: "emotesv2_1", text: "sayuwuLul" },
-    { id: "25", text: "Kappa" },
+describe("maskEmotesWithPlaceholders", () => {
+  it("emote が無い場合は本文をそのまま返し、置換表は空になる", () => {
+    expect(maskEmotesWithPlaceholders("hello chat", [])).toEqual({ maskedText: "hello chat", placeholders: [] });
+  });
+
+  it("emote を出現順に [[E0]], [[E1]] のプレースホルダへ置き換え、トークンと emote の対応を返す(issue #44)", () => {
+    const emotes: EmotePosition[] = [
+      { id: "emotesv2_wave", start: 16, end: 24 },
+      { id: "25", start: 26, end: 30 },
+    ];
+
+    expect(maskEmotesWithPlaceholders("@vaniks890 Ello peepoWave Kappa", emotes)).toEqual({
+      maskedText: "@vaniks890 Ello [[E0]] [[E1]]",
+      placeholders: [
+        { token: "[[E0]]", id: "emotesv2_wave", text: "peepoWave" },
+        { token: "[[E1]]", id: "25", text: "Kappa" },
+      ],
+    });
+  });
+
+  it("同じ emote が複数回現れても出現ごとに別のプレースホルダを割り当てる", () => {
+    const emotes: EmotePosition[] = [
+      { id: "25", start: 0, end: 4 },
+      { id: "25", start: 8, end: 12 },
+    ];
+
+    expect(maskEmotesWithPlaceholders("Kappa 草 Kappa", emotes).maskedText).toBe("[[E0]] 草 [[E1]]");
+  });
+});
+
+describe("restoreEmotesFromPlaceholders", () => {
+  const 置換表 = [
+    { token: "[[E0]]", id: "emotesv2_wave", text: "peepoWave" },
+    { token: "[[E1]]", id: "25", text: "Kappa" },
   ];
 
-  it("既知の emote が無い場合はテキスト1件のセグメントを返す", () => {
-    expect(splitTextByEmoteNames("マジで?", [])).toEqual([{ type: "text", text: "マジで?" }]);
+  it("置換表が空の場合は訳文をテキスト1件のセグメントとして返す", () => {
+    expect(restoreEmotesFromPlaceholders("マジで?", [])).toEqual([{ type: "text", text: "マジで?" }]);
   });
 
-  it("翻訳文中に現れる emote 名を、日本語に隣接していても emote セグメントに置き換える", () => {
-    const segments = splitTextByEmoteNames("なんでsayuwuLulそんな flagged したの", 既知のemote);
+  it("訳文中のプレースホルダを emote セグメントに戻し、前後のテキストはそのまま残す(issue #44)", () => {
+    const segments = restoreEmotesFromPlaceholders("@vaniks890 やあ [[E0]] [[E1]]", 置換表);
 
     expect(segments).toEqual([
-      { type: "text", text: "なんで" },
-      { type: "emote", id: "emotesv2_1", text: "sayuwuLul" },
-      { type: "text", text: "そんな flagged したの" },
-    ]);
-  });
-
-  it("複数種類・複数回の emote 名をすべて置き換える", () => {
-    const segments = splitTextByEmoteNames("Kappa 草 sayuwuLul Kappa", 既知のemote);
-
-    expect(segments).toEqual([
-      { type: "emote", id: "25", text: "Kappa" },
-      { type: "text", text: " 草 " },
-      { type: "emote", id: "emotesv2_1", text: "sayuwuLul" },
+      { type: "text", text: "@vaniks890 やあ " },
+      { type: "emote", id: "emotesv2_wave", text: "peepoWave" },
       { type: "text", text: " " },
       { type: "emote", id: "25", text: "Kappa" },
     ]);
   });
 
-  it("英数字の単語の一部として含まれる場合は emote とみなさない(Kappajapan の Kappa など)", () => {
-    const segments = splitTextByEmoteNames("Kappajapan に行く", 既知のemote);
+  it("プレースホルダが日本語に隣接していても emote セグメントに戻す", () => {
+    const segments = restoreEmotesFromPlaceholders("なんで[[E1]]そんな", [置換表[1]]);
 
-    expect(segments).toEqual([{ type: "text", text: "Kappajapan に行く" }]);
+    expect(segments).toEqual([
+      { type: "text", text: "なんで" },
+      { type: "emote", id: "25", text: "Kappa" },
+      { type: "text", text: "そんな" },
+    ]);
   });
 
-  it("emote 名の大文字小文字は区別する(kappa は Kappa とみなさない)", () => {
-    const segments = splitTextByEmoteNames("kappa lol", 既知のemote);
+  it("LLM が訳文からプレースホルダを落とした場合は、emote 画像が失われないよう末尾に補う", () => {
+    const segments = restoreEmotesFromPlaceholders("@vaniks890 やあ [[E1]]", 置換表);
 
-    expect(segments).toEqual([{ type: "text", text: "kappa lol" }]);
+    expect(segments).toEqual([
+      { type: "text", text: "@vaniks890 やあ " },
+      { type: "emote", id: "25", text: "Kappa" },
+      { type: "text", text: " " },
+      { type: "emote", id: "emotesv2_wave", text: "peepoWave" },
+    ]);
+  });
+
+  it("置換表に無いプレースホルダ風の文字列はテキストとして残す(黙って消さない)", () => {
+    const segments = restoreEmotesFromPlaceholders("やあ [[E9]] [[E0]]", [置換表[0]]);
+
+    expect(segments).toEqual([
+      { type: "text", text: "やあ [[E9]] " },
+      { type: "emote", id: "emotesv2_wave", text: "peepoWave" },
+    ]);
   });
 });
 

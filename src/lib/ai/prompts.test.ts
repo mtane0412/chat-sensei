@@ -157,6 +157,30 @@ describe("buildTranslateUserPrompt", () => {
   });
 });
 
+describe("buildTranslateSystemPrompt のプレースホルダ指示(issue #44)", () => {
+  it("解説言語がjaのとき、emote 名ではなく [[E0]] のようなプレースホルダをそのまま残す指示を含む", () => {
+    const prompt = buildTranslateSystemPrompt("en", "ja");
+
+    expect(prompt).toContain("[[E0]]");
+    expect(prompt).toMatch(/プレースホルダ/);
+    expect(prompt).not.toMatch(/emote名/);
+  });
+
+  it("解説言語がenのとき、placeholder をそのまま残す指示を含む", () => {
+    const prompt = buildTranslateSystemPrompt("ja", "en");
+
+    expect(prompt).toContain("[[E0]]");
+    expect(prompt).toMatch(/placeholder/i);
+    expect(prompt).not.toMatch(/emote names/i);
+  });
+
+  it("すべての解説言語で [[E0]] を例示する", () => {
+    for (const explainLang of SUPPORTED_LANGUAGES) {
+      expect(buildTranslateSystemPrompt("en", explainLang)).toContain("[[E0]]");
+    }
+  });
+});
+
 describe("buildPickupSystemPrompt", () => {
   it("解説言語がjaのとき、学ぶ言語の特殊な表現を抜き出して日本語で意味を示すよう指示する日本語のシステムプロンプトを組み立てる", () => {
     const prompt = buildPickupSystemPrompt("en", "ja");

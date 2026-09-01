@@ -57,17 +57,21 @@ export function createDeferred<T>() {
  * テスト用の依存性一式を組み立てる。
  * - `emit(message)` で発言受信を模擬する(表示用リングバッファにも追加する)
  * - `setMessages(next)` で表示用リングバッファの中身を差し替える(発言が溢れた状況の模擬)
- * - `pool.enqueue` は run にフェイクセッションを渡し、prompt の結果は `promptResults` から順に取り出す
+ * - `pool.enqueue` は run にフェイクセッション(`prompt` スパイ)を渡し、prompt の結果は `promptResults` から順に取り出す
  */
 export function createDeps(options: { ready?: boolean; promptResults?: Array<Promise<string>> } = {}) {
   const listeners = new Set<(message: TwitchChatMessage) => void>();
   let messages: TwitchChatMessage[] = [];
   const promptResults = [...(options.promptResults ?? [])];
 
-  const enqueue = vi.fn(async (_priority: "high" | "low", run: (session: unknown) => Promise<string>) => {
+  /** フェイクセッションの prompt。LLM に渡された本文(ユーザープロンプト)を検証するために公開する */
+  const prompt = vi.fn((): Promise<string> => {
     const next = promptResults.shift();
     if (!next) throw new Error("テストの promptResults が不足しています");
-    return run({ prompt: () => next });
+    return next;
+  });
+  const enqueue = vi.fn(async (_priority: "high" | "low", run: (session: unknown) => Promise<string>) => {
+    return run({ prompt });
   });
   const warmUp = vi.fn(async () => {});
   const pool = { enqueue, warmUp } as unknown as SessionPool;
@@ -92,7 +96,7 @@ export function createDeps(options: { ready?: boolean; promptResults?: Array<Pro
     messages = next;
   }
 
-  return { deps, emit, setMessages, enqueue, warmUp, listeners };
+  return { deps, emit, setMessages, enqueue, prompt, warmUp, listeners };
 }
 
 /** 非同期の状態更新(診断 → 投入 → 完了)が落ち着くまでマイクロタスクをフラッシュする */
