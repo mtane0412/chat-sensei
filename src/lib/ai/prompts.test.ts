@@ -184,6 +184,32 @@ describe("buildPickupSystemPrompt", () => {
     expect(buildPickupSystemPrompt("ja", "en")).toMatch(/words/);
   });
 
+  it("解説言語がjaのとき、複数語の熟語・句動詞を優先し、笑い声・相槌・感嘆詞は含めない指示を含む(issue #30)", () => {
+    const prompt = buildPickupSystemPrompt("en", "ja");
+
+    expect(prompt).toMatch(/句動詞/);
+    expect(prompt).toMatch(/優先/);
+    expect(prompt).toMatch(/笑い声/);
+    expect(prompt).toMatch(/相槌/);
+    expect(prompt).toMatch(/感嘆詞/);
+  });
+
+  it("解説言語がenのとき、複数語の熟語・句動詞を優先し、笑い声・相槌・感嘆詞は含めない指示を含む(issue #30)", () => {
+    const prompt = buildPickupSystemPrompt("ja", "en");
+
+    expect(prompt).toMatch(/phrasal verbs/i);
+    expect(prompt).toMatch(/prefer/i);
+    expect(prompt).toMatch(/laughter/i);
+    expect(prompt).toMatch(/interjections/i);
+  });
+
+  it("すべてのサポート言語で、複数語の表現の例として put effort into を示す(issue #30)", () => {
+    for (const explainLang of SUPPORTED_LANGUAGES) {
+      const targetLang = explainLang === "en" ? "ja" : "en";
+      expect(buildPickupSystemPrompt(targetLang, explainLang)).toContain("put effort into");
+    }
+  });
+
   it("解説用・翻訳用のシステムプロンプトとは別物である", () => {
     const prompt = buildPickupSystemPrompt("en", "ja");
 
