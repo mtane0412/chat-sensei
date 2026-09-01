@@ -96,6 +96,75 @@ describe("pickUpExpressions(原文との照合)", () => {
   });
 });
 
+describe("pickUpExpressions(決定的な足切りと後段フィルタ、issue #26)", () => {
+  it("emote だけの発言は LLM を呼ばずに terms が空の結果を返す", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [{ term: "Kappa", meaning: "皮肉" }] }));
+
+    const result = await pickUpExpressions(pool, "Kappa", { emotes: [{ id: "25", start: 0, end: 4 }] });
+
+    expect(result).toEqual({ terms: [] });
+    expect(pool.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("emote・@メンション・URL を除いた本文をユーザープロンプトに渡す", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [] }));
+
+    await pickUpExpressions(pool, "xqcPeepo @AUBREY DID THAT https://example.com/clip", {
+      emotes: [{ id: "emotesv2_1", start: 0, end: 7 }],
+    });
+
+    const [userPrompt] = pool.prompt.mock.calls[0] as unknown as [string];
+    expect(userPrompt).toContain("DID THAT");
+    expect(userPrompt).not.toContain("xqcPeepo");
+    expect(userPrompt).not.toContain("@AUBREY");
+    expect(userPrompt).not.toContain("https://example.com/clip");
+  });
+
+  it("モデルが emote 名・@メンション・数字だけの語句を返しても、エラーにせず結果から落とす", async () => {
+    const pool = createFakeSessionPool(
+      JSON.stringify({
+        terms: [
+          { term: "xqcPeepo", meaning: "配信者関連の絵文字" },
+          { term: "@AUBREY", meaning: "視聴者への呼称" },
+          { term: "67", meaning: "数字のミーム" },
+          { term: "sticky", meaning: "スタン状態にする" },
+        ],
+      }),
+    );
+
+    const result = await pickUpExpressions(pool, "xqcPeepo @AUBREY 67 sticky", {
+      emotes: [{ id: "emotesv2_1", start: 0, end: 7 }],
+    });
+
+    expect(result.terms).toEqual([{ term: "sticky", meaning: "スタン状態にする" }]);
+  });
+
+  it("excludedNames に指定した発言者名を、モデルが語句として返しても結果から落とす", async () => {
+    const pool = createFakeSessionPool(
+      JSON.stringify({
+        terms: [
+          { term: "space_toilet_master", meaning: "配信の常連" },
+          { term: "sticky", meaning: "スタン状態にする" },
+        ],
+      }),
+    );
+
+    const result = await pickUpExpressions(pool, "Welcome back space_toilet_master! sticky", {
+      excludedNames: ["space_toilet_master"],
+    });
+
+    expect(result.terms).toEqual([{ term: "sticky", meaning: "スタン状態にする" }]);
+  });
+
+  it("emotes を省略した場合は emote 除去を行わず、本文をそのまま渡す", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [] }));
+
+    await pickUpExpressions(pool, "Kappa lol");
+
+    expect(pool.prompt).toHaveBeenCalledWith(expect.stringContaining("Kappa lol"), expect.anything());
+  });
+});
+
 describe("createPickupBaseSessionFactory", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

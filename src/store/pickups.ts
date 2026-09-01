@@ -127,9 +127,19 @@ export function startPickupPipeline(deps: PickupPipelineDeps = DEFAULT_DEPS): ()
     return pool;
   }
 
+  /** 表示中の発言者名(username / displayName)。@ 無しで本文に書かれたユーザー名を抽出結果から落とすために渡す */
+  function collectSpeakerNames(): string[] {
+    return deps.getMessages().flatMap((item) => [item.username, item.displayName]);
+  }
+
   function pickUp(message: TwitchChatMessage, id: string): void {
     setEntry(id, { status: "pending" });
-    pickUpExpressions(getPool(), message.text, { priority: "low", signal: controller.signal })
+    pickUpExpressions(getPool(), message.text, {
+      priority: "low",
+      signal: controller.signal,
+      emotes: message.emotes,
+      excludedNames: collectSpeakerNames(),
+    })
       .then((result) => setEntry(id, { status: "done", terms: result.terms }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
