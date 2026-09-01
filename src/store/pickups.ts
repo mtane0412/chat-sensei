@@ -26,6 +26,7 @@ import { createSessionPool, LowPriorityQueueOverflowError, type SessionPool } fr
 import { createPickupBaseSessionFactory, pickUpExpressions } from "@/lib/ai/pickup";
 import type { PickupTerm } from "@/lib/ai/schemas";
 import { loadSettings, type Settings } from "@/lib/settings";
+import { isChatCommandMessage } from "@/lib/twitch/chat-command";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
 import type { PromptApiStatus } from "./translations";
@@ -133,6 +134,12 @@ export function startPickupPipeline(deps: PickupPipelineDeps = DEFAULT_DEPS): ()
   }
 
   function pickUp(message: TwitchChatMessage, id: string): void {
+    // `!chimkin` のような bot 向けコマンドに注目の表現は無い。LLM に渡しても `!` 始まりの語句は
+    // 後段の `filterPickupTerms` で除外されるだけなので、低優先度キューを消費せず空の done で確定させる(issue #35)
+    if (isChatCommandMessage(message.text)) {
+      setEntry(id, { status: "done", terms: [] });
+      return;
+    }
     setEntry(id, { status: "pending" });
     pickUpExpressions(getPool(), message.text, {
       priority: "low",
