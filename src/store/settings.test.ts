@@ -73,7 +73,7 @@ describe("useSettingsStore.setSettings", () => {
     hydrateSettingsStore();
 
     expect(() => useSettingsStore.getState().setSettings({ targetLang: "ja", explainLang: "ja" })).toThrow(
-      /異なる言語/,
+      /must be different/,
     );
 
     expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS);

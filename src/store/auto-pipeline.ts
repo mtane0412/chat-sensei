@@ -223,7 +223,7 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
         .catch((error: unknown) => {
           if (controller.signal.aborted) return;
           markPromptApiUnavailable(
-            `Prompt API のセッションを生成できませんでした: ${error instanceof Error ? error.message : String(error)}`,
+            `Could not create a Prompt API session: ${error instanceof Error ? error.message : String(error)}`,
           );
         });
     }

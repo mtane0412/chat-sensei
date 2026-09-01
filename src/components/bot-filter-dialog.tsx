@@ -29,7 +29,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatBotFilterPatterns, parseBotFilterPatterns } from "@/lib/bot-filter";
 import { useBotFilterStore } from "@/store/bot-filter";
 
-const DIALOG_TITLE = "bot除外設定";
+const DIALOG_TITLE = "Bot filter";
 const TEXTAREA_ID = "bot-filter-patterns";
 const TEXTAREA_ROWS = 10;
 
@@ -61,17 +61,17 @@ export function BotFilterDialog() {
         <DialogHeader>
           <DialogTitle>{DIALOG_TITLE}</DialogTitle>
           <DialogDescription>
-            除外するユーザー名を1行に1つずつ入力してください。<code>*</code> は任意の文字列に一致します(例:{" "}
-            <code>*trans</code>, <code>*bot</code>)。
+            Enter one username per line to hide. <code>*</code> matches any characters (e.g. <code>*trans</code>,{" "}
+            <code>*bot</code>).
           </DialogDescription>
         </DialogHeader>
         {wasCorrupted && (
           <p className="text-xs text-destructive" role="alert">
-            保存されていた設定が壊れていたため、デフォルトに戻しました。保存し直すと解消します。
+            Your saved settings were corrupted and have been reset to the defaults. Save again to clear this notice.
           </p>
         )}
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor={TEXTAREA_ID}>除外するユーザー名</Label>
+          <Label htmlFor={TEXTAREA_ID}>Usernames to hide</Label>
           <Textarea
             id={TEXTAREA_ID}
             rows={TEXTAREA_ROWS}
@@ -82,8 +82,8 @@ export function BotFilterDialog() {
           />
         </div>
         <DialogFooter>
-          <DialogClose render={<Button variant="outline" />}>キャンセル</DialogClose>
-          <Button onClick={handleSave}>保存する</Button>
+          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          <Button onClick={handleSave}>Save</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

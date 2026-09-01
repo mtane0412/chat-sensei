@@ -43,15 +43,15 @@ afterEach(() => {
 
 /** ダイアログを開き、ダイアログ要素を返す */
 async function openDialog(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "設定" }));
-  return screen.findByRole("dialog", { name: "設定" });
+  await user.click(screen.getByRole("button", { name: "Settings" }));
+  return screen.findByRole("dialog", { name: "Settings" });
 }
 
 describe("SettingsDialog(言語ペア)", () => {
   it("ストアが LocalStorage から未復元の間は、設定ボタンを無効にして開けないようにする(デフォルト設定で上書きしないため)", () => {
     render(<SettingsDialog />);
 
-    expect(screen.getByRole("button", { name: "設定" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeDisabled();
   });
 
   it("設定ボタンから開くと、学ぶ言語・解説言語のセレクトに現在の設定が入っている", async () => {
@@ -62,8 +62,8 @@ describe("SettingsDialog(言語ペア)", () => {
 
     const dialog = await openDialog(user);
 
-    expect(within(dialog).getByRole("combobox", { name: "学ぶ言語" })).toHaveValue("es");
-    expect(within(dialog).getByRole("combobox", { name: "解説言語" })).toHaveValue("en");
+    expect(within(dialog).getByRole("combobox", { name: "Learning language" })).toHaveValue("es");
+    expect(within(dialog).getByRole("combobox", { name: "Explanation language" })).toHaveValue("en");
   });
 
   it("言語ペアを変更して保存すると、ストアに反映され LocalStorage にも保存され、ダイアログが閉じる", async () => {
@@ -72,15 +72,15 @@ describe("SettingsDialog(言語ペア)", () => {
     render(<SettingsDialog />);
 
     const dialog = await openDialog(user);
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "学ぶ言語" }), "de");
-    await user.click(within(dialog).getByRole("button", { name: "保存する" }));
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Learning language" }), "de");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
     expect(useSettingsStore.getState().settings).toEqual({ targetLang: "de", explainLang: "ja" });
     expect(JSON.parse(window.localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "null")).toEqual({
       targetLang: "de",
       explainLang: "ja",
     });
-    expect(screen.queryByRole("dialog", { name: "設定" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
   });
 
   it("学ぶ言語と解説言語に同じ言語を選んで保存するとエラーを表示し、保存しない", async () => {
@@ -89,13 +89,13 @@ describe("SettingsDialog(言語ペア)", () => {
     render(<SettingsDialog />);
 
     const dialog = await openDialog(user);
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "学ぶ言語" }), "ja");
-    await user.click(within(dialog).getByRole("button", { name: "保存する" }));
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Learning language" }), "ja");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
-    expect(within(dialog).getByRole("alert")).toHaveTextContent("異なる言語を指定してください");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("must be different");
     expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS);
     expect(window.localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
-    expect(screen.getByRole("dialog", { name: "設定" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBeInTheDocument();
   });
 
   it("保存データが壊れていた場合は、デフォルトに戻した旨を表示する", async () => {
@@ -106,7 +106,7 @@ describe("SettingsDialog(言語ペア)", () => {
 
     const dialog = await openDialog(user);
 
-    expect(within(dialog).getByText(/デフォルトに戻しました/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/reset to the defaults/)).toBeInTheDocument();
   });
 
   it("「設定を初期化する」で LocalStorage の設定を削除し、セレクトもデフォルトに戻る", async () => {
@@ -116,12 +116,12 @@ describe("SettingsDialog(言語ペア)", () => {
     render(<SettingsDialog />);
 
     const dialog = await openDialog(user);
-    await user.click(within(dialog).getByRole("button", { name: "設定を初期化する" }));
+    await user.click(within(dialog).getByRole("button", { name: "Reset settings" }));
 
     expect(window.localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
     expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS);
-    expect(within(dialog).getByRole("combobox", { name: "学ぶ言語" })).toHaveValue("en");
-    expect(within(dialog).getByRole("combobox", { name: "解説言語" })).toHaveValue("ja");
+    expect(within(dialog).getByRole("combobox", { name: "Learning language" })).toHaveValue("en");
+    expect(within(dialog).getByRole("combobox", { name: "Explanation language" })).toHaveValue("ja");
   });
 });
 
@@ -137,9 +137,9 @@ describe("SettingsDialog(環境診断)", () => {
     const items = await within(dialog).findAllByRole("listitem");
     expect(items.map((item) => item.textContent)).toEqual([
       expect.stringContaining("Chrome 150"),
-      expect.stringContaining("Prompt API はすぐに利用できます"),
-      expect.stringContaining("Language Detector API は利用可能です"),
-      expect.stringContaining("約10.0GB"),
+      expect.stringContaining("The Prompt API is ready to use"),
+      expect.stringContaining("The Language Detector API is available"),
+      expect.stringContaining("about 10.0GB"),
     ]);
   });
 
@@ -151,7 +151,7 @@ describe("SettingsDialog(環境診断)", () => {
 
     const dialog = await openDialog(user);
 
-    expect(within(dialog).getByText("診断中...")).toBeInTheDocument();
+    expect(within(dialog).getByText("Checking...")).toBeInTheDocument();
   });
 
   it("診断そのものが失敗した場合は理由を表示する(暗黙に利用可能扱いにしない)", async () => {
@@ -163,7 +163,7 @@ describe("SettingsDialog(環境診断)", () => {
     const dialog = await openDialog(user);
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "環境診断に失敗しました: LanguageModel.availability がクラッシュしました",
+      "Environment check failed: LanguageModel.availability がクラッシュしました",
     );
   });
 });

@@ -39,7 +39,7 @@ import { LANGUAGE_DISPLAY_NAMES, settingsSchema, type Settings } from "@/lib/set
 import { cn } from "@/lib/utils";
 import { clearSettingsStore, useSettingsStore } from "@/store/settings";
 
-const DIALOG_TITLE = "設定";
+const DIALOG_TITLE = "Settings";
 /** セレクトの値(文字列)を対応言語コードに検証する。対応外の値は Fail-Fast で例外にする */
 const languageSchema = z.enum(SUPPORTED_LANGUAGES);
 const TARGET_LANG_SELECT_ID = "settings-target-lang";
@@ -79,7 +79,7 @@ export function SettingsDialog() {
   const handleSave = () => {
     const validation = settingsSchema.safeParse(draft);
     if (!validation.success) {
-      setSaveError(validation.error.issues[0]?.message ?? "設定が不正です");
+      setSaveError(validation.error.issues[0]?.message ?? "Invalid settings");
       return;
     }
     setSettings(validation.data);
@@ -102,27 +102,28 @@ export function SettingsDialog() {
         <DialogHeader>
           <DialogTitle>{DIALOG_TITLE}</DialogTitle>
           <DialogDescription>
-            学ぶ言語(チャットの原文の言語)と解説言語(翻訳・Pick up の意味を表示する言語)を選びます。
-            保存すると表示中の発言の翻訳・Pick up を新しい言語ペアで生成し直します。
+            Choose the language you are learning (the language of the chat) and the explanation language (used for
+            translations and Pick up meanings). Saving regenerates the translations and Pick ups for the messages
+            currently shown with the new language pair.
           </DialogDescription>
         </DialogHeader>
 
         {wasCorrupted && (
           <p className="text-xs text-destructive" role="alert">
-            保存されていた設定が壊れていたため、デフォルトに戻しました。保存し直すと解消します。
+            Your saved settings were corrupted and have been reset to the defaults. Save again to clear this notice.
           </p>
         )}
 
         <div className="grid grid-cols-2 gap-4">
           <LanguageSelect
             id={TARGET_LANG_SELECT_ID}
-            label="学ぶ言語"
+            label="Learning language"
             value={draft.targetLang}
             onChange={(targetLang) => setDraft((prev) => ({ ...prev, targetLang }))}
           />
           <LanguageSelect
             id={EXPLAIN_LANG_SELECT_ID}
-            label="解説言語"
+            label="Explanation language"
             value={draft.explainLang}
             onChange={(explainLang) => setDraft((prev) => ({ ...prev, explainLang }))}
           />
@@ -138,11 +139,11 @@ export function SettingsDialog() {
 
         <DialogFooter className="sm:justify-between">
           <Button variant="outline" onClick={handleClear}>
-            設定を初期化する
+            Reset settings
           </Button>
           <div className="flex gap-2">
-            <DialogClose render={<Button variant="outline" />}>キャンセル</DialogClose>
-            <Button onClick={handleSave}>保存する</Button>
+            <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+            <Button onClick={handleSave}>Save</Button>
           </div>
         </DialogFooter>
       </DialogContent>
@@ -208,12 +209,12 @@ function DiagnosisSection({ open }: { open: boolean }) {
   }, [open]);
 
   return (
-    <section aria-label="環境診断" className="flex flex-col gap-2 rounded-lg border p-3">
-      <h3 className="text-sm font-semibold">環境診断</h3>
-      {state.status === "loading" && <p className="text-xs text-muted-foreground">診断中...</p>}
+    <section aria-label="Environment check" className="flex flex-col gap-2 rounded-lg border p-3">
+      <h3 className="text-sm font-semibold">Environment check</h3>
+      {state.status === "loading" && <p className="text-xs text-muted-foreground">Checking...</p>}
       {state.status === "error" && (
         <p className="text-xs text-destructive" role="alert">
-          環境診断に失敗しました: {state.errorMessage}
+          Environment check failed: {state.errorMessage}
         </p>
       )}
       {state.status === "loaded" && (

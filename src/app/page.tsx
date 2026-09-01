@@ -52,11 +52,37 @@ import {
 } from "@/store/translations";
 
 const CONNECTION_STATE_LABEL: Record<ConnectionState, string> = {
-  idle: "待機中",
-  connecting: "接続中...",
-  open: "接続済み",
-  reconnecting: "再接続中...",
-  closed: "切断済み",
+  idle: "Idle",
+  connecting: "Connecting...",
+  open: "Connected",
+  reconnecting: "Reconnecting...",
+  closed: "Disconnected",
+};
+
+/** 翻訳列・Pick up 列の行に表示する状態文言。列ごとに動詞が異なるため文言一式で受け取る */
+interface PipelineCellLabels {
+  /** 未処理(例: "Not translated") */
+  notYet: string;
+  /** 処理中(例: "Translating...") */
+  pending: string;
+  /** 失敗(例: "Translation failed") */
+  failed: string;
+  /** Prompt API 利用不可(例: "Translation unavailable") */
+  unavailable: string;
+}
+
+const TRANSLATION_LABELS: PipelineCellLabels = {
+  notYet: "Not translated",
+  pending: "Translating...",
+  failed: "Translation failed",
+  unavailable: "Translation unavailable",
+};
+
+const PICKUP_LABELS: PipelineCellLabels = {
+  notYet: "Not extracted",
+  pending: "Extracting...",
+  failed: "Extraction failed",
+  unavailable: "Extraction unavailable",
 };
 
 /** 接続中とみなす状態(切断ボタンに切り替える基準) */
@@ -119,28 +145,28 @@ export default function Home() {
     <div className="flex w-full flex-1 flex-col gap-4 p-6">
       <div className="flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="channel-input">チャンネル名</Label>
+          <Label htmlFor="channel-input">Channel</Label>
           <div className="flex items-center gap-2">
             <Input
               id="channel-input"
-              placeholder="例: zackrawrr"
+              placeholder="e.g. zackrawrr"
               value={channelInput}
               onChange={(e) => setChannelInput(e.target.value)}
               disabled={connected}
             />
             {connected ? (
               <Button onClick={disconnect} variant="outline">
-                切断する
+                Disconnect
               </Button>
             ) : (
               <Button onClick={handleConnect} disabled={channelInput.trim().length === 0}>
-                接続する
+                Connect
               </Button>
             )}
             <SettingsDialog />
           </div>
           <p className="text-xs text-muted-foreground" role="status">
-            状態: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
+            Status: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
           </p>
         </div>
       </div>
@@ -151,7 +177,7 @@ export default function Home() {
           // 見出し1行 + 発言数ぶんの行。各列は subgrid でこの行トラックを共有する
           style={{ gridTemplateRows: `auto repeat(${messages.length}, auto)` }}
         >
-          <Column title="生IRC" blurred={false} headerAction={<BotFilterDialog />}>
+          <Column title="Raw IRC" blurred={false} headerAction={<BotFilterDialog />}>
             <div role="list" className="contents">
               {messages.map((message, index) => (
                 <ChatMessageRow key={messageKey(message, index)} message={message} />
@@ -159,10 +185,10 @@ export default function Home() {
             </div>
           </Column>
           <Column
-            title="翻訳"
+            title="Translation"
             blurred={translationBlurred}
             headerAction={
-              <BlurToggle label="翻訳をぼかす" blurred={translationBlurred} onBlurredChange={setTranslationBlurred} />
+              <BlurToggle label="Blur translation" blurred={translationBlurred} onBlurredChange={setTranslationBlurred} />
             }
             headerExtra={<PromptApiUnavailableReason promptApi={promptApi} />}
           >
@@ -173,7 +199,7 @@ export default function Home() {
                     message={message}
                     entry={message.id === null ? undefined : translationEntries[message.id]}
                     promptApi={promptApi}
-                    noun="翻訳"
+                    labels={TRANSLATION_LABELS}
                     renderDone={(done) => <TranslationText segments={done.segments} />}
                   />
                 </Row>
@@ -183,7 +209,7 @@ export default function Home() {
           <Column
             title="Pick up"
             blurred={pickupBlurred}
-            headerAction={<BlurToggle label="Pick upをぼかす" blurred={pickupBlurred} onBlurredChange={setPickupBlurred} />}
+            headerAction={<BlurToggle label="Blur Pick up" blurred={pickupBlurred} onBlurredChange={setPickupBlurred} />}
             headerExtra={<PromptApiUnavailableReason promptApi={promptApi} />}
           >
             <div role="list" className="contents">
@@ -193,7 +219,7 @@ export default function Home() {
                     message={message}
                     entry={message.id === null ? undefined : pickupEntries[message.id]}
                     promptApi={promptApi}
-                    noun="抽出"
+                    labels={PICKUP_LABELS}
                     renderDone={(done) => <PickupTerms terms={done.terms} />}
                   />
                 </Row>
@@ -220,7 +246,7 @@ function BlurToggle({
   blurred,
   onBlurredChange,
 }: {
-  /** スクリーンリーダー向けの名前(例: "翻訳をぼかす") */
+  /** スクリーンリーダー向けの名前(例: "Blur translation") */
   label: string;
   blurred: boolean;
   onBlurredChange: (blurred: boolean) => void;
@@ -309,53 +335,53 @@ function PromptApiUnavailableReason({ promptApi }: { promptApi: PromptApiStatus 
 
 /**
  * 翻訳列・Pick up列で共通の1行の中身。生成中・失敗・キュー溢れ・Prompt API 利用不可の各状態を
- * 暗黙に隠さず明示する。表示文言は `noun`(「翻訳」「抽出」)から組み立て、完了時の描画だけを
+ * 暗黙に隠さず明示する。表示文言は `labels`(翻訳列・Pick up 列ごとの文言一式)から選び、完了時の描画だけを
  * `renderDone` で列ごとに差し替える。
  */
 function PipelineCellContent<TDone extends object>({
   message,
   entry,
   promptApi,
-  noun,
+  labels,
   renderDone,
 }: {
   message: TwitchChatMessage;
   entry: PipelineEntry<TDone> | undefined;
   promptApi: PromptApiStatus;
-  /** 状態表示の文言に使う処理名(例: "翻訳" → 「翻訳中...」「未翻訳」「翻訳不可」) */
-  noun: string;
+  /** 状態表示の文言一式(翻訳列なら `TRANSLATION_LABELS`) */
+  labels: PipelineCellLabels;
   /** 完了した結果の描画 */
   renderDone: (done: TDone) => React.ReactNode;
 }) {
   if (message.id === null) {
-    return <span className="text-muted-foreground">未{noun}(IDなし)</span>;
+    return <span className="text-muted-foreground">{labels.notYet} (no message ID)</span>;
   }
   if (!entry) {
-    if (promptApi.status === "unavailable") return <span className="text-muted-foreground">{noun}不可</span>;
-    if (promptApi.status === "checking") return <span className="text-muted-foreground">準備中...</span>;
-    return <span className="text-muted-foreground">未{noun}</span>;
+    if (promptApi.status === "unavailable") return <span className="text-muted-foreground">{labels.unavailable}</span>;
+    if (promptApi.status === "checking") return <span className="text-muted-foreground">Preparing...</span>;
+    return <span className="text-muted-foreground">{labels.notYet}</span>;
   }
   switch (entry.status) {
     case "pending":
-      return <span className="text-muted-foreground">{noun}中...</span>;
+      return <span className="text-muted-foreground">{labels.pending}</span>;
     case "done":
       return renderDone(entry);
     case "failed":
       return (
         <span className="text-destructive">
-          {noun}に失敗: {entry.reason}
+          {labels.failed}: {entry.reason}
         </span>
       );
     case "dropped":
-      return <span className="text-muted-foreground">未{noun}(流量超過)</span>;
+      return <span className="text-muted-foreground">{labels.notYet} (too many messages)</span>;
     case "unavailable":
-      return <span className="text-muted-foreground">{noun}不可</span>;
+      return <span className="text-muted-foreground">{labels.unavailable}</span>;
   }
 }
 
-/** Pick up列の完了した結果。該当する表現が無い場合は「なし」と控えめに表示する */
+/** Pick up列の完了した結果。該当する表現が無い場合は「None」と控えめに表示する */
 function PickupTerms({ terms }: { terms: PickupDone["terms"] }) {
-  if (terms.length === 0) return <span className="text-muted-foreground">なし</span>;
+  if (terms.length === 0) return <span className="text-muted-foreground">None</span>;
   return (
     <dl className="flex flex-col gap-0.5">
       {terms.map((term, index) => (

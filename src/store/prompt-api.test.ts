@@ -43,7 +43,7 @@ describe("ensurePromptApiDiagnosed", () => {
 
     expect(status).toEqual({
       status: "unavailable",
-      reason: "環境診断に失敗しました: navigator.storage が使えません",
+      reason: "Environment check failed: navigator.storage が使えません",
     });
   });
 
@@ -78,11 +78,11 @@ describe("markPromptApiUnavailable", () => {
   it("理由付きで unavailable にし、以後の ensurePromptApiDiagnosed もその状態を返す", async () => {
     await ensurePromptApiDiagnosed(async () => createDiagnosis(true));
 
-    markPromptApiUnavailable("Prompt API のセッションを生成できませんでした: user activation is required");
+    markPromptApiUnavailable("Could not create a Prompt API session: user activation is required");
 
     expect(usePromptApiStore.getState().status).toEqual({
       status: "unavailable",
-      reason: "Prompt API のセッションを生成できませんでした: user activation is required",
+      reason: "Could not create a Prompt API session: user activation is required",
     });
     await expect(ensurePromptApiDiagnosed(async () => createDiagnosis(true))).resolves.toEqual(
       usePromptApiStore.getState().status,

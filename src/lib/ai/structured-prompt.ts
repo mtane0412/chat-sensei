@@ -57,7 +57,7 @@ export async function runStructuredPrompt<TSchema extends z.ZodType>(
       parsed = JSON.parse(raw);
     } catch (error) {
       if (attempt < STRUCTURED_PROMPT_MAX_ATTEMPTS) continue;
-      throw new Error(`Prompt APIの応答をJSONとして解釈できませんでした(${attempt}回試行): ${raw}`, { cause: error });
+      throw new Error(`Could not parse the Prompt API response as JSON (${attempt} attempts): ${raw}`, { cause: error });
     }
 
     return request.schema.parse(parsed);
