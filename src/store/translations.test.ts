@@ -184,6 +184,22 @@ describe("startTranslationPipeline", () => {
     stop();
   });
 
+  it("`!` で始まるチャットコマンドは翻訳せず LLM を呼ばず、原文をそのまま訳文として done にする(issue #35)", async () => {
+    const { deps, emit, enqueue } = createDeps();
+
+    const stop = startTranslationPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "!chimkin please" }));
+    await flush();
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(useTranslationStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      translation: "!chimkin please",
+    });
+    stop();
+  });
+
   it("翻訳ジョブが完了するまでは pending として保持する", async () => {
     const deferred = createDeferred<string>();
     const { deps, emit } = createDeps({ promptResults: [deferred.promise] });

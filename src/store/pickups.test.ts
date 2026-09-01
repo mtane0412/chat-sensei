@@ -178,6 +178,19 @@ describe("startPickupPipeline", () => {
     stop();
   });
 
+  it("`!` で始まるチャットコマンドは LLM を呼ばずに terms が空の done として保持する(issue #35)", async () => {
+    const { deps, emit, enqueue } = createDeps();
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "!chimkin please" }));
+    await flush();
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({ status: "done", terms: [] });
+    stop();
+  });
+
   it("表示中の発言者名(username / displayName)を除外名として渡し、モデルが返しても結果から落とす(issue #26)", async () => {
     const { deps, emit, setMessages } = createDeps({
       promptResults: [
