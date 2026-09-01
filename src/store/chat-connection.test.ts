@@ -33,6 +33,7 @@ vi.mock("@/lib/twitch/irc-client", () => ({
   normalizeChannelName: (channel: string) => channel.replace(/^#/, "").toLowerCase(),
 }));
 
+import { resetBotFilterStoreForTests, useBotFilterStore } from "./bot-filter";
 import { resetChatConnectionStoreForTests, subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
 
 /** テスト用のサンプル発言(実況チャットにありそうな「ナイスプレー」の一言) */
@@ -56,11 +57,13 @@ function createSampleMessage(overrides: Partial<TwitchChatMessage> = {}): Twitch
 beforeEach(() => {
   // モジュールスコープのストアはテスト間で共有されるため、各テストの前に初期状態へ戻す
   resetChatConnectionStoreForTests();
+  resetBotFilterStoreForTests();
 });
 
 afterEach(() => {
   mockConnect.mockClear();
   mockDisconnect.mockClear();
+  window.localStorage.clear();
 });
 
 describe("useChatConnectionStore", () => {
@@ -166,5 +169,42 @@ describe("subscribeToChatMessages", () => {
     capturedCallbacks?.onEvent({ type: "ping", payload: "PING :tmi.twitch.tv" });
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe("bot除外", () => {
+  it("除外パターンに一致するユーザー名の発言は、messagesにもリスナーにも流れない", () => {
+    useBotFilterStore.getState().setPatterns(["nightbot", "*trans"]);
+    useChatConnectionStore.getState().connect("ZackRawrr");
+    const listener = vi.fn();
+    subscribeToChatMessages(listener);
+
+    capturedCallbacks?.onEvent({
+      type: "privmsg",
+      channel: "somechannel",
+      message: createSampleMessage({ id: "bot-1", username: "nightbot", displayName: "Nightbot" }),
+    });
+    capturedCallbacks?.onEvent({
+      type: "privmsg",
+      channel: "somechannel",
+      message: createSampleMessage({ id: "bot-2", username: "yuki_trans", displayName: "yuki_trans" }),
+    });
+    const humanMessage = createSampleMessage({ id: "human-1", username: "viewer_taro" });
+    capturedCallbacks?.onEvent({ type: "privmsg", channel: "somechannel", message: humanMessage });
+
+    expect(useChatConnectionStore.getState().messages).toEqual([humanMessage]);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(humanMessage);
+  });
+
+  it("除外パターンを変更すると、表示中の発言からも一致するものが取り除かれる", () => {
+    useBotFilterStore.getState().setPatterns([]);
+    const botMessage = createSampleMessage({ id: "bot-1", username: "streamelements" });
+    const humanMessage = createSampleMessage({ id: "human-1", username: "viewer_taro" });
+    useChatConnectionStore.setState({ messages: [botMessage, humanMessage] });
+
+    useBotFilterStore.getState().setPatterns(["streamelements"]);
+
+    expect(useChatConnectionStore.getState().messages).toEqual([humanMessage]);
   });
 });

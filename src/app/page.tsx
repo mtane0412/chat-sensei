@@ -13,12 +13,15 @@
  * スクロールは3列で共通の1つにまとめる(列ごとに独立させると行の対応が崩れるため)。
  *
  * 翻訳列・解説列は学習のためデフォルトでぼかして表示し、それぞれのトグルで解除できる。
+ * 生IRC列の見出しには bot除外設定(BotFilterDialog)を開くアイコンを置く。除外パターンは
+ * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
  * 翻訳結果は translations ストアが保持し、翻訳パイプラインはこの画面のマウント時に開始する。
  */
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { BotFilterDialog } from "@/components/bot-filter-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +31,7 @@ import { cn } from "@/lib/utils";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments } from "@/lib/twitch/emotes";
+import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
 import {
   startTranslationPipeline,
@@ -66,6 +70,8 @@ export default function Home() {
 
   // 受信した発言を自動で翻訳ジョブに流す。アンマウント時は購読を解除し待機中のジョブを中断する
   useEffect(() => startTranslationPipeline(), []);
+  // bot除外パターンを LocalStorage から復元する(SSR 中に触れないようマウント後に行う)
+  useEffect(() => hydrateBotFilterStore(), []);
 
   const handleConnect = useCallback(() => {
     const channel = channelInput.trim();
@@ -131,7 +137,7 @@ export default function Home() {
           // 見出し1行 + 発言数ぶんの行。各列は subgrid でこの行トラックを共有する
           style={{ gridTemplateRows: `auto repeat(${messages.length}, auto)` }}
         >
-          <Column title="生IRC" blurred={false}>
+          <Column title="生IRC" blurred={false} headerAction={<BotFilterDialog />}>
             <div role="list" className="contents">
               {messages.map((message, index) => (
                 <ChatMessageRow key={messageKey(message, index)} message={message} />
@@ -187,6 +193,7 @@ function Column({
   title,
   blurred,
   headerExtra,
+  headerAction,
   children,
 }: {
   title: string;
@@ -194,6 +201,8 @@ function Column({
   blurred: boolean;
   /** 見出しの下に表示する補足(Prompt API 利用不可の理由など) */
   headerExtra?: React.ReactNode;
+  /** 見出しの右端に置く操作(bot除外設定のアイコンなど) */
+  headerAction?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -203,7 +212,10 @@ function Column({
       className="grid min-w-0 grid-rows-subgrid row-[1/-1] rounded-xl border bg-card pb-3"
     >
       <div className="sticky top-0 z-10 border-b bg-card px-4 py-2">
-        <h2 className="text-sm font-semibold">{title}</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">{title}</h2>
+          {headerAction}
+        </div>
         {headerExtra}
       </div>
       {children}

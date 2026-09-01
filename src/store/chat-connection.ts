@@ -12,6 +12,10 @@
  *
  * 接続中のチャンネル名(`channel`)も併せて保持し、`TwitchEmbedPlayer`(配信embed)の
  * 表示切り替えに使う。
+ *
+ * bot除外(`store/bot-filter.ts`)はここで適用する。除外パターンに一致するユーザー名の発言は
+ * 受信時点で捨て、表示用の `messages` にもリスナー(翻訳パイプライン等)にも流さない。
+ * パターンが変更されたときは、表示中の発言からも一致するものを取り除く。
  */
 import { create } from "zustand";
 import {
@@ -21,6 +25,8 @@ import {
   type TwitchIrcClient,
 } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
+import { matchesBotFilter } from "@/lib/bot-filter";
+import { isExcludedByBotFilter, useBotFilterStore } from "./bot-filter";
 
 /** チャットに表示する発言の最大保持件数(古いものから捨てるリングバッファ) */
 const MAX_DISPLAYED_MESSAGES = 300;
@@ -50,6 +56,7 @@ function getClient(): TwitchIrcClient {
       onStateChange: (state) => useChatConnectionStore.setState({ connectionState: state }),
       onEvent: (event) => {
         if (event.type !== "privmsg") return;
+        if (isExcludedByBotFilter(event.message.username)) return;
         useChatConnectionStore.setState((prev) => {
           const next = [...prev.messages, event.message];
           return {
@@ -77,6 +84,15 @@ export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
     getClient().disconnect();
   },
 }));
+
+// 除外パターンの変更を、既に表示中の発言にも遡って適用する
+useBotFilterStore.subscribe((state, prevState) => {
+  if (state.patterns === prevState.patterns) return;
+  useChatConnectionStore.setState((prev) => {
+    const messages = prev.messages.filter((message) => !matchesBotFilter(message.username, state.patterns));
+    return messages.length === prev.messages.length ? prev : { messages };
+  });
+});
 
 /**
  * 受信した発言(privmsg)を購読する。バックグラウンドの翻訳・解説生成のように、

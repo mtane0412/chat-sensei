@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
+import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetTranslationStoreForTests, useTranslationStore } from "@/store/translations";
 
@@ -60,6 +61,8 @@ beforeEach(() => {
 afterEach(() => {
   resetChatConnectionStoreForTests();
   resetTranslationStoreForTests();
+  resetBotFilterStoreForTests();
+  window.localStorage.clear();
 });
 
 describe("Home(3カラム構成)", () => {
@@ -224,5 +227,57 @@ describe("Home(翻訳列)", () => {
 
     await user.click(screen.getByRole("switch", { name: "翻訳をぼかす" }));
     expect(translationRow).not.toHaveClass("blur-sm");
+  });
+});
+
+describe("Home(bot除外設定)", () => {
+  it("生IRC列の見出しにある bot除外設定ボタンから、現在のパターンが入った入力欄を開ける", async () => {
+    const user = userEvent.setup();
+    useBotFilterStore.getState().setPatterns(["nightbot", "*trans"]);
+    render(<Home />);
+
+    const rawColumn = screen.getByRole("region", { name: "生IRC" });
+    await user.click(within(rawColumn).getByRole("button", { name: "bot除外設定" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "bot除外設定" });
+    expect(within(dialog).getByRole("textbox", { name: "除外するユーザー名" })).toHaveValue("nightbot\n*trans");
+  });
+
+  it("パターンを編集して保存すると、ストアに反映され LocalStorage にも保存される", async () => {
+    const user = userEvent.setup();
+    useBotFilterStore.getState().setPatterns([]);
+    render(<Home />);
+
+    await user.click(screen.getByRole("button", { name: "bot除外設定" }));
+    const dialog = await screen.findByRole("dialog", { name: "bot除外設定" });
+    const textbox = within(dialog).getByRole("textbox", { name: "除外するユーザー名" });
+    await user.clear(textbox);
+    await user.type(textbox, "StreamElements{enter}*bot");
+    await user.click(within(dialog).getByRole("button", { name: "保存する" }));
+
+    expect(useBotFilterStore.getState().patterns).toEqual(["streamelements", "*bot"]);
+    expect(JSON.parse(window.localStorage.getItem("chat-sensei:bot-filter") ?? "null")).toEqual([
+      "streamelements",
+      "*bot",
+    ]);
+  });
+
+  it("マウント時に LocalStorage から除外パターンを復元する", () => {
+    window.localStorage.setItem("chat-sensei:bot-filter", JSON.stringify(["custom_bot"]));
+
+    render(<Home />);
+
+    expect(useBotFilterStore.getState().patterns).toEqual(["custom_bot"]);
+  });
+
+  it("保存データが壊れていた場合は、入力欄にデフォルトへ戻した旨を表示する", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("chat-sensei:bot-filter", "壊れたデータ");
+    render(<Home />);
+
+    await user.click(screen.getByRole("button", { name: "bot除外設定" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "bot除外設定" });
+    expect(within(dialog).getByText(/デフォルトに戻しました/)).toBeInTheDocument();
   });
 });
