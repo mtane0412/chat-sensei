@@ -157,6 +157,37 @@ describe("buildTranslateUserPrompt", () => {
   });
 });
 
+describe("buildTranslateSystemPrompt と emote の扱い(issue #44)", () => {
+  it("システムプロンプトでは emote やプレースホルダに一切言及しない(言及するとモデルが emote の無い発言に `emote: 😱` や `[[E0]]` を付け足すため)", () => {
+    for (const explainLang of SUPPORTED_LANGUAGES) {
+      expect(buildTranslateSystemPrompt("en", explainLang)).not.toMatch(
+        /emote|placeholder|プレースホルダ|Platzhalter|marcador|marqueur|\[\[E\d+\]\]/i,
+      );
+    }
+  });
+
+  it("@メンション・URL をそのまま残す指示は引き続き含む", () => {
+    expect(buildTranslateSystemPrompt("en", "ja")).toMatch(/@メンション・URL/);
+    expect(buildTranslateSystemPrompt("ja", "en")).toMatch(/@mentions and URLs/i);
+  });
+});
+
+describe("buildTranslateUserPrompt のプレースホルダ指示(issue #44)", () => {
+  it("プレースホルダを渡した場合は、その実際のトークンを列挙してそのまま書き写す指示を本文の後ろに付ける", () => {
+    const prompt = buildTranslateUserPrompt("Ello [[E0]] [[E1]]", ["[[E0]]", "[[E1]]"]);
+
+    expect(prompt).toContain('"Ello [[E0]] [[E1]]"');
+    expect(prompt).toMatch(/\[\[E0\]\], \[\[E1\]\].*emote/);
+  });
+
+  it("プレースホルダが無い場合はトークンの説明を付けない(モデルが存在しないトークンを書き出すのを防ぐ)", () => {
+    const prompt = buildTranslateUserPrompt("clappi", []);
+
+    expect(prompt).toBe(buildTranslateUserPrompt("clappi"));
+    expect(prompt).not.toMatch(/emote|placeholder/i);
+  });
+});
+
 describe("buildPickupSystemPrompt", () => {
   it("解説言語がjaのとき、学ぶ言語の特殊な表現を抜き出して日本語で意味を示すよう指示する日本語のシステムプロンプトを組み立てる", () => {
     const prompt = buildPickupSystemPrompt("en", "ja");

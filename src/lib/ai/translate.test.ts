@@ -70,6 +70,14 @@ describe("translateChatMessage", () => {
     );
   });
 
+  it("placeholderTokens を指定した場合は、そのトークンの説明をユーザープロンプトに含める(issue #44)", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ translation: "t" }));
+
+    await translateChatMessage(pool, "Ello [[E0]]", { placeholderTokens: ["[[E0]]"] });
+
+    expect(pool.prompt).toHaveBeenCalledWith(expect.stringMatching(/\[\[E0\]\].*emote/), expect.anything());
+  });
+
   it("応答がJSONとして解釈できない場合はエラーを投げる", async () => {
     const pool = createFakeSessionPool("これはJSONではない文字列です");
 

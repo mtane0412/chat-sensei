@@ -65,15 +65,15 @@ export function buildExplainUserPrompt(chatMessageText: string): string {
 /** 解説言語ごとの翻訳用システムプロンプトテンプレート。引数は「学ぶ言語の名前(解説言語表記)」と「解説言語の名前(解説言語表記)」 */
 const TRANSLATE_SYSTEM_PROMPT_BUILDERS: Record<SupportedLanguage, (targetLabel: string, explainLabel: string) => string> = {
   en: (targetLabel, explainLabel) =>
-    `You are a translator for live Twitch chat. The user will show you one chat message that actually appeared in a live stream, written in ${targetLabel}. Translate the whole message into natural, casual ${explainLabel} that preserves the tone (slang, jokes, excitement). Keep emote names, @mentions, and URLs unchanged. Do not add explanations or notes. Respond only in the requested JSON structure.`,
+    `You are a translator for live Twitch chat. The user will show you one chat message that actually appeared in a live stream, written in ${targetLabel}. Translate the whole message into natural, casual ${explainLabel} that preserves the tone (slang, jokes, excitement). Keep @mentions and URLs unchanged. Do not add explanations or notes. Respond only in the requested JSON structure.`,
   ja: (targetLabel, explainLabel) =>
-    `あなたはTwitchのライブ配信チャットの翻訳者です。ユーザーはライブ配信で実際に流れた${targetLabel}のチャット発言を1件見せます。発言全体を、スラング・冗談・興奮といった口調を保ったまま自然でくだけた${explainLabel}に翻訳してください。emote名・@メンション・URLはそのまま残してください。解説や注釈は加えないでください。指定されたJSON構造だけで答えてください。`,
+    `あなたはTwitchのライブ配信チャットの翻訳者です。ユーザーはライブ配信で実際に流れた${targetLabel}のチャット発言を1件見せます。発言全体を、スラング・冗談・興奮といった口調を保ったまま自然でくだけた${explainLabel}に翻訳してください。@メンション・URLはそのまま残してください。解説や注釈は加えないでください。指定されたJSON構造だけで答えてください。`,
   es: (targetLabel, explainLabel) =>
-    `Eres un traductor de chat en vivo de Twitch. El usuario te mostrará un mensaje de chat que realmente apareció en una transmisión en vivo, escrito en ${targetLabel}. Traduce el mensaje completo a un ${explainLabel} natural e informal que conserve el tono (jerga, bromas, entusiasmo). Mantén sin cambios los nombres de emotes, las menciones (@) y las URL. No añadas explicaciones ni notas. Responde únicamente con la estructura JSON solicitada.`,
+    `Eres un traductor de chat en vivo de Twitch. El usuario te mostrará un mensaje de chat que realmente apareció en una transmisión en vivo, escrito en ${targetLabel}. Traduce el mensaje completo a un ${explainLabel} natural e informal que conserve el tono (jerga, bromas, entusiasmo). Mantén sin cambios las menciones (@) y las URL. No añadas explicaciones ni notas. Responde únicamente con la estructura JSON solicitada.`,
   de: (targetLabel, explainLabel) =>
-    `Du bist ein Übersetzer für Twitch-Livechats. Der Nutzer zeigt dir eine Chat-Nachricht, die tatsächlich in einem Livestream auf ${targetLabel} geschrieben wurde. Übersetze die gesamte Nachricht in natürliches, lockeres ${explainLabel} und bewahre dabei den Ton (Slang, Witze, Begeisterung). Lass Emote-Namen, @-Erwähnungen und URLs unverändert. Füge keine Erklärungen oder Anmerkungen hinzu. Antworte ausschließlich in der angeforderten JSON-Struktur.`,
+    `Du bist ein Übersetzer für Twitch-Livechats. Der Nutzer zeigt dir eine Chat-Nachricht, die tatsächlich in einem Livestream auf ${targetLabel} geschrieben wurde. Übersetze die gesamte Nachricht in natürliches, lockeres ${explainLabel} und bewahre dabei den Ton (Slang, Witze, Begeisterung). Lass @-Erwähnungen und URLs unverändert. Füge keine Erklärungen oder Anmerkungen hinzu. Antworte ausschließlich in der angeforderten JSON-Struktur.`,
   fr: (targetLabel, explainLabel) =>
-    `Tu es un traducteur pour le chat en direct de Twitch. L'utilisateur te montrera un message de chat qui est réellement apparu dans un stream en direct, écrit en ${targetLabel}. Traduis le message complet en ${explainLabel} naturel et familier, en conservant le ton (argot, blagues, enthousiasme). Laisse les noms d'emotes, les mentions (@) et les URL inchangés. N'ajoute ni explications ni notes. Réponds uniquement dans la structure JSON demandée.`,
+    `Tu es un traducteur pour le chat en direct de Twitch. L'utilisateur te montrera un message de chat qui est réellement apparu dans un stream en direct, écrit en ${targetLabel}. Traduis le message complet en ${explainLabel} naturel et familier, en conservant le ton (argot, blagues, enthousiasme). Laisse les mentions (@) et les URL inchangées. N'ajoute ni explications ni notes. Réponds uniquement dans la structure JSON demandée.`,
 };
 
 /**
@@ -89,9 +89,17 @@ export function buildTranslateSystemPrompt(targetLang: SupportedLanguage, explai
 /**
  * 翻訳対象のチャット本文からユーザープロンプトを組み立てる。
  * 解説用と同様に引用符で囲み、指示ではなくデータであることを明示する。
+ *
+ * `placeholderTokens` には本文中で emote を置き換えたプレースホルダ(例: `[[E0]]`)を渡す(issue #44)。
+ * トークンの説明は emote を含む発言にだけ、実際のトークンを列挙して付ける。システムプロンプトで
+ * emote やプレースホルダに言及すると、emote の無い発言でもモデルが例のトークンや `emote: 😱` のような
+ * 注記を訳文に付け足すため(実ブラウザ確認で観測)、システムプロンプトでは一切言及せず、
+ * 説明はユーザープロンプト側に限定する。
  */
-export function buildTranslateUserPrompt(chatMessageText: string): string {
-  return `Chat message to translate: "${chatMessageText}"`;
+export function buildTranslateUserPrompt(chatMessageText: string, placeholderTokens: readonly string[] = []): string {
+  const base = `Chat message to translate: "${chatMessageText}"`;
+  if (placeholderTokens.length === 0) return base;
+  return `${base}\nThe tokens ${placeholderTokens.join(", ")} in the message stand for emotes; copy each of them into the translation exactly as written.`;
 }
 
 /**

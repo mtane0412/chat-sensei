@@ -37,7 +37,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
-import { buildEmoteImageUrl, splitMessageIntoSegments, splitTextByEmoteNames, type MessageSegment } from "@/lib/twitch/emotes";
+import { buildEmoteImageUrl, splitMessageIntoSegments, type MessageSegment } from "@/lib/twitch/emotes";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
@@ -174,7 +174,7 @@ export default function Home() {
                     entry={message.id === null ? undefined : translationEntries[message.id]}
                     promptApi={promptApi}
                     noun="翻訳"
-                    renderDone={(done) => <TranslationText message={message} translation={done.translation} />}
+                    renderDone={(done) => <TranslationText segments={done.segments} />}
                   />
                 </Row>
               ))}
@@ -369,17 +369,10 @@ function PickupTerms({ terms }: { terms: PickupDone["terms"] }) {
 }
 
 /**
- * 翻訳文の中身。翻訳は emote 名をそのまま残す設計のため、元の発言に含まれていた emote 名が
- * 文字列として現れた箇所を左列と同じ emote 画像に置き換えて表示する(issue #28)
+ * 翻訳文の中身。翻訳パイプライン(`translations.ts`)が emote をプレースホルダ経由で
+ * 決定的に復元したセグメント列を保持しているため、左列と同じ描画関数でそのまま表示する(issue #28 → #44)
  */
-function TranslationText({ message, translation }: { message: TwitchChatMessage } & TranslationDone) {
-  const segments = useMemo(() => {
-    const knownEmotes = splitMessageIntoSegments(message.text, message.emotes).filter(
-      (segment) => segment.type === "emote",
-    );
-    return splitTextByEmoteNames(translation, knownEmotes);
-  }, [message.text, message.emotes, translation]);
-
+function TranslationText({ segments }: TranslationDone) {
   return (
     <span>
       <MessageSegments segments={segments} />

@@ -6,17 +6,25 @@
  *
  * - LLM を呼ばずに確定させる発言: emote だけの発言(issue #28)と `!` で始まるチャットコマンド(issue #35)は
  *   原文をそのまま訳文として `done` にする(LLM に渡すと emote 名やコマンドを訳・音訳してしまうため)
- * - ジョブ: `translateChatMessage` を低優先度で実行し、訳文を `translation` として保持する
+ * - ジョブ: emote を `[[E0]]` のようなプレースホルダに置き換えた本文で `translateChatMessage` を低優先度で実行し、
+ *   訳文中のプレースホルダを emote セグメントに戻した `segments` を保持する(issue #44。LLM に emote 名を
+ *   見せると意訳して書き換えることがあり、名前の一致では復元できないため)
  * - Prompt API の利用可否は `prompt-api.ts` の共有ストアを参照する(Pick up 列と共通)
  */
 import { createTranslateBaseSessionFactory, translateChatMessage } from "@/lib/ai/translate";
 import { isChatCommandMessage } from "@/lib/twitch/chat-command";
-import { isEmoteOnlyMessage } from "@/lib/twitch/emotes";
+import {
+  isEmoteOnlyMessage,
+  maskEmotesWithPlaceholders,
+  restoreEmotesFromPlaceholders,
+  splitMessageIntoSegments,
+  type MessageSegment,
+} from "@/lib/twitch/emotes";
 import { createAutoPipeline, type AutoPipelineDeps, type PipelineEntry } from "./auto-pipeline";
 
-/** 翻訳の完了時に保持する結果 */
+/** 翻訳の完了時に保持する結果。訳文はページがそのまま描画できるテキスト/emote セグメント列で持つ */
 export interface TranslationDone {
-  translation: string;
+  segments: MessageSegment[];
 }
 
 /** 発言1件ぶんの翻訳の状態 */
@@ -29,9 +37,17 @@ const pipeline = createAutoPipeline<TranslationDone>({
   createBaseSession: (settings) => createTranslateBaseSessionFactory(settings.targetLang, settings.explainLang),
   resolveWithoutModel: (message) =>
     isEmoteOnlyMessage(message.text, message.emotes) || isChatCommandMessage(message.text)
-      ? { translation: message.text }
+      ? { segments: splitMessageIntoSegments(message.text, message.emotes) }
       : null,
-  runJob: (pool, message, { signal }) => translateChatMessage(pool, message.text, { priority: "low", signal }),
+  runJob: async (pool, message, { signal }) => {
+    const { maskedText, placeholders } = maskEmotesWithPlaceholders(message.text, message.emotes);
+    const { translation } = await translateChatMessage(pool, maskedText, {
+      priority: "low",
+      signal,
+      placeholderTokens: placeholders.map((placeholder) => placeholder.token),
+    });
+    return { segments: restoreEmotesFromPlaceholders(translation, placeholders) };
+  },
 });
 
 export const useTranslationStore = pipeline.useStore;

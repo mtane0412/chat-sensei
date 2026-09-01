@@ -17,6 +17,8 @@ export interface TranslateOptions {
   /** 翻訳は受信した全発言を自動で処理するバックグラウンド生成のため、既定は low */
   priority?: JobPriority;
   signal?: AbortSignal;
+  /** 本文中で emote を置き換えたプレースホルダ。指定した場合だけユーザープロンプトにその説明を付ける(issue #44) */
+  placeholderTokens?: readonly string[];
 }
 
 /** チャット本文の翻訳を生成する。応答の解釈・検証・再試行の方針は `runStructuredPrompt` に従う */
@@ -26,7 +28,7 @@ export async function translateChatMessage(
   options: TranslateOptions = {},
 ): Promise<TranslationResult> {
   return runStructuredPrompt(sessionPool, {
-    userPrompt: buildTranslateUserPrompt(chatMessageText),
+    userPrompt: buildTranslateUserPrompt(chatMessageText, options.placeholderTokens ?? []),
     schema: translationSchema,
     priority: options.priority ?? "low",
     signal: options.signal,
