@@ -18,9 +18,64 @@ import { classifyDetectedLanguage, MIN_FALLBACK_CONFIDENCE } from "./detect-lang
 const 英語を学ぶ日本語話者の設定: Settings = { learningLangs: ["en"], explainLang: "ja" };
 const 日英混在チャットの設定: Settings = { learningLangs: ["en", "ja"], explainLang: "ja" };
 
+describe("classifyDetectedLanguage(かな規則)", () => {
+  // Language Detector は「龍が如く感」を zh-Hant 0.939 / ja 0.058、「ｱｲﾑﾚﾃﾞｨ」を zh-Hans 0.871 / ja 0.052 と判定する(実測)。
+  // ひらがな・カタカナは中国語・韓国語には現れないため、本文にかなが 1 文字でもあれば判定器の結果によらず日本語とみなす
+  it("本文にひらがなが含まれていれば、判定器が zh と言っていても日本語として扱う(学ぶ言語が日本語なら処理する)", () => {
+    const result = classifyDetectedLanguage(
+      "龍が如く感",
+      [{ detectedLanguage: "zh-Hant", confidence: 0.939 }, { detectedLanguage: "ja", confidence: 0.058 }],
+      { learningLangs: ["ja"], explainLang: "en" },
+    );
+
+    expect(result).toEqual({ kind: "learning", lang: "ja" });
+  });
+
+  it("本文に半角カタカナが含まれていれば日本語として扱う(解説言語が日本語なら「同じ言語」)", () => {
+    const result = classifyDetectedLanguage(
+      "ｱｲﾑﾚﾃﾞｨ",
+      [{ detectedLanguage: "zh-Hans", confidence: 0.871 }, { detectedLanguage: "ja", confidence: 0.052 }],
+      英語を学ぶ日本語話者の設定,
+    );
+
+    expect(result).toEqual({ kind: "same-as-explanation" });
+  });
+
+  it("本文に全角カタカナ・ひらがなが含まれていれば、候補列に ja が無くても日本語として扱う", () => {
+    const result = classifyDetectedLanguage(
+      "おおすぎｗｗｗｗ",
+      [{ detectedLanguage: "lt", confidence: 0.653 }],
+      英語を学ぶ日本語話者の設定,
+    );
+
+    expect(result).toEqual({ kind: "same-as-explanation" });
+  });
+
+  it("日本語が学ぶ言語にも解説言語にも無い設定では、かなを含む本文は「対象外(ja)」にする", () => {
+    const result = classifyDetectedLanguage(
+      "それな",
+      [{ detectedLanguage: "ja", confidence: 0.999 }],
+      { learningLangs: ["en"], explainLang: "es" },
+    );
+
+    expect(result).toEqual({ kind: "other", detectedLanguage: "ja" });
+  });
+
+  it("漢字だけの本文はかな規則の対象外で、判定器の候補列で決める(実測: 人気投票 = zh-Hans 0.475 / ja 0.262)", () => {
+    const result = classifyDetectedLanguage(
+      "人気投票",
+      [{ detectedLanguage: "zh-Hans", confidence: 0.475 }, { detectedLanguage: "ja", confidence: 0.262 }],
+      英語を学ぶ日本語話者の設定,
+    );
+
+    expect(result).toEqual({ kind: "same-as-explanation" });
+  });
+});
+
 describe("classifyDetectedLanguage", () => {
   it("最上位候補が学ぶ言語なら、その言語で処理する", () => {
     const result = classifyDetectedLanguage(
+      "latin text",
       [
         { detectedLanguage: "en", confidence: 0.9 },
         { detectedLanguage: "ja", confidence: 0.1 },
@@ -32,23 +87,24 @@ describe("classifyDetectedLanguage", () => {
   });
 
   it("最上位候補が解説言語と同じなら、学ぶ言語に含まれていても「同じ言語」として処理しない", () => {
-    const result = classifyDetectedLanguage([{ detectedLanguage: "ja", confidence: 0.95 }], 日英混在チャットの設定);
+    const result = classifyDetectedLanguage("latin text", [{ detectedLanguage: "ja", confidence: 0.95 }], 日英混在チャットの設定);
 
     expect(result).toEqual({ kind: "same-as-explanation" });
   });
 
   it("最上位候補が学ぶ言語にも解説言語にも該当しなければ、判定した言語を添えて「対象外」にする", () => {
-    const result = classifyDetectedLanguage([{ detectedLanguage: "ko", confidence: 0.8 }], 英語を学ぶ日本語話者の設定);
+    const result = classifyDetectedLanguage("latin text", [{ detectedLanguage: "ko", confidence: 0.8 }], 英語を学ぶ日本語話者の設定);
 
     expect(result).toEqual({ kind: "other", detectedLanguage: "ko" });
   });
 
-  it("最上位候補が対象外でも、候補列に十分な信頼度の学ぶ言語があればその言語で処理する(短い感嘆詞の誤判定対策)", () => {
+  it("最上位候補が対象外でも、候補列に十分な信頼度の学ぶ言語があればその言語で処理する(実測: oooohhh ok = ar-Latn 0.620 / nl 0.094 / en 0.074)", () => {
     const result = classifyDetectedLanguage(
+      "oooohhh ok",
       [
-        { detectedLanguage: "ar", confidence: 0.45 },
-        { detectedLanguage: "en", confidence: 0.3 },
-        { detectedLanguage: "ja", confidence: 0.05 },
+        { detectedLanguage: "ar-Latn", confidence: 0.62 },
+        { detectedLanguage: "nl", confidence: 0.094 },
+        { detectedLanguage: "en", confidence: 0.074 },
       ],
       英語を学ぶ日本語話者の設定,
     );
@@ -56,8 +112,25 @@ describe("classifyDetectedLanguage", () => {
     expect(result).toEqual({ kind: "learning", lang: "en" });
   });
 
+  it("対象外の言語の発言に学ぶ言語がごく低い信頼度で混ざっていても採用しない(実測: 牛逼 = zh-Hans 0.907 / ja 0.022、muito bom = pt 0.982 / en 0.006)", () => {
+    const 中国語 = classifyDetectedLanguage(
+      "牛逼",
+      [{ detectedLanguage: "zh-Hans", confidence: 0.907 }, { detectedLanguage: "ja", confidence: 0.022 }],
+      { learningLangs: ["ja"], explainLang: "en" },
+    );
+    const ポルトガル語 = classifyDetectedLanguage(
+      "muito bom",
+      [{ detectedLanguage: "pt", confidence: 0.982 }, { detectedLanguage: "en", confidence: 0.006 }],
+      英語を学ぶ日本語話者の設定,
+    );
+
+    expect(中国語).toEqual({ kind: "other", detectedLanguage: "zh" });
+    expect(ポルトガル語).toEqual({ kind: "other", detectedLanguage: "pt" });
+  });
+
   it("候補列に複数の学ぶ言語があるときは、信頼度が高い(先に並ぶ)ほうを採用する", () => {
     const result = classifyDetectedLanguage(
+      "latin text",
       [
         { detectedLanguage: "pt", confidence: 0.5 },
         { detectedLanguage: "es", confidence: 0.3 },
@@ -71,6 +144,7 @@ describe("classifyDetectedLanguage", () => {
 
   it("候補列の学ぶ言語の信頼度が下限未満なら採用せず「対象外」のままにする(韓国語の発言などを誤って処理しないため)", () => {
     const result = classifyDetectedLanguage(
+      "latin text",
       [
         { detectedLanguage: "ko", confidence: 0.98 },
         { detectedLanguage: "en", confidence: MIN_FALLBACK_CONFIDENCE - 0.01 },
@@ -83,6 +157,7 @@ describe("classifyDetectedLanguage", () => {
 
   it("最上位候補が対象外でも、候補列に十分な信頼度の解説言語があれば「同じ言語」にする(漢字だけ・半角カナだけの日本語が zh になる誤判定対策)", () => {
     const result = classifyDetectedLanguage(
+      "latin text",
       [
         { detectedLanguage: "zh", confidence: 0.6 },
         { detectedLanguage: "ja", confidence: 0.35 },
@@ -95,6 +170,7 @@ describe("classifyDetectedLanguage", () => {
 
   it("候補列に学ぶ言語と解説言語の両方があるときは、信頼度が高い(先に並ぶ)ほうを採用する", () => {
     const 学ぶ言語が先 = classifyDetectedLanguage(
+      "latin text",
       [
         { detectedLanguage: "ar", confidence: 0.5 },
         { detectedLanguage: "en", confidence: 0.3 },
@@ -103,6 +179,7 @@ describe("classifyDetectedLanguage", () => {
       英語を学ぶ日本語話者の設定,
     );
     const 解説言語が先 = classifyDetectedLanguage(
+      "latin text",
       [
         { detectedLanguage: "ar", confidence: 0.5 },
         { detectedLanguage: "ja", confidence: 0.3 },
@@ -117,6 +194,7 @@ describe("classifyDetectedLanguage", () => {
 
   it("候補列の解説言語の信頼度が下限未満なら「同じ言語」にはせず「対象外」のままにする", () => {
     const result = classifyDetectedLanguage(
+      "latin text",
       [
         { detectedLanguage: "zh", confidence: 0.98 },
         { detectedLanguage: "ja", confidence: MIN_FALLBACK_CONFIDENCE - 0.01 },
@@ -128,17 +206,17 @@ describe("classifyDetectedLanguage", () => {
   });
 
   it("地域付きの言語タグ(en-US など)は主言語部分で照合する", () => {
-    const result = classifyDetectedLanguage([{ detectedLanguage: "en-US", confidence: 0.8 }], 英語を学ぶ日本語話者の設定);
+    const result = classifyDetectedLanguage("latin text", [{ detectedLanguage: "en-US", confidence: 0.8 }], 英語を学ぶ日本語話者の設定);
 
     expect(result).toEqual({ kind: "learning", lang: "en" });
   });
 
   it("候補が空の場合は言語不明(und)として「対象外」にする", () => {
-    expect(classifyDetectedLanguage([], 英語を学ぶ日本語話者の設定)).toEqual({ kind: "other", detectedLanguage: "und" });
+    expect(classifyDetectedLanguage("latin text", [], 英語を学ぶ日本語話者の設定)).toEqual({ kind: "other", detectedLanguage: "und" });
   });
 
   it("最上位候補に言語が無い場合も言語不明(und)として「対象外」にする", () => {
-    expect(classifyDetectedLanguage([{ confidence: 0.5 }], 英語を学ぶ日本語話者の設定)).toEqual({
+    expect(classifyDetectedLanguage("latin text", [{ confidence: 0.5 }], 英語を学ぶ日本語話者の設定)).toEqual({
       kind: "other",
       detectedLanguage: "und",
     });

@@ -34,11 +34,20 @@ export interface LanguageDetectorLike {
 export const UNDETERMINED_LANGUAGE = "und";
 
 /**
- * 最上位候補が対象外だったとき、候補列の中の学ぶ言語を採用するために必要な最低信頼度。
- * 韓国語の発言などでは学ぶ言語の候補がこれより低い値にしかならず、短い英語の感嘆詞では
- * 2 位以下でもこれを超える(実測: "oooohhh ok" で ar 0.45 / en 0.3 程度)ことを踏まえた値
+ * 最上位候補が対象外だったとき、候補列の中の学ぶ言語・解説言語を採用するために必要な最低信頼度。
+ * Chrome 152 での実測: 対象外言語の発言に混ざる学ぶ言語・解説言語は「牛逼」ja 0.022、「muito bom」en 0.006、
+ * 「hallo alles goed」en 0.048 と 0.05 未満に収まり、拾いたい短文は「oooohhh ok」en 0.074、「ez」en 0.158、
+ * 「草」ja 0.171、「人気投票」ja 0.262 と 0.05 以上に出る。その境界として 0.05 を採る
  */
-export const MIN_FALLBACK_CONFIDENCE = 0.1;
+export const MIN_FALLBACK_CONFIDENCE = 0.05;
+
+/** ひらがな(U+3040–309F)・カタカナ(U+30A0–30FF)・半角カタカナ(U+FF66–FF9F)のいずれか */
+const KANA_PATTERN = /[\u3040-\u30ff\uff66-\uff9f]/;
+
+/** 本文にかなが含まれるか。含まれていれば判定器の結果によらず日本語とみなす */
+export function containsKana(text: string): boolean {
+  return KANA_PATTERN.test(text);
+}
 
 export type LanguageClassification =
   /** 学ぶ言語のひとつ。`lang` のセッションプールで翻訳・Pick up する */
@@ -63,17 +72,23 @@ function isProcessableLearningLanguage(lang: string, settings: Settings): lang i
 }
 
 /**
- * Language Detector の判定結果(信頼度順)と言語設定から、発言の扱いを決める。
+ * 本文・Language Detector の判定結果(信頼度順)・言語設定から、発言の扱いを決める。
+ * 本文はかな規則にだけ使い、それ以外は判定器の候補列で決める。
  * 解説言語との一致を学ぶ言語より先に判定するため、学ぶ言語に解説言語が含まれていても「同じ言語」になる。
  * 最上位候補がどちらでもないときは、候補列を信頼度順に見て `MIN_FALLBACK_CONFIDENCE` 以上の学ぶ言語・解説言語の
  * うち先に見つかったものを採用し、無ければ最上位候補の言語を添えて「対象外」にする。
  */
 export function classifyDetectedLanguage(
+  text: string,
   candidates: readonly DetectedLanguageCandidate[],
   settings: Settings,
 ): LanguageClassification {
   const top = candidates[0]?.detectedLanguage;
-  const detected = top === undefined ? UNDETERMINED_LANGUAGE : primaryLanguageSubtag(top);
+  const detected = containsKana(text)
+    ? "ja"
+    : top === undefined
+      ? UNDETERMINED_LANGUAGE
+      : primaryLanguageSubtag(top);
 
   if (detected === settings.explainLang) return { kind: "same-as-explanation" };
   if (isProcessableLearningLanguage(detected, settings)) return { kind: "learning", lang: detected };

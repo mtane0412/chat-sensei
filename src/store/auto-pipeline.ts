@@ -229,9 +229,10 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
     /** 発言の言語を判定し、学ぶ言語ならジョブを投入、そうでなければモデルを呼ばずに確定する */
     async function detectAndRun(message: TwitchChatMessage, id: string): Promise<void> {
       const detector = await getDetector();
-      const candidates = await detector.detect(extractPlainText(message.text, message.emotes));
+      const plainText = extractPlainText(message.text, message.emotes);
+      const candidates = await detector.detect(plainText);
       if (controller.signal.aborted) return;
-      const classification = classifyDetectedLanguage(candidates, settings);
+      const classification = classifyDetectedLanguage(plainText, candidates, settings);
       switch (classification.kind) {
         case "learning":
           await runJob(message, id, classification.lang);
