@@ -9,8 +9,8 @@
  *   LLM に渡す本文と、後段フィルタで照合するための emote 名・メンション名を返す
  * - `filterPickupTerms`: 後段フィルタ。返ってきた語句のうち emote 名・@メンション・
  *   `!` で始まるチャットコマンド・文字を1つも含まない語句(数字や記号だけ)・
- *   `haha` のような笑い声(issue #30)・呼び出し側が指定した除外名(表示中の発言者名など)を落とし、
- *   重複する語句は1件にまとめる
+ *   `haha` のような笑い声(issue #30)・`oh` / `wow` / `hmm` のような相槌・感嘆詞(issue #33)・
+ *   呼び出し側が指定した除外名(表示中の発言者名など)を落とし、重複する語句は1件にまとめる
  *
  * 翻訳列は「emote 名はそのまま残す」設計のため、この処理は Pick up 専用である。
  */
@@ -42,6 +42,28 @@ const NO_LETTER_PATTERN = /^[^\p{L}]*$/u;
 const LAUGHTER_PATTERN = /^(ha|he)+h?$/i;
 /** 語句の先頭・末尾に連続する、文字以外の記号(`!` `(` `)` `...` など) */
 const SURROUNDING_NON_LETTERS_PATTERN = /^[^\p{L}]+|[^\p{L}]+$/gu;
+/** 同じ文字が2回以上連続する箇所(`ohhh` の `hhh` など) */
+const REPEATED_LETTER_PATTERN = /(\p{L})\1+/gu;
+/** `ohhh` / `hmmm` のように文字を伸ばした形を照合できるよう、同じ文字の連続を1文字にまとめる */
+function collapseRepeatedLetters(word: string): string {
+  return word.replace(REPEATED_LETTER_PATTERN, "$1");
+}
+/**
+ * 言語を問わず普遍的に相槌・感嘆詞と判断できる語の除外辞書(issue #33)。
+ * プロンプトで「相槌・感嘆詞は特殊な表現ではない」と指示しても Gemini Nano は `oh → 驚きを表す感嘆詞` のように返すため、
+ * 笑い声(`LAUGHTER_PATTERN`)と同じ層で決定的に落とす。
+ *
+ * - 単独で意味を持たず、学習者が辞書を引く価値が無い語に限定する。`lol` / `pog` のような略語・ミームは入れない
+ * - `om` は「oh my」「oh man」の短縮形で驚き・感嘆を表す相槌として使われるため入れる
+ * - 語は自然な綴りで書き、照合と同じ `collapseRepeatedLetters` を通して登録する(`hmm` → `hm`、`aww` → `aw`)
+ * - 英語の相槌のみを収録している。対象言語(`prompts.ts` の `SupportedLanguage`)固有の相槌は未対応で、
+ *   必要になったら `targetLang` ごとの辞書に拡張する
+ */
+const INTERJECTIONS = new Set(
+  ["oh", "ah", "eh", "uh", "um", "om", "hmm", "mhm", "wow", "whoa", "woah", "ugh", "huh", "aww", "ew", "yay"].map(
+    collapseRepeatedLetters,
+  ),
+);
 
 /**
  * チャット本文から Pick up の対象にならないトークンを除き、LLM に渡す本文を組み立てる。
@@ -97,7 +119,9 @@ export function filterPickupTerms(
     if (normalized.startsWith("@") || normalized.startsWith("!")) return false;
     if (excludedNames.has(normalized)) return false;
     if (NO_LETTER_PATTERN.test(normalized)) return false;
-    if (LAUGHTER_PATTERN.test(normalized.replace(SURROUNDING_NON_LETTERS_PATTERN, ""))) return false;
+    // 笑い声・相槌は `haha!` / `ohhh` のように記号や伸ばしが付いても同じ語なので、揃えてから照合する
+    const collapsed = collapseRepeatedLetters(normalized.replace(SURROUNDING_NON_LETTERS_PATTERN, ""));
+    if (LAUGHTER_PATTERN.test(collapsed) || INTERJECTIONS.has(collapsed)) return false;
     if (seen.has(normalized)) return false;
     seen.add(normalized);
     return true;
