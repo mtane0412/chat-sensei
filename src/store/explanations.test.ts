@@ -376,6 +376,53 @@ describe("requestExplanation", () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it("生成中に停止すると pending のエントリを取り除き、停止後にジョブが決着しても結果を書き込まない", async () => {
+    const first = createDeferred<string>();
+    const second = createDeferred<string>();
+    const { deps, setMessages } = createDeps({ promptResults: [first.promise, second.promise] });
+    const message1 = createMessage({ id: "msg-1" });
+    const message2 = createMessage({ id: "msg-2" });
+    setMessages([message1, message2]);
+    const stop = startExplanationPipeline(deps);
+    await flush();
+
+    requestExplanation(message1);
+    requestExplanation(message2);
+    await flush();
+    expect(useExplanationStore.getState().entries["msg-1"]).toEqual({ status: "pending" });
+
+    stop();
+    expect(useExplanationStore.getState().entries["msg-1"]).toBeUndefined();
+    expect(useExplanationStore.getState().entries["msg-2"]).toBeUndefined();
+
+    // 停止後に前のジョブが成功・失敗しても、停止済みパイプラインは状態を書き込まない
+    first.resolve(JSON.stringify(サンプル解説));
+    second.reject(new Error("停止後の失敗"));
+    await flush();
+    expect(useExplanationStore.getState().entries).toEqual({});
+  });
+
+  it("停止後に再開すると、再度の要求で解説を生成できる", async () => {
+    const stalled = createDeferred<string>();
+    const { deps, setMessages } = createDeps({
+      promptResults: [stalled.promise, Promise.resolve(JSON.stringify(サンプル解説))],
+    });
+    const message = createMessage({ id: "msg-1" });
+    setMessages([message]);
+    const stop = startExplanationPipeline(deps);
+    await flush();
+    requestExplanation(message);
+    await flush();
+    stop();
+
+    startExplanationPipeline(deps);
+    await flush();
+    requestExplanation(message);
+    await flush();
+
+    expect(useExplanationStore.getState().entries["msg-1"]).toEqual({ status: "done", result: サンプル解説 });
+  });
+
   it("パイプラインが開始されていない状態で要求しても何もしない", () => {
     requestExplanation(createMessage({ id: "msg-1" }));
 

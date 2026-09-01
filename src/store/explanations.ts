@@ -79,6 +79,13 @@ function setEntry(id: string, entry: ExplanationEntry): void {
   useExplanationStore.setState((prev) => ({ entries: { ...prev.entries, [id]: entry } }));
 }
 
+function removeEntries(ids: Iterable<string>): void {
+  const removing = new Set(ids);
+  useExplanationStore.setState((prev) => ({
+    entries: Object.fromEntries(Object.entries(prev.entries).filter(([id]) => !removing.has(id))),
+  }));
+}
+
 /** 表示用リングバッファに残っていない発言の解説結果を捨て、メモリが際限なく増えないようにする */
 function pruneEntries(messages: TwitchChatMessage[]): void {
   const liveIds = new Set(messages.map((message) => message.id));
@@ -95,13 +102,16 @@ function describePromptApiUnavailableReason(diagnosis: EnvironmentDiagnosis): st
 
 /**
  * 解説パイプラインを開始する。環境診断を行い Prompt API の利用可否を確定させる。
- * 戻り値の関数を呼ぶと以後の要求を受け付けなくなり、待機中のジョブを中断する。
+ * 戻り値の関数を呼ぶと以後の要求を受け付けなくなり、待機中のジョブを中断して
+ * 生成中(pending)だったエントリを取り除く。
  * ホーム画面のマウント時に1回呼び出す想定。
  */
 export function startExplanationPipeline(deps: ExplanationPipelineDeps = DEFAULT_DEPS): () => void {
   const controller = new AbortController();
   const settings = deps.loadSettings();
   let pool: SessionPool | null = null;
+  /** このパイプラインが投入して未決着のジョブの発言 ID。停止時に pending のまま残さないよう取り除く */
+  const pendingIds = new Set<string>();
 
   useExplanationStore.setState({ promptApi: { status: "checking" } });
 
@@ -112,12 +122,18 @@ export function startExplanationPipeline(deps: ExplanationPipelineDeps = DEFAULT
 
   function explain(message: TwitchChatMessage, id: string): void {
     setEntry(id, { status: "pending" });
+    pendingIds.add(id);
     explainChatMessage(getPool(), message.text, { priority: "high", signal: controller.signal })
-      .then((result) => setEntry(id, { status: "done", result }))
+      .then((result) => {
+        // 停止後に決着したジョブの結果は、再開後のパイプラインの状態を上書きしないよう捨てる
+        if (controller.signal.aborted) return;
+        setEntry(id, { status: "done", result });
+      })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         setEntry(id, { status: "failed", reason: error instanceof Error ? error.message : String(error) });
-      });
+      })
+      .finally(() => pendingIds.delete(id));
   }
 
   function request(message: TwitchChatMessage): void {
@@ -162,6 +178,9 @@ export function startExplanationPipeline(deps: ExplanationPipelineDeps = DEFAULT
 
   return () => {
     controller.abort();
+    // 中断したジョブのエントリを pending のまま残さず取り除き、再開後に改めて要求できるようにする
+    removeEntries(pendingIds);
+    pendingIds.clear();
     if (activePipeline === handle) activePipeline = null;
   };
 }
