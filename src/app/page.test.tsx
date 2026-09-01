@@ -12,7 +12,7 @@
  * 設定ダイアログの環境診断(`runBrowserDiagnosis`)も同様にモックする。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
@@ -421,10 +421,11 @@ describe("Home(新着への追従)", () => {
    * jsdom はレイアウトを計算しないため scrollHeight が常に 0 になる。
    * スクロール先を検証できるよう、スクロール領域のビューポートに scrollHeight を固定値で与える
    */
-  function スクロール領域のビューポートを用意する(scrollHeight: number): HTMLElement {
+  function スクロール領域のビューポートを用意する(scrollHeight: number, clientHeight = 500): HTMLElement {
     const viewport = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
     if (!viewport) throw new Error("スクロール領域のビューポートが見つかりません");
     Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: scrollHeight });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: clientHeight });
     return viewport;
   }
 
@@ -434,7 +435,30 @@ describe("Home(新着への追従)", () => {
     const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
     const toggle = within(rawColumn).getByRole("switch", { name: "Follow new messages" });
     expect(toggle).toHaveAttribute("aria-checked", "true");
-    expect(toggle.querySelector(".lucide-arrow-down-to-line")).not.toBeNull();
+    expect(toggle.querySelector(".lucide-chevrons-down")).not.toBeNull();
+  });
+
+  it("利用者が上方向へスクロールして最下部から離れると、追従が自動でオフになる", () => {
+    render(<Home />);
+    const viewport = スクロール領域のビューポートを用意する(1000, 500);
+    const toggle = screen.getByRole("switch", { name: "Follow new messages" });
+
+    // 最下部(1000 - 500 = 500)から離れた位置へスクロールする
+    viewport.scrollTop = 200;
+    fireEvent.scroll(viewport);
+
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("最下部に留まったままのスクロールイベントでは、追従はオンのまま", () => {
+    render(<Home />);
+    const viewport = スクロール領域のビューポートを用意する(1000, 500);
+    const toggle = screen.getByRole("switch", { name: "Follow new messages" });
+
+    viewport.scrollTop = 500;
+    fireEvent.scroll(viewport);
+
+    expect(toggle).toHaveAttribute("aria-checked", "true");
   });
 
   it("追従がオンのとき、発言が増えるとスクロール領域を最下部まで送る", () => {

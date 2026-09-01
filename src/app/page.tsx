@@ -15,7 +15,8 @@
  * 翻訳列・Pick up列は各列の見出し右端に置いた目のアイコンのトグル(BlurToggle)でぼかせる
  * (自力で読む練習をしたいときに使う。初期状態はどちらも見える)。
  * 生IRC列の見出しには、新着発言に合わせてスクロール領域を最下部へ送り続ける追従トグル(FollowToggle。
- * 初期状態はオン)と、bot除外設定(BotFilterDialog)を開くアイコンを置く。除外パターンは
+ * 初期状態はオンで、利用者が上へスクロールして最下部から離れると自動でオフになる)と、
+ * bot除外設定(BotFilterDialog)を開くアイコンを置く。除外パターンは
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
  * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
@@ -28,7 +29,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownToLineIcon, EyeIcon, EyeOffIcon } from "lucide-react";
+import { ChevronsDownIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Button } from "@/components/ui/button";
@@ -86,6 +87,9 @@ const PICKUP_LABELS: PipelineCellLabels = {
   unavailable: "Extraction unavailable",
 };
 
+/** 最下部からこの距離(px)を超えて上へスクロールしたら、新着への追従を自動でオフにする(サブピクセル誤差の吸収用) */
+const FOLLOW_RELEASE_THRESHOLD_PX = 4;
+
 /** 接続中とみなす状態(切断ボタンに切り替える基準) */
 function isConnectingOrConnected(state: ConnectionState): boolean {
   return state === "connecting" || state === "open" || state === "reconnecting";
@@ -111,6 +115,18 @@ export default function Home() {
     if (!viewport) return;
     viewport.scrollTop = viewport.scrollHeight;
   }, [followLatest, messages]);
+  // 利用者が上方向へスクロールして最下部から離れたら、読み返しの邪魔をしないよう追従を自動でオフにする。
+  // 追従による最下部へのスクロールもこのイベントを起こすが、その時点では最下部にいるためオフにはならない
+  useEffect(() => {
+    const viewport = scrollViewportRef.current;
+    if (!viewport) return;
+    const handleScroll = () => {
+      const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+      if (distanceFromBottom > FOLLOW_RELEASE_THRESHOLD_PX) setFollowLatest(false);
+    };
+    viewport.addEventListener("scroll", handleScroll);
+    return () => viewport.removeEventListener("scroll", handleScroll);
+  }, []);
 
   const translationEntries = useTranslationStore((state) => state.entries);
   const pickupEntries = usePickupStore((state) => state.entries);
@@ -306,7 +322,7 @@ function FollowToggle({
       className={cn(!following && "text-muted-foreground")}
       onClick={() => onFollowingChange(!following)}
     >
-      <ArrowDownToLineIcon />
+      <ChevronsDownIcon />
     </Button>
   );
 }
