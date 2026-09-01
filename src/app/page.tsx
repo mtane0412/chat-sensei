@@ -5,18 +5,19 @@
  *
  * - 左列「生IRC」: 受信した発言をそのまま(表示名の色・emote画像付きで)表示する
  * - 中央列「翻訳」: 発言ごとの翻訳(translations ストア)を左列と同じ高さの行に表示する
- * - 右列「解説」: 発言の解説を必要に応じて生成して表示する(生成処理は未実装。骨組みのみ)
+ * - 右列「Pick up」: 発言ごとに抽出した注目の表現(語句と意味のペア。pickups ストア)を同じ行に表示する
  *
  * 行の高さ揃えは CSS subgrid で実現する。3列の親グリッドが「見出し1行 + 発言数ぶんの行」を
  * 持ち、各列(section)は `grid-rows-subgrid` で親の行トラックを共有する。これにより
  * 同じ発言の左列・中央列・右列のセルが常に同じ行に並び、行の高さは3列の最大値に揃う。
  * スクロールは3列で共通の1つにまとめる(列ごとに独立させると行の対応が崩れるため)。
  *
- * 翻訳列・解説列は学習のためデフォルトでぼかして表示し、それぞれのトグルで解除できる。
+ * 翻訳列・Pick up列は学習のためデフォルトでぼかして表示し、それぞれのトグルで解除できる。
  * 生IRC列の見出しには bot除外設定(BotFilterDialog)を開くアイコンを置く。除外パターンは
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
- * 翻訳結果は translations ストアが保持し、翻訳パイプラインはこの画面のマウント時に開始する。
+ * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
+ * 各パイプラインはこの画面のマウント時に開始する。
  */
 "use client";
 
@@ -33,6 +34,7 @@ import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments } from "@/lib/twitch/emotes";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
+import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupEntry } from "@/store/pickups";
 import {
   startTranslationPipeline,
   useTranslationStore,
@@ -61,15 +63,18 @@ export default function Home() {
   const connect = useChatConnectionStore((state) => state.connect);
   const disconnect = useChatConnectionStore((state) => state.disconnect);
 
-  // 翻訳列・解説列のぼかし。学習のため初期状態はどちらもぼかす
+  // 翻訳列・Pick up列のぼかし。学習のため初期状態はどちらもぼかす
   const [translationBlurred, setTranslationBlurred] = useState(true);
-  const [explanationBlurred, setExplanationBlurred] = useState(true);
+  const [pickupBlurred, setPickupBlurred] = useState(true);
 
   const translationEntries = useTranslationStore((state) => state.entries);
   const promptApi = useTranslationStore((state) => state.promptApi);
+  const pickupEntries = usePickupStore((state) => state.entries);
+  const pickupPromptApi = usePickupStore((state) => state.promptApi);
 
-  // 受信した発言を自動で翻訳ジョブに流す。アンマウント時は購読を解除し待機中のジョブを中断する
+  // 受信した発言を自動で翻訳・抽出ジョブに流す。アンマウント時は購読を解除し待機中のジョブを中断する
   useEffect(() => startTranslationPipeline(), []);
+  useEffect(() => startPickupPipeline(), []);
   // bot除外パターンを LocalStorage から復元する(SSR 中に触れないようマウント後に行う)
   useEffect(() => hydrateBotFilterStore(), []);
 
@@ -78,6 +83,7 @@ export default function Home() {
     if (!channel) return;
     // モデル未ダウンロード時の LanguageModel.create() にはユーザー操作が必要なため、クリックの延長で先に生成する
     warmUpTranslationPipeline();
+    warmUpPickupPipeline();
     connect(channel);
   }, [channelInput, connect]);
 
@@ -122,12 +128,12 @@ export default function Home() {
         </div>
         <div className="flex items-center gap-2">
           <Switch
-            id="explanation-blur"
-            checked={explanationBlurred}
-            onCheckedChange={setExplanationBlurred}
-            aria-label="解説をぼかす"
+            id="pickup-blur"
+            checked={pickupBlurred}
+            onCheckedChange={setPickupBlurred}
+            aria-label="Pick upをぼかす"
           />
-          <Label htmlFor="explanation-blur">解説をぼかす</Label>
+          <Label htmlFor="pickup-blur">Pick upをぼかす</Label>
         </div>
       </div>
 
@@ -165,11 +171,23 @@ export default function Home() {
               ))}
             </div>
           </Column>
-          <Column title="解説" blurred={explanationBlurred}>
+          <Column
+            title="Pick up"
+            blurred={pickupBlurred}
+            headerExtra={
+              pickupPromptApi.status === "unavailable" ? (
+                <p className="text-xs font-normal text-destructive">{pickupPromptApi.reason}</p>
+              ) : null
+            }
+          >
             <div role="list" className="contents">
               {messages.map((message, index) => (
-                <Row key={messageKey(message, index)} message={message} blurred={explanationBlurred}>
-                  <span className="text-muted-foreground">解説は未実装です。</span>
+                <Row key={messageKey(message, index)} message={message} blurred={pickupBlurred}>
+                  <PickupCellContent
+                    message={message}
+                    entry={message.id === null ? undefined : pickupEntries[message.id]}
+                    promptApi={pickupPromptApi}
+                  />
                 </Row>
               ))}
             </div>
@@ -276,6 +294,48 @@ function TranslationCellContent({
       return <span className="text-muted-foreground">未翻訳(流量超過)</span>;
     case "unavailable":
       return <span className="text-muted-foreground">翻訳不可</span>;
+  }
+}
+
+/** Pick up列の1行の中身。翻訳列と同様に、生成中・失敗・キュー溢れ・Prompt API 利用不可の各状態を明示する */
+function PickupCellContent({
+  message,
+  entry,
+  promptApi,
+}: {
+  message: TwitchChatMessage;
+  entry: PickupEntry | undefined;
+  promptApi: PromptApiStatus;
+}) {
+  if (message.id === null) {
+    return <span className="text-muted-foreground">未抽出(IDなし)</span>;
+  }
+  if (!entry) {
+    if (promptApi.status === "unavailable") return <span className="text-muted-foreground">抽出不可</span>;
+    if (promptApi.status === "checking") return <span className="text-muted-foreground">準備中...</span>;
+    return <span className="text-muted-foreground">未抽出</span>;
+  }
+  switch (entry.status) {
+    case "pending":
+      return <span className="text-muted-foreground">抽出中...</span>;
+    case "done":
+      if (entry.terms.length === 0) return <span className="text-muted-foreground">なし</span>;
+      return (
+        <dl className="flex flex-col gap-0.5">
+          {entry.terms.map((term, index) => (
+            <div key={index} className="flex flex-wrap gap-x-2">
+              <dt className="font-semibold">{term.term}</dt>
+              <dd className="text-muted-foreground">{term.meaning}</dd>
+            </div>
+          ))}
+        </dl>
+      );
+    case "failed":
+      return <span className="text-destructive">抽出に失敗: {entry.reason}</span>;
+    case "dropped":
+      return <span className="text-muted-foreground">未抽出(流量超過)</span>;
+    case "unavailable":
+      return <span className="text-muted-foreground">抽出不可</span>;
   }
 }
 

@@ -1,5 +1,6 @@
 /**
- * Gemini Nano(Prompt API)に生成させる「チャット解説」「チャット翻訳」の構造を定義するスキーマ。
+ * Gemini Nano(Prompt API)に生成させる「チャット解説」「チャット翻訳」「Pick up(注目の表現)」の
+ * 構造を定義するスキーマ。
  *
  * zod スキーマを唯一の定義源とし、(1) Prompt API の `responseConstraint` に渡す
  * JSON Schema、(2) モデルが返した JSON 文字列を実行時に検証するバリデータ、
@@ -61,6 +62,36 @@ export type TranslationResult = z.infer<typeof translationSchema>;
  */
 export function buildTranslationResponseConstraint(): Record<string, unknown> {
   const jsonSchema: Record<string, unknown> = { ...z.toJSONSchema(translationSchema) };
+  delete jsonSchema.$schema;
+  return jsonSchema;
+}
+
+/**
+ * 右列「Pick up」に表示する、注目の表現(語句と意味のペア)の一覧。
+ * 学習者が意味を推測しにくい特殊な表現(スラング・略語・イディオム・ミーム)だけを対象とし、
+ * 訳文・直訳・分類・難易度などの解説向け情報は含めない(それらは `explanationSchema` の責務)。
+ */
+export const pickupTermSchema = z.object({
+  /** 元のチャット本文中に登場する語句・フレーズそのもの */
+  term: z.string(),
+  /** 解説言語での短い意味 */
+  meaning: z.string(),
+});
+
+export const pickupSchema = z.object({
+  /** 該当する表現が無い場合は空配列 */
+  terms: z.array(pickupTermSchema),
+});
+
+export type PickupTerm = z.infer<typeof pickupTermSchema>;
+export type PickupResult = z.infer<typeof pickupSchema>;
+
+/**
+ * Pick up 用に `session.prompt(text, { responseConstraint })` へそのまま渡せる JSON Schema を組み立てる。
+ * `$schema` メタ情報は Prompt API が想定しない可能性があるため取り除く。
+ */
+export function buildPickupResponseConstraint(): Record<string, unknown> {
+  const jsonSchema: Record<string, unknown> = { ...z.toJSONSchema(pickupSchema) };
   delete jsonSchema.$schema;
   return jsonSchema;
 }

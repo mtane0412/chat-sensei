@@ -1,12 +1,12 @@
 /**
  * src/app/page.tsx(ホーム = 3カラムのチャット閲覧画面)のテスト。
  *
- * 生IRC / 翻訳 / 解説 の3列が描画されること、受信済み発言が生IRC列に
- * 表示されること、翻訳列に発言ごとの翻訳状態が表示されること、
- * 翻訳列・解説列のぼかしをトグルで切り替えられることを検証する。
- * IRC 接続そのものは chat-connection ストアに、翻訳の生成は translations ストアに
- * 閉じているため、ここでは各ストアの state を直接書き換えて注入する。
- * 翻訳パイプラインの開始(`startTranslationPipeline`)はブラウザAPIに触れるためモックする。
+ * 生IRC / 翻訳 / Pick up の3列が描画されること、受信済み発言が生IRC列に
+ * 表示されること、翻訳列・Pick up列に発言ごとの状態が表示されること、
+ * 翻訳列・Pick up列のぼかしをトグルで切り替えられることを検証する。
+ * IRC 接続そのものは chat-connection ストアに、翻訳の生成は translations ストアに、
+ * 注目の表現の抽出は pickups ストアに閉じているため、ここでは各ストアの state を直接書き換えて注入する。
+ * 各パイプラインの開始(`startTranslationPipeline` / `startPickupPipeline`)はブラウザAPIに触れるためモックする。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
@@ -14,6 +14,7 @@ import userEvent from "@testing-library/user-event";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
+import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
 import { resetTranslationStoreForTests, useTranslationStore } from "@/store/translations";
 
 const mockStopPipeline = vi.fn();
@@ -24,6 +25,16 @@ vi.mock("@/store/translations", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/store/translations")>()),
   startTranslationPipeline: () => mockStartTranslationPipeline(),
   warmUpTranslationPipeline: () => mockWarmUpTranslationPipeline(),
+}));
+
+const mockStopPickupPipeline = vi.fn();
+const mockStartPickupPipeline = vi.fn(() => mockStopPickupPipeline);
+const mockWarmUpPickupPipeline = vi.fn();
+
+vi.mock("@/store/pickups", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/store/pickups")>()),
+  startPickupPipeline: () => mockStartPickupPipeline(),
+  warmUpPickupPipeline: () => mockWarmUpPickupPipeline(),
 }));
 
 import Home from "./page";
@@ -56,22 +67,26 @@ beforeEach(() => {
   mockStartTranslationPipeline.mockClear();
   mockStopPipeline.mockClear();
   mockWarmUpTranslationPipeline.mockClear();
+  mockStartPickupPipeline.mockClear();
+  mockStopPickupPipeline.mockClear();
+  mockWarmUpPickupPipeline.mockClear();
 });
 
 afterEach(() => {
   resetChatConnectionStoreForTests();
   resetTranslationStoreForTests();
+  resetPickupStoreForTests();
   resetBotFilterStoreForTests();
   window.localStorage.clear();
 });
 
 describe("Home(3カラム構成)", () => {
-  it("生IRC・翻訳・解説の3列を見出し付きで表示する", () => {
+  it("生IRC・翻訳・Pick upの3列を見出し付きで表示する", () => {
     render(<Home />);
 
     expect(screen.getByRole("region", { name: "生IRC" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "翻訳" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "解説" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Pick up" })).toBeInTheDocument();
   });
 
   it("受信済みの発言を生IRC列に表示名付きで表示する", () => {
@@ -84,24 +99,24 @@ describe("Home(3カラム構成)", () => {
     expect(within(rawColumn).getByText("gg no re chat")).toBeInTheDocument();
   });
 
-  it("翻訳列と解説列は初期状態でぼかされており、トグルで解除できる", async () => {
+  it("翻訳列とPick up列は初期状態でぼかされており、トグルで解除できる", async () => {
     const user = userEvent.setup();
     render(<Home />);
 
     const translationColumn = screen.getByRole("region", { name: "翻訳" });
-    const explanationColumn = screen.getByRole("region", { name: "解説" });
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
     expect(translationColumn).toHaveAttribute("data-blurred", "true");
-    expect(explanationColumn).toHaveAttribute("data-blurred", "true");
+    expect(pickupColumn).toHaveAttribute("data-blurred", "true");
 
     await user.click(screen.getByRole("switch", { name: "翻訳をぼかす" }));
     expect(translationColumn).toHaveAttribute("data-blurred", "false");
-    expect(explanationColumn).toHaveAttribute("data-blurred", "true");
+    expect(pickupColumn).toHaveAttribute("data-blurred", "true");
 
-    await user.click(screen.getByRole("switch", { name: "解説をぼかす" }));
-    expect(explanationColumn).toHaveAttribute("data-blurred", "false");
+    await user.click(screen.getByRole("switch", { name: "Pick upをぼかす" }));
+    expect(pickupColumn).toHaveAttribute("data-blurred", "false");
   });
 
-  it("「接続する」クリック(ユーザー操作)の延長で翻訳セッションをウォームアップする(モデルDLにユーザー操作が必要なため)", async () => {
+  it("「接続する」クリック(ユーザー操作)の延長で翻訳・Pick upのセッションをウォームアップする(モデルDLにユーザー操作が必要なため)", async () =>  {
     const user = userEvent.setup();
     // 実際の IRC 接続(WebSocket)は行わない
     useChatConnectionStore.setState({ connect: vi.fn() });
@@ -111,14 +126,17 @@ describe("Home(3カラム構成)", () => {
     await user.click(screen.getByRole("button", { name: "接続する" }));
 
     expect(mockWarmUpTranslationPipeline).toHaveBeenCalledTimes(1);
+    expect(mockWarmUpPickupPipeline).toHaveBeenCalledTimes(1);
   });
 
-  it("マウント時に翻訳パイプラインを開始し、アンマウント時に停止する", () => {
+  it("マウント時に翻訳・Pick upのパイプラインを開始し、アンマウント時に停止する", () => {
     const { unmount } = render(<Home />);
     expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);
+    expect(mockStartPickupPipeline).toHaveBeenCalledTimes(1);
 
     unmount();
     expect(mockStopPipeline).toHaveBeenCalledTimes(1);
+    expect(mockStopPickupPipeline).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -227,6 +245,118 @@ describe("Home(翻訳列)", () => {
 
     await user.click(screen.getByRole("switch", { name: "翻訳をぼかす" }));
     expect(translationRow).not.toHaveClass("blur-sm");
+  });
+});
+
+describe("Home(Pick up列)", () => {
+  it("抽出された語句と意味のペアを、対応する発言と同じ行に表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言, サンプル発言2] });
+    usePickupStore.setState({
+      promptApi: { status: "ready" },
+      entries: {
+        "msg-1": {
+          status: "done",
+          terms: [
+            { term: "gg", meaning: "good game の略、お疲れ" },
+            { term: "no re", meaning: "再戦なし" },
+          ],
+        },
+        "msg-2": { status: "done", terms: [{ term: "so real", meaning: "激しく同意" }] },
+      },
+    });
+
+    render(<Home />);
+
+    const rows = within(screen.getByRole("region", { name: "Pick up" })).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveAttribute("data-message-id", "msg-1");
+    expect(rows[0]).toHaveTextContent("gg");
+    expect(rows[0]).toHaveTextContent("good game の略、お疲れ");
+    expect(rows[0]).toHaveTextContent("no re");
+    expect(rows[1]).toHaveAttribute("data-message-id", "msg-2");
+    expect(rows[1]).toHaveTextContent("so real");
+    expect(rows[1]).toHaveTextContent("激しく同意");
+  });
+
+  it("該当する表現が無い行は「なし」と控えめに表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({ promptApi: { status: "ready" }, entries: { "msg-1": { status: "done", terms: [] } } });
+
+    render(<Home />);
+
+    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("なし")).toBeInTheDocument();
+  });
+
+  it("生成中の行は「抽出中」と表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({ promptApi: { status: "ready" }, entries: { "msg-1": { status: "pending" } } });
+
+    render(<Home />);
+
+    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("抽出中...")).toBeInTheDocument();
+  });
+
+  it("失敗した行は理由付きで「抽出に失敗」と表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      promptApi: { status: "ready" },
+      entries: { "msg-1": { status: "failed", reason: "応答をJSONとして解釈できませんでした" } },
+    });
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    expect(within(pickupColumn).getByText(/抽出に失敗/)).toBeInTheDocument();
+    expect(within(pickupColumn).getByText(/応答をJSONとして解釈できませんでした/)).toBeInTheDocument();
+  });
+
+  it("キュー溢れで破棄された行は「未抽出(流量超過)」と表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({ promptApi: { status: "ready" }, entries: { "msg-1": { status: "dropped" } } });
+
+    render(<Home />);
+
+    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("未抽出(流量超過)")).toBeInTheDocument();
+  });
+
+  it("Prompt API が利用できない環境では、行ごとに「抽出不可」と表示し、列の見出し付近に理由を表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      promptApi: { status: "unavailable", reason: "この環境では Prompt API (window.LanguageModel) が見つかりません。" },
+      entries: { "msg-1": { status: "unavailable" } },
+    });
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    expect(within(pickupColumn).getByText("抽出不可")).toBeInTheDocument();
+    expect(within(pickupColumn).getByText(/window\.LanguageModel/)).toBeInTheDocument();
+  });
+
+  it("ID を持たない発言の行は「未抽出(IDなし)」と表示する", () => {
+    useChatConnectionStore.setState({ messages: [{ ...サンプル発言, id: null }] });
+    usePickupStore.setState({ promptApi: { status: "ready" }, entries: {} });
+
+    render(<Home />);
+
+    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("未抽出(IDなし)")).toBeInTheDocument();
+  });
+
+  it("Pick upをぼかしている間はPick up列の各行がぼかされ、解除すると外れる", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      promptApi: { status: "ready" },
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ" }] } },
+    });
+
+    render(<Home />);
+
+    const row = within(screen.getByRole("region", { name: "Pick up" })).getByRole("listitem");
+    expect(row).toHaveClass("blur-sm");
+
+    await user.click(screen.getByRole("switch", { name: "Pick upをぼかす" }));
+    expect(row).not.toHaveClass("blur-sm");
   });
 });
 

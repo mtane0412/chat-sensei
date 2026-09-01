@@ -1,15 +1,17 @@
 /**
  * src/lib/ai/schemas.ts のテスト。
  *
- * 解説結果・翻訳結果のスキーマ(zod)が JSON.parse された Gemini Nano の出力を
+ * 解説結果・翻訳結果・Pick up(語句と意味のペア)のスキーマ(zod)が JSON.parse された Gemini Nano の出力を
  * 正しく検証できること、および Prompt API の `responseConstraint` に渡す
  * JSON Schema を組み立てられることを検証する。
  */
 import { describe, expect, it } from "vitest";
 import {
   buildExplanationResponseConstraint,
+  buildPickupResponseConstraint,
   buildTranslationResponseConstraint,
   explanationSchema,
+  pickupSchema,
   translationSchema,
 } from "./schemas";
 
@@ -109,6 +111,59 @@ describe("buildTranslationResponseConstraint", () => {
 
   it("メタ情報の$schemaフィールドは含まない(Prompt APIの想定外のため)", () => {
     const constraint = buildTranslationResponseConstraint() as Record<string, unknown>;
+
+    expect(constraint.$schema).toBeUndefined();
+  });
+});
+
+describe("pickupSchema", () => {
+  it("語句と意味のペアの配列をパースできる", () => {
+    // "bro is cooked lmao touch grass" という発言に対する抽出結果を想定したサンプル
+    const raw = {
+      terms: [
+        { term: "cooked", meaning: "もうダメ、終わってる" },
+        { term: "touch grass", meaning: "外に出て現実を見ろ" },
+      ],
+    };
+
+    expect(pickupSchema.parse(raw)).toEqual(raw);
+  });
+
+  it("該当する表現が無い場合の空配列をパースできる", () => {
+    expect(pickupSchema.parse({ terms: [] })).toEqual({ terms: [] });
+  });
+
+  it("termsが欠けている場合はパースエラーになる", () => {
+    expect(() => pickupSchema.parse({})).toThrow();
+  });
+
+  it("ペアにmeaningが無い場合はパースエラーになる", () => {
+    expect(() => pickupSchema.parse({ terms: [{ term: "gg" }] })).toThrow();
+  });
+});
+
+describe("buildPickupResponseConstraint", () => {
+  it("語句と意味のペアの配列を要求するJSON Schemaオブジェクトを返す", () => {
+    const constraint = buildPickupResponseConstraint();
+
+    expect(constraint).toMatchObject({
+      type: "object",
+      properties: {
+        terms: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { term: { type: "string" }, meaning: { type: "string" } },
+            required: ["term", "meaning"],
+          },
+        },
+      },
+      required: ["terms"],
+    });
+  });
+
+  it("メタ情報の$schemaフィールドは含まない(Prompt APIの想定外のため)", () => {
+    const constraint = buildPickupResponseConstraint() as Record<string, unknown>;
 
     expect(constraint.$schema).toBeUndefined();
   });
