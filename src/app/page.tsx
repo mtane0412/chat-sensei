@@ -12,9 +12,10 @@
  * 同じ発言の左列・中央列・右列のセルが常に同じ行に並び、行の高さは3列の最大値に揃う。
  * スクロールは3列で共通の1つにまとめる(列ごとに独立させると行の対応が崩れるため)。
  *
- * 翻訳列・Pick up列は学習のためデフォルトでぼかして表示し、各列の見出し右端に置いた
- * 目のアイコンのトグル(BlurToggle)で解除できる。
- * 生IRC列の見出しには bot除外設定(BotFilterDialog)を開くアイコンを置く。除外パターンは
+ * 翻訳列・Pick up列は各列の見出し右端に置いた目のアイコンのトグル(BlurToggle)でぼかせる
+ * (自力で読む練習をしたいときに使う。初期状態はどちらも見える)。
+ * 生IRC列の見出しには、新着発言に合わせてスクロール領域を最下部へ送り続ける追従トグル(FollowToggle。
+ * 初期状態はオン)と、bot除外設定(BotFilterDialog)を開くアイコンを置く。除外パターンは
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
  * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
@@ -26,8 +27,8 @@
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { EyeIcon, EyeOffIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowDownToLineIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Button } from "@/components/ui/button";
@@ -97,9 +98,19 @@ export default function Home() {
   const connect = useChatConnectionStore((state) => state.connect);
   const disconnect = useChatConnectionStore((state) => state.disconnect);
 
-  // 翻訳列・Pick up列のぼかし。学習のため初期状態はどちらもぼかす
-  const [translationBlurred, setTranslationBlurred] = useState(true);
-  const [pickupBlurred, setPickupBlurred] = useState(true);
+  // 翻訳列・Pick up列のぼかし。初期状態はどちらも見える(自力で読みたいときに利用者がぼかす)
+  const [translationBlurred, setTranslationBlurred] = useState(false);
+  const [pickupBlurred, setPickupBlurred] = useState(false);
+
+  // 新着発言への追従。オンの間は発言が増えるたびにスクロール領域を最下部へ送る
+  const [followLatest, setFollowLatest] = useState(true);
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!followLatest) return;
+    const viewport = scrollViewportRef.current;
+    if (!viewport) return;
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [followLatest, messages]);
 
   const translationEntries = useTranslationStore((state) => state.entries);
   const pickupEntries = usePickupStore((state) => state.entries);
@@ -171,13 +182,22 @@ export default function Home() {
         </div>
       </div>
 
-      <ScrollArea className="h-[70vh]">
+      <ScrollArea className="h-[70vh]" viewportRef={scrollViewportRef}>
         <div
           className="grid grid-cols-3 gap-4"
           // 見出し1行 + 発言数ぶんの行。各列は subgrid でこの行トラックを共有する
           style={{ gridTemplateRows: `auto repeat(${messages.length}, auto)` }}
         >
-          <Column title="Raw IRC" blurred={false} headerAction={<BotFilterDialog />}>
+          <Column
+            title="Raw IRC"
+            blurred={false}
+            headerAction={
+              <>
+                <FollowToggle following={followLatest} onFollowingChange={setFollowLatest} />
+                <BotFilterDialog />
+              </>
+            }
+          >
             <div role="list" className="contents">
               {messages.map((message, index) => (
                 <ChatMessageRow key={messageKey(message, index)} message={message} />
@@ -266,6 +286,32 @@ function BlurToggle({
 }
 
 /**
+ * 新着発言への追従を切り替えるアイコンのトグル。生IRC列の見出し右端に置く。
+ * `role="switch"` + `aria-checked` で状態を公開し、オンの間はアイコンを強調色で表示する。
+ */
+function FollowToggle({
+  following,
+  onFollowingChange,
+}: {
+  following: boolean;
+  onFollowingChange: (following: boolean) => void;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      role="switch"
+      aria-checked={following}
+      aria-label="Follow new messages"
+      className={cn(!following && "text-muted-foreground")}
+      onClick={() => onFollowingChange(!following)}
+    >
+      <ArrowDownToLineIcon />
+    </Button>
+  );
+}
+
+/**
  * 3カラムのうちの1列。親グリッドの行トラックを subgrid で共有し、
  * 1行目に見出し、2行目以降に `children`(display: contents のリスト)の各行を並べる。
  */
@@ -281,7 +327,7 @@ function Column({
   blurred: boolean;
   /** 見出しの下に表示する補足(Prompt API 利用不可の理由など) */
   headerExtra?: React.ReactNode;
-  /** 見出しの右端に置く操作(bot除外設定のアイコンなど) */
+  /** 見出しの右端に置く操作(追従トグル・bot除外設定のアイコンなど) */
   headerAction?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -294,7 +340,7 @@ function Column({
       <div className="sticky top-0 z-10 border-b bg-card px-4 py-2">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold">{title}</h2>
-          {headerAction}
+          <div className="flex items-center gap-1">{headerAction}</div>
         </div>
         {headerExtra}
       </div>
