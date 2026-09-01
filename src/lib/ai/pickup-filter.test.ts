@@ -122,6 +122,20 @@ describe("filterPickupTerms", () => {
     ]);
   });
 
+  it("同じ語句が複数回返ってきた場合は最初の1件だけ残す(大文字小文字は区別しない)", () => {
+    const terms = [
+      { term: "sayuwuKuru", meaning: "意味不明な文字列" },
+      { term: "sayuwukuru", meaning: "繰り返される" },
+      { term: "sticky", meaning: "スタン状態にする" },
+      { term: "sayuwuKuru", meaning: "意味不明な文字列" },
+    ];
+
+    expect(filterPickupTerms(terms, { text: "sayuwuKuru sticky", emoteNames: [], mentionNames: [] })).toEqual([
+      { term: "sayuwuKuru", meaning: "意味不明な文字列" },
+      { term: "sticky", meaning: "スタン状態にする" },
+    ]);
+  });
+
   it("落とす対象が無ければ元の配列と同じ内容を返す", () => {
     const terms = [{ term: "sticky", meaning: "スタン状態にする" }];
 

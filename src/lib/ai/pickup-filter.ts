@@ -9,7 +9,7 @@
  *   LLM に渡す本文と、後段フィルタで照合するための emote 名・メンション名を返す
  * - `filterPickupTerms`: 後段フィルタ。返ってきた語句のうち emote 名・@メンション・
  *   `!` で始まるチャットコマンド・文字を1つも含まない語句(数字や記号だけ)・
- *   呼び出し側が指定した除外名(表示中の発言者名など)を落とす
+ *   呼び出し側が指定した除外名(表示中の発言者名など)を落とし、重複する語句は1件にまとめる
  *
  * 翻訳列は「emote 名はそのまま残す」設計のため、この処理は Pick up 専用である。
  */
@@ -80,12 +80,16 @@ export function filterPickupTerms(
   const excludedNames = new Set(
     [...prepared.emoteNames, ...prepared.mentionNames, ...extraExcludedNames].map((name) => name.toLowerCase()),
   );
+  /** 既に残した語句(小文字化済み)。同じ語句が繰り返し返ってきても最初の1件だけ残す */
+  const seen = new Set<string>();
   return terms.filter((item) => {
     const normalized = item.term.trim().toLowerCase();
     // @メンションと、`!chimkin` のようなチャットコマンドは学ぶべき表現ではない
     if (normalized.startsWith("@") || normalized.startsWith("!")) return false;
     if (excludedNames.has(normalized)) return false;
     if (NO_LETTER_PATTERN.test(normalized)) return false;
+    if (seen.has(normalized)) return false;
+    seen.add(normalized);
     return true;
   });
 }
