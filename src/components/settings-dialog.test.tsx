@@ -48,6 +48,12 @@ async function openDialog(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("SettingsDialog(言語ペア)", () => {
+  it("ストアが LocalStorage から未復元の間は、設定ボタンを無効にして開けないようにする(デフォルト設定で上書きしないため)", () => {
+    render(<SettingsDialog />);
+
+    expect(screen.getByRole("button", { name: "設定" })).toBeDisabled();
+  });
+
   it("設定ボタンから開くと、学ぶ言語・解説言語のセレクトに現在の設定が入っている", async () => {
     const user = userEvent.setup();
     hydrateSettingsStore();

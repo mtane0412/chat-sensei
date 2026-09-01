@@ -12,6 +12,8 @@
  *
  * 保存は `useSettingsStore.setSettings` が LocalStorage へ永続化し、ホーム画面が言語ペアの変更を購読して
  * 翻訳・Pick up のパイプラインを新しい言語ペアで再起動する。
+ * ストアが LocalStorage から未復元の間(`hydrated === false`)はトリガーを無効にし、
+ * デフォルト設定を保存して永続化済みの設定を上書きしてしまう事故を防ぐ。
  */
 "use client";
 
@@ -57,6 +59,7 @@ const DIAGNOSIS_LEVEL_STYLE: Record<DiagnosisMessage["level"], { Icon: typeof Ch
 
 export function SettingsDialog() {
   const settings = useSettingsStore((state) => state.settings);
+  const hydrated = useSettingsStore((state) => state.hydrated);
   const wasCorrupted = useSettingsStore((state) => state.wasCorrupted);
   const setSettings = useSettingsStore((state) => state.setSettings);
 
@@ -91,7 +94,8 @@ export function SettingsDialog() {
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger render={<Button variant="ghost" size="icon-sm" aria-label={DIALOG_TITLE} />}>
+      {/* 未復元の間に開いて保存すると LocalStorage の設定をデフォルトで上書きし得るため、復元が済むまで開けないようにする */}
+      <DialogTrigger render={<Button variant="ghost" size="icon-sm" aria-label={DIALOG_TITLE} disabled={!hydrated} />}>
         <SettingsIcon />
       </DialogTrigger>
       <DialogContent aria-label={DIALOG_TITLE}>
