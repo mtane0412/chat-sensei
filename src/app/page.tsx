@@ -32,6 +32,7 @@ import { useChatConnectionStore } from "@/store/chat-connection";
 import {
   startTranslationPipeline,
   useTranslationStore,
+  warmUpTranslationPipeline,
   type PromptApiStatus,
   type TranslationEntry,
 } from "@/store/translations";
@@ -69,6 +70,8 @@ export default function Home() {
   const handleConnect = useCallback(() => {
     const channel = channelInput.trim();
     if (!channel) return;
+    // モデル未ダウンロード時の LanguageModel.create() にはユーザー操作が必要なため、クリックの延長で先に生成する
+    warmUpTranslationPipeline();
     connect(channel);
   }, [channelInput, connect]);
 

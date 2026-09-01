@@ -8,6 +8,8 @@
  *   流量が多く追いつかない分はキュー側で古いものから破棄され、`dropped`(未翻訳)として明示する
  * - Prompt API が使えない環境では暗黙のフォールバックをせず、診断結果の理由を
  *   `promptApi.reason` に保持して行ごとに「翻訳不可」を表示できるようにする
+ * - モデルが未ダウンロードの環境では `LanguageModel.create()` にユーザー操作が必要なため、
+ *   「接続する」クリックの延長で `warmUpTranslationPipeline` を呼び、ベースセッションを先に生成する
  *
  * `chat-connection.ts` と同様に、ページ遷移でホーム画面がアンマウントされても
  * 翻訳結果を失わないよう、React ツリーの外(Zustand ストア)に状態を置く。
@@ -59,6 +61,19 @@ export interface TranslationPipelineDeps {
   getMessages: () => TwitchChatMessage[];
 }
 
+/**
+ * 環境診断が終わるまでに保留できる発言数の上限。低優先度キューの既定上限と同じ 20 とし、
+ * 溢れた分は古いものから `dropped`(未翻訳)にする。
+ */
+export const MAX_WAITING_FOR_DIAGNOSIS = 20;
+
+/** 現在動作中のパイプラインが公開する操作。`startTranslationPipeline` が設定し、停止時に外す */
+interface ActivePipeline {
+  warmUp: () => void;
+}
+
+let activePipeline: ActivePipeline | null = null;
+
 const DEFAULT_DEPS: TranslationPipelineDeps = {
   diagnose: runBrowserDiagnosis,
   loadSettings: () => loadSettings().settings,
@@ -98,13 +113,19 @@ export function startTranslationPipeline(deps: TranslationPipelineDeps = DEFAULT
   let pool: SessionPool | null = null;
   /** 環境診断が終わるまでに受信した発言。診断結果に応じてまとめて処理する */
   let waitingForDiagnosis: TwitchChatMessage[] | null = [];
+  /** 診断完了前にウォームアップを要求されたか */
+  let warmUpRequested = false;
 
   useTranslationStore.setState({ promptApi: { status: "checking" } });
 
-  function translate(message: TwitchChatMessage, id: string): void {
+  function getPool(): SessionPool {
     pool ??= deps.createPool(settings);
+    return pool;
+  }
+
+  function translate(message: TwitchChatMessage, id: string): void {
     setEntry(id, { status: "pending" });
-    translateChatMessage(pool, message.text, { priority: "low", signal: controller.signal })
+    translateChatMessage(getPool(), message.text, { priority: "low", signal: controller.signal })
       .then((result) => setEntry(id, { status: "done", translation: result.translation }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -116,14 +137,23 @@ export function startTranslationPipeline(deps: TranslationPipelineDeps = DEFAULT
       });
   }
 
+  /** 診断待ちの保留に積む。上限を超えた分は古いものから `dropped` にする */
+  function bufferUntilDiagnosed(message: TwitchChatMessage, id: string, buffer: TwitchChatMessage[]): void {
+    buffer.push(message);
+    setEntry(id, { status: "pending" });
+    while (buffer.length > MAX_WAITING_FOR_DIAGNOSIS) {
+      const dropped = buffer.shift();
+      if (dropped?.id) setEntry(dropped.id, { status: "dropped" });
+    }
+  }
+
   function handleMessage(message: TwitchChatMessage): void {
     // 発言 ID が無いと翻訳結果を行に紐づけられないため投入しない(ページ側で「IDなし」と明示する)
     if (message.id === null) return;
     pruneEntries(deps.getMessages());
 
     if (waitingForDiagnosis) {
-      waitingForDiagnosis.push(message);
-      setEntry(message.id, { status: "pending" });
+      bufferUntilDiagnosed(message, message.id, waitingForDiagnosis);
       return;
     }
 
@@ -136,15 +166,32 @@ export function startTranslationPipeline(deps: TranslationPipelineDeps = DEFAULT
     translate(message, message.id);
   }
 
-  const unsubscribe = deps.subscribeToChatMessages(handleMessage);
+  /** ベースセッションを先に生成する。失敗した場合は Prompt API を利用不可として理由を保持する */
+  function warmUp(): void {
+    if (useTranslationStore.getState().promptApi.status !== "ready") return;
+    getPool()
+      .warmUp()
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        useTranslationStore.setState({
+          promptApi: {
+            status: "unavailable",
+            reason: `Prompt API のセッションを生成できませんでした: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        });
+      });
+  }
 
-  /** 診断結果が確定したら、保留していた発言を投入するか「利用不可」として確定させる */
+  /** 診断結果が確定したら、保留していた発言のうち表示中のものを投入するか「利用不可」として確定させる */
   function settleDiagnosis(promptApi: PromptApiStatus): void {
     const buffered = waitingForDiagnosis ?? [];
     waitingForDiagnosis = null;
     useTranslationStore.setState({ promptApi });
+    if (warmUpRequested) warmUp();
+
+    const liveIds = new Set(deps.getMessages().map((message) => message.id));
     buffered.forEach((message) => {
-      if (message.id === null) return;
+      if (message.id === null || !liveIds.has(message.id)) return;
       if (promptApi.status === "ready") {
         translate(message, message.id);
       } else {
@@ -152,6 +199,8 @@ export function startTranslationPipeline(deps: TranslationPipelineDeps = DEFAULT
       }
     });
   }
+
+  const unsubscribe = deps.subscribeToChatMessages(handleMessage);
 
   void deps
     .diagnose()
@@ -171,15 +220,37 @@ export function startTranslationPipeline(deps: TranslationPipelineDeps = DEFAULT
       });
     });
 
+  const handle: ActivePipeline = {
+    warmUp: () => {
+      if (waitingForDiagnosis) {
+        warmUpRequested = true;
+        return;
+      }
+      warmUp();
+    },
+  };
+  activePipeline = handle;
+
   return () => {
     unsubscribe();
     controller.abort();
+    if (activePipeline === handle) activePipeline = null;
   };
+}
+
+/**
+ * 翻訳用ベースセッションを先に生成する。「接続する」クリックなどユーザー操作の
+ * ハンドラから呼ぶこと(モデル未ダウンロード時の `LanguageModel.create()` にはユーザー操作が必要)。
+ * パイプラインが開始されていない場合は何もしない。
+ */
+export function warmUpTranslationPipeline(): void {
+  activePipeline?.warmUp();
 }
 
 /**
  * テスト専用: ストアを初期状態に戻す。各テストの afterEach で呼び出すこと。
  */
 export function resetTranslationStoreForTests(): void {
+  activePipeline = null;
   useTranslationStore.setState({ promptApi: { status: "checking" }, entries: {} });
 }

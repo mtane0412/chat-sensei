@@ -10,9 +10,11 @@ import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
 import { LowPriorityQueueOverflowError, type SessionPool } from "@/lib/ai/session-pool";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import {
+  MAX_WAITING_FOR_DIAGNOSIS,
   resetTranslationStoreForTests,
   startTranslationPipeline,
   useTranslationStore,
+  warmUpTranslationPipeline,
   type TranslationPipelineDeps,
 } from "./translations";
 
@@ -74,7 +76,8 @@ function createDeps(options: { ready?: boolean; promptResults?: Array<Promise<st
     if (!next) throw new Error("テストの promptResults が不足しています");
     return run({ prompt: () => next });
   });
-  const pool = { enqueue } as unknown as SessionPool;
+  const warmUp = vi.fn(async () => {});
+  const pool = { enqueue, warmUp } as unknown as SessionPool;
 
   const deps: TranslationPipelineDeps = {
     diagnose: vi.fn(async () => createDiagnosis(options.ready ?? true)),
@@ -96,7 +99,7 @@ function createDeps(options: { ready?: boolean; promptResults?: Array<Promise<st
     messages = next;
   }
 
-  return { deps, emit, setMessages, enqueue, listeners };
+  return { deps, emit, setMessages, enqueue, warmUp, listeners };
 }
 
 /** 非同期の状態更新(診断 → 投入 → 完了)が落ち着くまでマイクロタスクをフラッシュする */
@@ -282,5 +285,112 @@ describe("startTranslationPipeline", () => {
 
     expect(listeners.size).toBe(0);
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("診断待ちの保留は上限を超えると古いものから dropped(未翻訳)にする", async () => {
+    const diagnosis = createDeferred<EnvironmentDiagnosis>();
+    const { deps, emit, enqueue } = createDeps({
+      promptResults: Array.from({ length: MAX_WAITING_FOR_DIAGNOSIS }, () =>
+        Promise.resolve(JSON.stringify({ translation: "訳文" })),
+      ),
+    });
+    deps.diagnose = () => diagnosis.promise;
+
+    const stop = startTranslationPipeline(deps);
+    for (let i = 0; i < MAX_WAITING_FOR_DIAGNOSIS + 1; i++) {
+      emit(createMessage({ id: `msg-${i}` }));
+    }
+    await flush();
+    expect(useTranslationStore.getState().entries["msg-0"]).toEqual({ status: "dropped" });
+    expect(useTranslationStore.getState().entries["msg-1"]).toEqual({ status: "pending" });
+
+    diagnosis.resolve(createDiagnosis(true));
+    await flush();
+    expect(enqueue).toHaveBeenCalledTimes(MAX_WAITING_FOR_DIAGNOSIS);
+    expect(useTranslationStore.getState().entries["msg-0"]).toEqual({ status: "dropped" });
+    stop();
+  });
+
+  it("診断待ちの間にリングバッファから消えた発言は、診断完了後に投入しない", async () => {
+    const diagnosis = createDeferred<EnvironmentDiagnosis>();
+    const { deps, emit, setMessages, enqueue } = createDeps({
+      promptResults: [Promise.resolve(JSON.stringify({ translation: "訳文" }))],
+    });
+    deps.diagnose = () => diagnosis.promise;
+
+    const stop = startTranslationPipeline(deps);
+    emit(createMessage({ id: "msg-1" }));
+    setMessages([]);
+    emit(createMessage({ id: "msg-2" }));
+    await flush();
+
+    diagnosis.resolve(createDiagnosis(true));
+    await flush();
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(useTranslationStore.getState().entries["msg-1"]).toBeUndefined();
+    expect(useTranslationStore.getState().entries["msg-2"]).toEqual({ status: "done", translation: "訳文" });
+    stop();
+  });
+});
+
+describe("warmUpTranslationPipeline", () => {
+  it("診断が ready のとき、ユーザー操作の延長でセッションプールを生成しベースセッションをウォームアップする", async () => {
+    const { deps, warmUp } = createDeps({ ready: true });
+
+    const stop = startTranslationPipeline(deps);
+    await flush();
+    warmUpTranslationPipeline();
+    await flush();
+
+    expect(deps.createPool).toHaveBeenCalledWith({ targetLang: "en", explainLang: "ja" });
+    expect(warmUp).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("診断が終わる前に呼ばれた場合は、診断が ready になった時点でウォームアップする", async () => {
+    const diagnosis = createDeferred<EnvironmentDiagnosis>();
+    const { deps, warmUp } = createDeps();
+    deps.diagnose = () => diagnosis.promise;
+
+    const stop = startTranslationPipeline(deps);
+    warmUpTranslationPipeline();
+    await flush();
+    expect(warmUp).not.toHaveBeenCalled();
+
+    diagnosis.resolve(createDiagnosis(true));
+    await flush();
+    expect(warmUp).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("Prompt API が利用できない場合はウォームアップしない", async () => {
+    const { deps, warmUp } = createDeps({ ready: false });
+
+    const stop = startTranslationPipeline(deps);
+    await flush();
+    warmUpTranslationPipeline();
+    await flush();
+
+    expect(warmUp).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("ウォームアップに失敗した場合は Prompt API を unavailable にして理由を保持する", async () => {
+    const { deps, warmUp } = createDeps({ ready: true });
+    warmUp.mockRejectedValueOnce(new Error("NotAllowedError: user activation is required"));
+
+    const stop = startTranslationPipeline(deps);
+    await flush();
+    warmUpTranslationPipeline();
+    await flush();
+
+    const { promptApi } = useTranslationStore.getState();
+    expect(promptApi.status).toBe("unavailable");
+    expect(promptApi.status === "unavailable" && promptApi.reason).toMatch(/user activation/);
+    stop();
+  });
+
+  it("パイプラインが開始されていない状態で呼んでも何もしない", () => {
+    expect(() => warmUpTranslationPipeline()).not.toThrow();
   });
 });

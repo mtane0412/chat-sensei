@@ -17,10 +17,12 @@ import { resetTranslationStoreForTests, useTranslationStore } from "@/store/tran
 
 const mockStopPipeline = vi.fn();
 const mockStartTranslationPipeline = vi.fn(() => mockStopPipeline);
+const mockWarmUpTranslationPipeline = vi.fn();
 
 vi.mock("@/store/translations", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/store/translations")>()),
   startTranslationPipeline: () => mockStartTranslationPipeline(),
+  warmUpTranslationPipeline: () => mockWarmUpTranslationPipeline(),
 }));
 
 import Home from "./page";
@@ -52,6 +54,7 @@ const サンプル発言2: TwitchChatMessage = {
 beforeEach(() => {
   mockStartTranslationPipeline.mockClear();
   mockStopPipeline.mockClear();
+  mockWarmUpTranslationPipeline.mockClear();
 });
 
 afterEach(() => {
@@ -93,6 +96,18 @@ describe("Home(3カラム構成)", () => {
 
     await user.click(screen.getByRole("switch", { name: "解説をぼかす" }));
     expect(explanationColumn).toHaveAttribute("data-blurred", "false");
+  });
+
+  it("「接続する」クリック(ユーザー操作)の延長で翻訳セッションをウォームアップする(モデルDLにユーザー操作が必要なため)", async () => {
+    const user = userEvent.setup();
+    // 実際の IRC 接続(WebSocket)は行わない
+    useChatConnectionStore.setState({ connect: vi.fn() });
+    render(<Home />);
+
+    await user.type(screen.getByLabelText("チャンネル名"), "example");
+    await user.click(screen.getByRole("button", { name: "接続する" }));
+
+    expect(mockWarmUpTranslationPipeline).toHaveBeenCalledTimes(1);
   });
 
   it("マウント時に翻訳パイプラインを開始し、アンマウント時に停止する", () => {

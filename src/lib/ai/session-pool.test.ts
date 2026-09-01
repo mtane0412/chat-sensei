@@ -203,4 +203,28 @@ describe("createSessionPool", () => {
     expect(result).toBe("response from base-clone1");
     expect(createBaseSession).toHaveBeenCalledTimes(2);
   });
+
+  it("warmUp() はジョブを積まずにベースセッションを生成し、以後の enqueue はそのセッションを使い回す", async () => {
+    const log: string[] = [];
+    const baseSession = createFakeSession(log, "base");
+    const createBaseSession = vi.fn(async () => baseSession);
+    const pool = createSessionPool({ createBaseSession });
+
+    await pool.warmUp();
+    expect(createBaseSession).toHaveBeenCalledTimes(1);
+    expect(log).toEqual([]); // clone/destroy は行わない
+
+    await pool.enqueue("high", async (session) => session.prompt("hello"));
+    expect(createBaseSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("warmUp() でベースセッション生成に失敗した場合はその例外をそのまま投げる", async () => {
+    const pool = createSessionPool({
+      createBaseSession: async () => {
+        throw new Error("ユーザー操作なしではモデルをダウンロードできません");
+      },
+    });
+
+    await expect(pool.warmUp()).rejects.toThrow("ユーザー操作なしではモデルをダウンロードできません");
+  });
 });

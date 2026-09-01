@@ -41,6 +41,13 @@ export interface SessionPool {
    * `run` にはクローンされたセッションが渡され、実行後に自動で破棄される。
    */
   enqueue<T>(priority: JobPriority, run: (session: PromptSessionLike) => Promise<T>, signal?: AbortSignal): Promise<T>;
+  /**
+   * ジョブを積まずにベースセッションだけを生成する。
+   * Prompt API はモデルが未ダウンロード(`downloadable`)のとき `LanguageModel.create()` に
+   * ユーザー操作(user activation)を要求するため、クリックハンドラの延長で呼び出して
+   * ベースセッションを先に作っておく用途に使う。生成に失敗した場合は例外をそのまま投げる。
+   */
+  warmUp(): Promise<void>;
 }
 
 const DEFAULT_MAX_LOW_PRIORITY_QUEUE_LENGTH = 20;
@@ -131,6 +138,9 @@ export function createSessionPool(deps: SessionPoolDeps): SessionPool {
   }
 
   return {
+    async warmUp() {
+      await getBaseSession();
+    },
     enqueue<T>(priority: JobPriority, run: (session: PromptSessionLike) => Promise<T>, signal?: AbortSignal): Promise<T> {
       return new Promise<T>((resolve, reject) => {
         if (signal?.aborted) {
