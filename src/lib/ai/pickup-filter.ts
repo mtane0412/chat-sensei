@@ -37,8 +37,11 @@ const NO_LETTER_PATTERN = /^[^\p{L}]*$/u;
 /**
  * `haha` / `hahaha` / `hehe` / `hah` のような笑い声にマッチする(issue #30)。
  * 笑い声は学ぶべき表現ではないが、`lol` / `lmao` は略語として学ぶ価値があるためここでは扱わない。
+ * `haha!` / `(hehe)` のように前後に記号が付く形は、`SURROUNDING_NON_LETTERS_PATTERN` で記号を外してから照合する。
  */
 const LAUGHTER_PATTERN = /^(ha|he)+h?$/i;
+/** 語句の先頭・末尾に連続する、文字以外の記号(`!` `(` `)` `...` など) */
+const SURROUNDING_NON_LETTERS_PATTERN = /^[^\p{L}]+|[^\p{L}]+$/gu;
 
 /**
  * チャット本文から Pick up の対象にならないトークンを除き、LLM に渡す本文を組み立てる。
@@ -94,7 +97,7 @@ export function filterPickupTerms(
     if (normalized.startsWith("@") || normalized.startsWith("!")) return false;
     if (excludedNames.has(normalized)) return false;
     if (NO_LETTER_PATTERN.test(normalized)) return false;
-    if (LAUGHTER_PATTERN.test(normalized)) return false;
+    if (LAUGHTER_PATTERN.test(normalized.replace(SURROUNDING_NON_LETTERS_PATTERN, ""))) return false;
     if (seen.has(normalized)) return false;
     seen.add(normalized);
     return true;

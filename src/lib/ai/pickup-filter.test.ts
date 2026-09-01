@@ -157,6 +157,19 @@ describe("filterPickupTerms", () => {
     ]);
   });
 
+  it("前後に記号が付いた笑い声(haha! / (hehe) / hahaha...)も落とす", () => {
+    const terms = [
+      { term: "haha!", meaning: "笑い声" },
+      { term: "(hehe)", meaning: "軽い笑い" },
+      { term: "hahaha...", meaning: "笑い声" },
+      { term: "lol!", meaning: "爆笑" },
+    ];
+
+    expect(filterPickupTerms(terms, { text: "haha! (hehe) hahaha... lol!", emoteNames: [], mentionNames: [] })).toEqual([
+      { term: "lol!", meaning: "爆笑" },
+    ]);
+  });
+
   it("落とす対象が無ければ元の配列と同じ内容を返す", () => {
     const terms = [{ term: "sticky", meaning: "スタン状態にする" }];
 

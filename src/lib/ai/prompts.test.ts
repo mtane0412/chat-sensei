@@ -200,14 +200,23 @@ describe("buildPickupSystemPrompt", () => {
     expect(prompt).toMatch(/phrasal verbs/i);
     expect(prompt).toMatch(/prefer/i);
     expect(prompt).toMatch(/laughter/i);
+    expect(prompt).toMatch(/backchannel/i);
     expect(prompt).toMatch(/interjections/i);
   });
 
-  it("すべてのサポート言語で、複数語の表現の例として put effort into を示す(issue #30)", () => {
+  it("学ぶ言語が英語のとき、すべての解説言語で複数語の表現の例として put effort into を示す(issue #30)", () => {
     for (const explainLang of SUPPORTED_LANGUAGES) {
-      const targetLang = explainLang === "en" ? "ja" : "en";
-      expect(buildPickupSystemPrompt(targetLang, explainLang)).toContain("put effort into");
+      if (explainLang === "en") continue;
+      expect(buildPickupSystemPrompt("en", explainLang)).toContain("put effort into");
     }
+  });
+
+  it("学ぶ言語が英語以外のとき、複数語の表現の例は学ぶ言語の表現になる(英語の例を混ぜない)(issue #30)", () => {
+    // 学ぶ言語が日本語なら日本語の慣用句を例示し、英語の "put effort into" は登場しない
+    const prompt = buildPickupSystemPrompt("ja", "en");
+
+    expect(prompt).toContain("気が置けない");
+    expect(prompt).not.toContain("put effort into");
   });
 
   it("解説用・翻訳用のシステムプロンプトとは別物である", () => {
