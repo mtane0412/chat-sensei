@@ -66,4 +66,29 @@ describe("splitMessageIntoSegments", () => {
 
     expect(segments).toEqual([{ type: "emote", id: "25", text: "Kappa" }]);
   });
+
+  it("サロゲートペアの絵文字が前にあっても、コードポイント単位の位置から emote を正しく切り出す", () => {
+    // Twitch の emotes タグはコードポイント単位。"🌿 haddyHiya" は 🌿(1コードポイント・UTF-16では2単位)の後、
+    // 空白を挟んで 2-10 コードポイント目が emote
+    const emotes: EmotePosition[] = [{ id: "emotesv2_1", start: 2, end: 10 }];
+
+    const segments = splitMessageIntoSegments("🌿 haddyHiya", emotes);
+
+    expect(segments).toEqual([
+      { type: "text", text: "🌿 " },
+      { type: "emote", id: "emotesv2_1", text: "haddyHiya" },
+    ]);
+  });
+
+  it("絵文字が複数ある場合も、絵文字の数だけずれずに emote を切り出す", () => {
+    // "💻hugs💻 haddyHiya": 💻(0) h(1) u g s(4) 💻(5) 空白(6) haddyHiya(7-15)
+    const emotes: EmotePosition[] = [{ id: "emotesv2_1", start: 7, end: 15 }];
+
+    const segments = splitMessageIntoSegments("💻hugs💻 haddyHiya", emotes);
+
+    expect(segments).toEqual([
+      { type: "text", text: "💻hugs💻 " },
+      { type: "emote", id: "emotesv2_1", text: "haddyHiya" },
+    ]);
+  });
 });
