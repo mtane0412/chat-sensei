@@ -157,25 +157,18 @@ describe("buildTranslateUserPrompt", () => {
   });
 });
 
-describe("buildTranslateSystemPrompt のプレースホルダ指示(issue #44)", () => {
-  it("解説言語がjaのとき、emote 名ではなくプレースホルダをそのまま残す指示を含む", () => {
-    const prompt = buildTranslateSystemPrompt("en", "ja");
-
-    expect(prompt).toMatch(/プレースホルダ/);
-    expect(prompt).not.toMatch(/emote名/);
-  });
-
-  it("解説言語がenのとき、placeholder をそのまま残す指示を含む", () => {
-    const prompt = buildTranslateSystemPrompt("ja", "en");
-
-    expect(prompt).toMatch(/placeholder/i);
-    expect(prompt).not.toMatch(/emote names/i);
-  });
-
-  it("emote の無い発言でモデルが例を書き写さないよう、システムプロンプトには具体的なトークン([[E0]] など)を例示しない", () => {
+describe("buildTranslateSystemPrompt と emote の扱い(issue #44)", () => {
+  it("システムプロンプトでは emote やプレースホルダに一切言及しない(言及するとモデルが emote の無い発言に `emote: 😱` や `[[E0]]` を付け足すため)", () => {
     for (const explainLang of SUPPORTED_LANGUAGES) {
-      expect(buildTranslateSystemPrompt("en", explainLang)).not.toMatch(/\[\[E\d+\]\]/);
+      expect(buildTranslateSystemPrompt("en", explainLang)).not.toMatch(
+        /emote|placeholder|プレースホルダ|Platzhalter|marcador|marqueur|\[\[E\d+\]\]/i,
+      );
     }
+  });
+
+  it("@メンション・URL をそのまま残す指示は引き続き含む", () => {
+    expect(buildTranslateSystemPrompt("en", "ja")).toMatch(/@メンション・URL/);
+    expect(buildTranslateSystemPrompt("ja", "en")).toMatch(/@mentions and URLs/i);
   });
 });
 
