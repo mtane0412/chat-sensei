@@ -160,6 +160,27 @@ describe("Home(翻訳列)", () => {
     expect(rows[1]).toHaveTextContent("これはマジでそう");
   });
 
+  it("翻訳文中に残った emote 名は、左列と同じ emote 画像として表示する(issue #28)", () => {
+    const emote付き発言: TwitchChatMessage = {
+      ...サンプル発言,
+      text: "why sayuwuLul lol",
+      emotes: [{ id: "emotesv2_1", start: 4, end: 12 }],
+    };
+    useChatConnectionStore.setState({ messages: [emote付き発言] });
+    useTranslationStore.setState({
+      promptApi: { status: "ready" },
+      entries: { "msg-1": { status: "done", translation: "なんでsayuwuLulそんな" } },
+    });
+
+    render(<Home />);
+
+    const translationColumn = screen.getByRole("region", { name: "翻訳" });
+    const image = within(translationColumn).getByRole("img", { name: "sayuwuLul" });
+    expect(image).toHaveAttribute("src", expect.stringContaining("/emotesv2_1/"));
+    expect(within(translationColumn).queryByText(/sayuwuLul/)).not.toBeInTheDocument();
+    expect(within(translationColumn).getByText("なんで")).toBeInTheDocument();
+  });
+
   it("翻訳列の各行は対応する発言の ID と紐づく(行の高さを左列と揃えるための共通キー)", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
     useTranslationStore.setState({
