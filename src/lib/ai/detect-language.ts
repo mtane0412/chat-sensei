@@ -9,8 +9,8 @@
  *
  * 判定は Language Detector の最上位候補で決めるのが基本。ただし "oooohhh ok" のような短い感嘆詞は
  * 最上位候補が無関係な言語(ar など)になることがある(実配信で観測)ため、最上位候補が学ぶ言語にも
- * 解説言語にも該当しないときだけ、候補列(信頼度順)の中に `MIN_FALLBACK_CONFIDENCE` 以上の学ぶ言語があれば
- * それを採用する。「不明なら先頭の学ぶ言語で扱う」のような判定器の結果に基づかない暗黙のフォールバックは行わず
+ * 解説言語にも該当しないときだけ、候補列(信頼度順)の中に `MIN_FALLBACK_CONFIDENCE` 以上の学ぶ言語・解説言語が
+ * あれば先に見つかったものを採用する(漢字だけ・半角カナだけの日本語が zh と判定される誤判定にも対応する)。「不明なら先頭の学ぶ言語で扱う」のような判定器の結果に基づかない暗黙のフォールバックは行わず
  * (CLAUDE.md の Fail-Fast 方針)、該当しなければ判定した言語を添えて「対象外」として利用者に見せる。
  *
  * - `classifyDetectedLanguage`: 判定結果の振り分け(純関数)
@@ -65,8 +65,8 @@ function isProcessableLearningLanguage(lang: string, settings: Settings): lang i
 /**
  * Language Detector の判定結果(信頼度順)と言語設定から、発言の扱いを決める。
  * 解説言語との一致を学ぶ言語より先に判定するため、学ぶ言語に解説言語が含まれていても「同じ言語」になる。
- * 最上位候補がどちらでもないときは、候補列に `MIN_FALLBACK_CONFIDENCE` 以上の学ぶ言語があればそれを採用し、
- * 無ければ最上位候補の言語を添えて「対象外」にする。
+ * 最上位候補がどちらでもないときは、候補列を信頼度順に見て `MIN_FALLBACK_CONFIDENCE` 以上の学ぶ言語・解説言語の
+ * うち先に見つかったものを採用し、無ければ最上位候補の言語を添えて「対象外」にする。
  */
 export function classifyDetectedLanguage(
   candidates: readonly DetectedLanguageCandidate[],
@@ -78,10 +78,12 @@ export function classifyDetectedLanguage(
   if (detected === settings.explainLang) return { kind: "same-as-explanation" };
   if (isProcessableLearningLanguage(detected, settings)) return { kind: "learning", lang: detected };
 
-  // 短い感嘆詞などで最上位候補が無関係な言語になった場合の救済。候補は信頼度順なので、先に見つかったものを採用する
+  // 短い感嘆詞・漢字だけの発言などで最上位候補が無関係な言語になった場合の救済。
+  // 候補は信頼度順なので、学ぶ言語・解説言語のうち先に見つかったものを採用する
   for (const candidate of candidates.slice(1)) {
     if (candidate.detectedLanguage === undefined || (candidate.confidence ?? 0) < MIN_FALLBACK_CONFIDENCE) continue;
     const lang = primaryLanguageSubtag(candidate.detectedLanguage);
+    if (lang === settings.explainLang) return { kind: "same-as-explanation" };
     if (isProcessableLearningLanguage(lang, settings)) return { kind: "learning", lang };
   }
   return { kind: "other", detectedLanguage: detected };

@@ -7,7 +7,8 @@
  *
  * 判定は最上位候補で決めるのが基本だが、"oooohhh ok" のような短い感嘆詞は最上位候補が
  * 無関係な言語(ar など)になることがある(実配信で観測)。そのため最上位候補が学ぶ言語にも
- * 解説言語にも該当しないときだけ、候補列の中に十分な信頼度の学ぶ言語があればそれを採用する。
+ * 解説言語にも該当しないときだけ、候補列(信頼度順)の中に十分な信頼度の学ぶ言語・解説言語があれば
+ * 先に見つかったものを採用する(漢字だけ・半角カナだけの日本語が zh になる誤判定にも対応する)。
  * 「先頭の学ぶ言語で扱う」ような判定器の結果に基づかないフォールバックは行わない。
  */
 import { describe, expect, it } from "vitest";
@@ -80,28 +81,50 @@ describe("classifyDetectedLanguage", () => {
     expect(result).toEqual({ kind: "other", detectedLanguage: "ko" });
   });
 
-  it("候補列に解説言語があっても、それを理由に「同じ言語」にはしない(同じ言語の判定は最上位候補だけで行う)", () => {
+  it("最上位候補が対象外でも、候補列に十分な信頼度の解説言語があれば「同じ言語」にする(漢字だけ・半角カナだけの日本語が zh になる誤判定対策)", () => {
     const result = classifyDetectedLanguage(
       [
-        { detectedLanguage: "ar", confidence: 0.5 },
-        { detectedLanguage: "ja", confidence: 0.4 },
+        { detectedLanguage: "zh", confidence: 0.6 },
+        { detectedLanguage: "ja", confidence: 0.35 },
       ],
       英語を学ぶ日本語話者の設定,
     );
 
-    expect(result).toEqual({ kind: "other", detectedLanguage: "ar" });
+    expect(result).toEqual({ kind: "same-as-explanation" });
   });
 
-  it("フォールバックでも解説言語と同じ言語は学ぶ言語として採用しない", () => {
-    const result = classifyDetectedLanguage(
+  it("候補列に学ぶ言語と解説言語の両方があるときは、信頼度が高い(先に並ぶ)ほうを採用する", () => {
+    const 学ぶ言語が先 = classifyDetectedLanguage(
       [
         { detectedLanguage: "ar", confidence: 0.5 },
-        { detectedLanguage: "ja", confidence: 0.4 },
+        { detectedLanguage: "en", confidence: 0.3 },
+        { detectedLanguage: "ja", confidence: 0.15 },
       ],
-      日英混在チャットの設定,
+      英語を学ぶ日本語話者の設定,
+    );
+    const 解説言語が先 = classifyDetectedLanguage(
+      [
+        { detectedLanguage: "ar", confidence: 0.5 },
+        { detectedLanguage: "ja", confidence: 0.3 },
+        { detectedLanguage: "en", confidence: 0.15 },
+      ],
+      英語を学ぶ日本語話者の設定,
     );
 
-    expect(result).toEqual({ kind: "other", detectedLanguage: "ar" });
+    expect(学ぶ言語が先).toEqual({ kind: "learning", lang: "en" });
+    expect(解説言語が先).toEqual({ kind: "same-as-explanation" });
+  });
+
+  it("候補列の解説言語の信頼度が下限未満なら「同じ言語」にはせず「対象外」のままにする", () => {
+    const result = classifyDetectedLanguage(
+      [
+        { detectedLanguage: "zh", confidence: 0.98 },
+        { detectedLanguage: "ja", confidence: MIN_FALLBACK_CONFIDENCE - 0.01 },
+      ],
+      英語を学ぶ日本語話者の設定,
+    );
+
+    expect(result).toEqual({ kind: "other", detectedLanguage: "zh" });
   });
 
   it("地域付きの言語タグ(en-US など)は主言語部分で照合する", () => {
