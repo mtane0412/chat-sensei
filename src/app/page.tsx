@@ -41,7 +41,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronsDownIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
-import { ManualPickupOverlay } from "@/components/manual-pickup";
+import { ManualPickupOverlay, MESSAGE_TEXT_ATTRIBUTE, RAW_IRC_COLUMN_NAME } from "@/components/manual-pickup";
 import { ChannelAutocompleteInput } from "@/components/channel-autocomplete";
 import { LanguagePairSelect } from "@/components/language-pair-select";
 import { SettingsDialog } from "@/components/settings-dialog";
@@ -255,7 +255,7 @@ export default function Home() {
           <Column
             title="Raw IRC"
             blurred={false}
-            dataColumn="raw-irc"
+            dataColumn={RAW_IRC_COLUMN_NAME}
             headerAction={
               <>
                 <FollowToggle following={followLatest} onFollowingChange={setFollowLatest} />
@@ -533,25 +533,48 @@ const PickupTerms = memo(function PickupTerms({
   return (
     <dl className="flex flex-col gap-0.5">
       {visibleTerms.map((term) => (
-        <div key={term.term} className="group/term flex flex-wrap items-baseline gap-x-2">
-          <dt className="font-semibold">
-            {term.term}
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Remove "${term.term}"`}
-              className="ml-1 align-middle opacity-0 group-hover/term:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
-              onClick={() => hidePickupTerm(messageId, term.term)}
-            >
-              <XIcon />
-            </Button>
-          </dt>
+        <PickupTermRow key={term.term} term={term.term} onRemove={() => hidePickupTerm(messageId, term.term)}>
           <dd className="text-muted-foreground">{term.meaning}</dd>
-        </div>
+        </PickupTermRow>
       ))}
     </dl>
   );
 });
+
+/**
+ * Pick up列の語句1件の行(語句 + hover時の削除ボタン + 意味などの内容)。
+ * 自動抽出分(PickupTerms)と手動Pick up分(ManualPickupTerms)で見た目・削除ボタンの挙動を揃えるための共通部品。
+ * 削除ボタンは hover 時(またはフォーカス時)に表示し、hover が無いタッチ端末では常に表示する(issue #71 と同じ)。
+ * `children` には意味(dd)や生成状態の表示を渡す。
+ */
+function PickupTermRow({
+  term,
+  onRemove,
+  children,
+}: {
+  term: string;
+  /** 削除ボタンが押されたときの処理(自動分は非表示集合へ追加、手動分はストアから削除) */
+  onRemove: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="group/term flex flex-wrap items-baseline gap-x-2">
+      <dt className="font-semibold">
+        {term}
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Remove "${term}"`}
+          className="ml-1 align-middle opacity-0 group-hover/term:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+          onClick={onRemove}
+        >
+          <XIcon />
+        </Button>
+      </dt>
+      {children}
+    </div>
+  );
+}
 
 /**
  * 手動Pick up(範囲選択で追加した語句。issue #72)の一覧。manual-pickups ストアを購読し、
@@ -566,23 +589,11 @@ const ManualPickupTerms = memo(function ManualPickupTerms({ messageId }: { messa
   return (
     <dl className="flex flex-col gap-0.5">
       {entries.map((entry) => (
-        <div key={entry.term} className="group/term flex flex-wrap items-baseline gap-x-2">
-          <dt className="font-semibold">
-            {entry.term}
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Remove "${entry.term}"`}
-              className="ml-1 align-middle opacity-0 group-hover/term:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
-              onClick={() => removeManualPickup(messageId, entry.term)}
-            >
-              <XIcon />
-            </Button>
-          </dt>
+        <PickupTermRow key={entry.term} term={entry.term} onRemove={() => removeManualPickup(messageId, entry.term)}>
           {entry.status === "pending" && <dd className="text-muted-foreground">Looking up...</dd>}
           {entry.status === "done" && <dd className="text-muted-foreground">{entry.meaning}</dd>}
           {entry.status === "failed" && <dd className="text-destructive">Lookup failed: {entry.reason}</dd>}
-        </div>
+        </PickupTermRow>
       ))}
     </dl>
   );
@@ -659,7 +670,10 @@ function ChatMessageRow({ message }: { message: TwitchChatMessage }) {
         {message.displayName}
       </span>
       <span>: </span>
-      <MessageSegments segments={segments} />
+      {/* 手動Pick up(issue #72)の選択判定を本文に限定するための目印。表示名まで含む選択をPick upさせない */}
+      <span {...{ [MESSAGE_TEXT_ATTRIBUTE]: "" }}>
+        <MessageSegments segments={segments} />
+      </span>
     </Row>
   );
 }

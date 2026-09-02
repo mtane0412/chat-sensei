@@ -1,12 +1,14 @@
 /**
  * 範囲選択による手動Pick upの選択UI(issue #72)。
  *
- * 生IRC列(`data-column="raw-irc"` を持つ列)の中の、1つの発言行(`data-message-id`)に
+ * 生IRC列(`data-column="raw-irc"` を持つ列)の中の、1つの発言の本文(`data-message-text`)に
  * 収まる範囲選択に対してだけ、選択範囲の近くにフローティングの「Pick up」ボタンを表示する。
+ * 行全体ではなく本文に限定するのは、行には表示名・バッジも含まれ、行単位の判定では
+ * 「表示名: 本文」のような選択までPick upできてしまうため(レビュー C8)。
  * ボタンを押すと、対象の発言IDと選択した語句(trim済み)を `onPickup` へ渡し、選択を解除する。
  *
  * - 対象メッセージの特定には `window.getSelection()` のアンカー/フォーカスノードから
- *   最も近い `[data-message-id]` 要素を使う。複数行をまたぐ選択は対象を特定できないため表示しない
+ *   最も近い本文要素とその祖先の `[data-message-id]` を使う。複数の発言をまたぐ選択は対象を特定できないため表示しない
  * - `selectionchange` はマウス・タッチのドラッグ中にも連続して発火するため、選択の確定を
  *   待たずに毎回状態を計算し直す(IME・タッチ選択でも、最終的な選択に対してボタンが出る)。
  *   スクロールでは `selectionchange` が発火しないため、scroll(capture)でも位置を計算し直す
@@ -19,6 +21,15 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 
+/** 生IRC列を識別する `data-column` 属性の値。列側(page.tsx の Column)とセレクタの両方で使う */
+export const RAW_IRC_COLUMN_NAME = "raw-irc";
+
+/**
+ * 発言本文のテキストを囲む要素に付ける data 属性名。行(`data-message-id`)には表示名・バッジも
+ * 含まれるため、選択の判定は本文だけに限定する(レビュー C8。表示名込みの選択をPick upさせない)
+ */
+export const MESSAGE_TEXT_ATTRIBUTE = "data-message-text";
+
 /** 現在の範囲選択から特定した手動Pick upの対象 */
 interface SelectionTarget {
   /** 選択範囲を含む発言のID(`data-message-id`) */
@@ -30,27 +41,29 @@ interface SelectionTarget {
   left: number;
 }
 
-/** ノードから最も近い、生IRC列内の発言行要素を返す。生IRC列の外なら null */
-function closestRawIrcMessageRow(node: Node | null): Element | null {
+/**
+ * ノードから最も近い、生IRC列内の発言本文要素(`data-message-text`)を返す。
+ * 本文の外(表示名・バッジなど)や生IRC列の外なら null
+ */
+function closestRawIrcMessageText(node: Node | null): Element | null {
   if (node === null) return null;
   const element = node instanceof Element ? node : node.parentElement;
-  return element?.closest('[data-column="raw-irc"] [data-message-id]') ?? null;
+  return element?.closest(`[data-column="${RAW_IRC_COLUMN_NAME}"] [data-message-id] [${MESSAGE_TEXT_ATTRIBUTE}]`) ?? null;
 }
 
 /** 現在の範囲選択を読み取り、手動Pick upの対象になる場合だけその情報を返す */
 function readSelectionTarget(): SelectionTarget | null {
   const selection = document.getSelection();
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+  const anchorText = closestRawIrcMessageText(selection.anchorNode);
+  const focusText = closestRawIrcMessageText(selection.focusNode);
+  if (anchorText === null || anchorText !== focusText) return null;
+  const row = anchorText.closest("[data-message-id]");
+  const messageId = row?.getAttribute("data-message-id");
+  if (!row || !messageId) return null;
   const term = selection.toString().trim();
   if (term === "") return null;
-  const anchorRow = closestRawIrcMessageRow(selection.anchorNode);
-  const focusRow = closestRawIrcMessageRow(selection.focusNode);
-  if (anchorRow === null || anchorRow !== focusRow) return null;
-  const messageId = anchorRow.getAttribute("data-message-id");
-  if (messageId === null || messageId === "") return null;
-  // jsdom(テスト環境)の Range には getBoundingClientRect が存在しないため、行要素の位置で代用する
-  const range: { getBoundingClientRect?: () => DOMRect } = selection.getRangeAt(0);
-  const rect = range.getBoundingClientRect?.() ?? anchorRow.getBoundingClientRect();
+  const rect = selection.getRangeAt(0).getBoundingClientRect();
   return { messageId, term, top: rect.top, left: rect.left };
 }
 

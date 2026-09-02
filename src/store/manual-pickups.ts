@@ -18,6 +18,7 @@ import { create } from "zustand";
 import { createDefineTermBaseSessionFactory, defineTerm } from "@/lib/ai/define-term";
 import { createSessionPool, type SessionPool } from "@/lib/ai/session-pool";
 import { sharedPromptJobQueue } from "./auto-pipeline";
+import { normalizePickupTerm } from "./hidden-pickups";
 import { usePromptApiStore, type PromptApiStatus } from "./prompt-api";
 import { useSettingsStore } from "./settings";
 import { getStreamInfo } from "./stream-info";
@@ -39,8 +40,8 @@ export const useManualPickupStore = create<ManualPickupState>(() => ({ entries: 
 export interface ManualPickupDeps {
   /** Prompt API の利用可否(prompt-api ストア)。ready 以外では生成を試みない */
   getPromptApiStatus: () => PromptApiStatus;
-  /** 選択した語句と発言本文から、解説言語での意味を生成する */
-  generateMeaning: (term: string, messageText: string) => Promise<string>;
+  /** 選択した語句と発言本文から、解説言語での意味を生成する。`signal` は削除・クリア時に中断される */
+  generateMeaning: (term: string, messageText: string, signal?: AbortSignal) => Promise<string>;
 }
 
 /**
@@ -51,20 +52,13 @@ let cachedPool: { key: string; pool: SessionPool } | null = null;
 
 function getDefineTermPool(): SessionPool {
   const { hydrated, settings } = useSettingsStore.getState();
-  // 手動Pick upはユーザー操作起点のため通常は復元済みだが、呼び出し順の誤りを暗黙に隠さない(Fail-Fast)
-  if (!hydrated) throw new Error("設定が未復元です。hydrateSettingsStore() を先に呼び出してください");
+  // 手動Pick upはユーザー操作起点のため通常は復元済みだが、呼び出し順の誤りを暗黙に隠さない(Fail-Fast)。
+  // このメッセージは失敗理由として画面に表示され得るため、UIの言語(英語)で書く
+  if (!hydrated) throw new Error("Settings are not restored yet. Call hydrateSettingsStore() first");
   const streamInfo = getStreamInfo();
-  const key = [
-    settings.learningLang,
-    settings.explainLang,
-    settings.llmProvider,
-    settings.openRouterApiKey,
-    settings.openRouterModel,
-    streamInfo?.title ?? "",
-    streamInfo?.category ?? "",
-    streamInfo?.broadcasterLogin ?? "",
-    streamInfo?.broadcasterName ?? "",
-  ].join("|");
+  // フィールドを手動列挙すると設定項目の追加時に漏れやすく、区切り文字がタイトル中の文字と衝突し得るため、
+  // 構造ごと JSON にして比較する(設定・配信情報はどちらも小さな平坦オブジェクト)
+  const key = JSON.stringify([settings, streamInfo]);
   if (cachedPool === null || cachedPool.key !== key) {
     cachedPool = {
       key,
@@ -84,12 +78,40 @@ function getDefineTermPool(): SessionPool {
 
 const defaultDeps: ManualPickupDeps = {
   getPromptApiStatus: () => usePromptApiStore.getState().status,
-  generateMeaning: async (term, messageText) => (await defineTerm(getDefineTermPool(), term, messageText)).meaning,
+  generateMeaning: async (term, messageText, signal) => {
+    const pool = getDefineTermPool();
+    // モデル未ダウンロード時の LanguageModel.create() にはユーザー操作が必要なため、
+    // クリックハンドラの延長にあたるこの時点でベースセッションの生成を開始しておく(auto-pipeline の warmUp と同じ理由)。
+    // 生成失敗はここで握りつぶさず、直後の enqueue(defineTerm)が再試行して失敗理由を表面化させる
+    void pool.warmUp().catch(() => {});
+    return (await defineTerm(pool, term, messageText, { signal })).meaning;
+  },
 };
 
-/** 語句の正準形。hidden-pickups / pickup-filter と同じ基準(trim + 小文字化)で重複を判定する */
-function normalizeTerm(term: string): string {
-  return term.trim().toLowerCase();
+/**
+ * 生成中(pending)ジョブの中断用 AbortController。キーは「発言ID + 語句」。
+ * 削除・クリア時に中断することで、不要になった high 優先度ジョブが共有直列キューを占有し、
+ * 次のチャンネルの翻訳・Pick up(low 優先度)を遅らせないようにする(レビュー C3)
+ */
+const pendingControllers = new Map<string, AbortController>();
+
+function pendingKey(messageId: string, term: string): string {
+  return `${messageId}\u0000${term}`;
+}
+
+/** 指定した発言・語句の生成ジョブを中断する。生成中でなければ何もしない */
+function abortPendingGeneration(messageId: string, term: string): void {
+  const controller = pendingControllers.get(pendingKey(messageId, term));
+  if (!controller) return;
+  pendingControllers.delete(pendingKey(messageId, term));
+  controller.abort();
+}
+
+/** すべての生成ジョブを中断する。クリア・テストリセット時に呼ぶ */
+function abortAllPendingGenerations(): void {
+  const controllers = [...pendingControllers.values()];
+  pendingControllers.clear();
+  controllers.forEach((controller) => controller.abort());
 }
 
 /** 指定した発言の手動Pick up一覧の末尾にエントリを追加する */
@@ -130,9 +152,13 @@ export async function addManualPickup(
 ): Promise<void> {
   const trimmed = term.trim();
   if (trimmed === "") return;
-  const normalized = normalizeTerm(trimmed);
+  const normalized = normalizePickupTerm(trimmed);
   const current = useManualPickupStore.getState().entries[messageId] ?? [];
-  if (current.some((entry) => normalizeTerm(entry.term) === normalized)) return;
+  const existing = current.find((entry) => normalizePickupTerm(entry.term) === normalized);
+  // pending(生成中)・done(生成済み)は重複として何もしない。failed だけは再選択を再試行として扱い、
+  // 古い failed エントリを取り除いてから生成をやり直す(レビュー C1。診断完了後の再試行もこの経路で可能になる)
+  if (existing && existing.status !== "failed") return;
+  if (existing) removeManualPickup(messageId, existing.term);
 
   const promptApi = deps.getPromptApiStatus();
   if (promptApi.status !== "ready") {
@@ -142,21 +168,30 @@ export async function addManualPickup(
     return;
   }
 
+  const controller = new AbortController();
+  pendingControllers.set(pendingKey(messageId, trimmed), controller);
   appendEntry(messageId, { status: "pending", term: trimmed });
   try {
-    const meaning = await deps.generateMeaning(trimmed, messageText);
+    const meaning = await deps.generateMeaning(trimmed, messageText, controller.signal);
     replaceEntry(messageId, trimmed, { status: "done", term: trimmed, meaning });
   } catch (error) {
+    // 削除・クリアによる中断はエントリ自体が消えているため、replaceEntry のガードで何も反映されない
     replaceEntry(messageId, trimmed, {
       status: "failed",
       term: trimmed,
       reason: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    pendingControllers.delete(pendingKey(messageId, trimmed));
   }
 }
 
-/** 指定した発言の手動Pick upから語句を削除する。最後の語句を削除した発言はエントリごと消す */
+/**
+ * 指定した発言の手動Pick upから語句を削除する。最後の語句を削除した発言はエントリごと消す。
+ * 生成中(pending)の語句は生成ジョブも中断する(レビュー C3)
+ */
 export function removeManualPickup(messageId: string, term: string): void {
+  abortPendingGeneration(messageId, term);
   useManualPickupStore.setState((state) => {
     const current = state.entries[messageId];
     if (!current) return state;
@@ -174,11 +209,13 @@ export function removeManualPickup(messageId: string, term: string): void {
 
 /** 手動Pick upをすべて破棄する。チャンネル切り替え時(`chat-connection.ts` の connect())に呼ぶ */
 export function clearManualPickups(): void {
+  abortAllPendingGenerations();
   useManualPickupStore.setState({ entries: {} });
 }
 
 /** テスト専用: ストアとセッションプールのキャッシュを初期状態に戻す。各テストの afterEach で呼び出すこと */
 export function resetManualPickupStoreForTests(): void {
+  abortAllPendingGenerations();
   cachedPool = null;
   useManualPickupStore.setState({ entries: {} });
 }

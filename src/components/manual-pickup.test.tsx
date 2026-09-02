@@ -16,8 +16,14 @@ function renderWithRows(onPickup = vi.fn()) {
   render(
     <div>
       <section data-column="raw-irc">
-        <div data-message-id="msg-1">gg no re chat</div>
-        <div data-message-id="msg-2">this is so real</div>
+        <div data-message-id="msg-1">
+          <span>viewer_taro</span>
+          <span>: </span>
+          <span data-message-text="">gg no re chat</span>
+        </div>
+        <div data-message-id="msg-2">
+          <span data-message-text="">this is so real</span>
+        </div>
       </section>
       <section>
         <div data-message-id="msg-1">翻訳列のセルに相当する別列のテキスト</div>
@@ -99,6 +105,16 @@ describe("ManualPickupOverlay", () => {
     const node2 = textNodeOf(screen.getByText("this is so real"));
 
     selectRange(node1, 3, node2, 4);
+
+    expect(screen.queryByRole("button", { name: "Pick up" })).not.toBeInTheDocument();
+  });
+
+  it("発言本文の外(表示名など)を含む選択ではボタンを表示しない(レビュー C8)", () => {
+    renderWithRows();
+    const nameNode = textNodeOf(screen.getByText("viewer_taro"));
+    const bodyNode = textNodeOf(screen.getByText("gg no re chat"));
+
+    selectRange(nameNode, 0, bodyNode, 5); // 表示名から本文までまたぐ選択(トリプルクリック相当)
 
     expect(screen.queryByRole("button", { name: "Pick up" })).not.toBeInTheDocument();
   });

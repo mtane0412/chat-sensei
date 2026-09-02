@@ -53,12 +53,12 @@ describe("manual-pickups ストア", () => {
     ]);
   });
 
-  it("generateMeaning には選択した語句と発言本文を渡す", async () => {
+  it("generateMeaning には選択した語句・発言本文・中断用の signal を渡す", async () => {
     const deps = createDeps();
 
     await addManualPickup("msg-1", "no re", "gg no re chat", deps);
 
-    expect(deps.generateMeaning).toHaveBeenCalledWith("no re", "gg no re chat");
+    expect(deps.generateMeaning).toHaveBeenCalledWith("no re", "gg no re chat", expect.any(AbortSignal));
   });
 
   it("意味の生成に失敗した場合は理由付きの failed になる(暗黙に隠さない)", async () => {
@@ -132,6 +132,85 @@ describe("manual-pickups ストア", () => {
     resolveMeaning("遅れて届いた意味");
     await promise;
 
+    expect(useManualPickupStore.getState().entries).toEqual({});
+  });
+
+  it("失敗した語句を再度追加すると、failed エントリを置き換えて生成をやり直す(issue #72 レビュー C1)", async () => {
+    const failing = createDeps({
+      generateMeaning: vi.fn(async () => {
+        throw new Error("一時的なエラー");
+      }),
+    });
+    await addManualPickup("msg-1", "no re", "gg no re chat", failing);
+    expect(useManualPickupStore.getState().entries["msg-1"]).toEqual([
+      { status: "failed", term: "no re", reason: "一時的なエラー" },
+    ]);
+
+    const succeeding = createDeps();
+    await addManualPickup("msg-1", "no re", "gg no re chat", succeeding);
+
+    expect(useManualPickupStore.getState().entries["msg-1"]).toEqual([
+      { status: "done", term: "no re", meaning: "生成された意味" },
+    ]);
+  });
+
+  it("pending・done の語句は重複として扱い、再試行しない", async () => {
+    let resolveMeaning!: (meaning: string) => void;
+    const deps = createDeps({
+      generateMeaning: vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveMeaning = resolve;
+          }),
+      ),
+    });
+    const promise = addManualPickup("msg-1", "no re", "gg no re chat", deps);
+
+    await addManualPickup("msg-1", "no re", "gg no re chat", deps); // pending 中の重複
+
+    expect(deps.generateMeaning).toHaveBeenCalledTimes(1);
+    resolveMeaning("意味");
+    await promise;
+  });
+
+  it("removeManualPickup で pending の語句を削除すると、生成ジョブの signal を中断する(issue #72 レビュー C3)", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const deps = createDeps({
+      generateMeaning: vi.fn(
+        (_term: string, _messageText: string, signal?: AbortSignal) =>
+          new Promise<string>((_resolve, reject) => {
+            capturedSignal = signal;
+            signal?.addEventListener("abort", () => reject(new Error("中断されました")), { once: true });
+          }),
+      ),
+    });
+    const promise = addManualPickup("msg-1", "no re", "gg no re chat", deps);
+
+    removeManualPickup("msg-1", "no re");
+    await promise;
+
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(useManualPickupStore.getState().entries).toEqual({});
+  });
+
+  it("clearManualPickups で pending の生成ジョブをすべて中断する(issue #72 レビュー C3)", async () => {
+    const capturedSignals: (AbortSignal | undefined)[] = [];
+    const deps = createDeps({
+      generateMeaning: vi.fn(
+        (_term: string, _messageText: string, signal?: AbortSignal) =>
+          new Promise<string>((_resolve, reject) => {
+            capturedSignals.push(signal);
+            signal?.addEventListener("abort", () => reject(new Error("中断されました")), { once: true });
+          }),
+      ),
+    });
+    const promise1 = addManualPickup("msg-1", "no re", "gg no re chat", deps);
+    const promise2 = addManualPickup("msg-2", "gg", "gg everyone", deps);
+
+    clearManualPickups();
+    await Promise.all([promise1, promise2]);
+
+    expect(capturedSignals.map((signal) => signal?.aborted)).toEqual([true, true]);
     expect(useManualPickupStore.getState().entries).toEqual({});
   });
 

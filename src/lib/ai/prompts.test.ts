@@ -459,6 +459,13 @@ describe("buildDefineTermSystemPrompt(手動Pick up。issue #72)", () => {
     }
   });
 
+  it("発言が学ぶ言語で書かれていると断定しない(生IRC列には解説言語の発言も流れるため。レビュー C4)", () => {
+    // 逆方向対象(解説言語の発言)から選択しても誤った前提で意味を生成しないよう、
+    // 発言の言語は断定せず「別の言語のこともある」と伝える
+    expect(buildDefineTermSystemPrompt("en", "ja")).toContain("別の言語");
+    expect(buildDefineTermSystemPrompt("ja", "en")).toMatch(/another language/);
+  });
+
   it("配信の文脈を渡すと、文脈なしのプロンプトの末尾に追記される(issue #54 と同じ機構)", () => {
     const prompt = buildDefineTermSystemPrompt("en", "ja", {
       title: "Road to Gladiator",
