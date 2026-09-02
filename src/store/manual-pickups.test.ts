@@ -6,7 +6,7 @@
  * 意味の生成(LLM 呼び出し)と Prompt API の利用可否はフェイクを注入する。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PromptSessionLike } from "@/lib/ai/session-pool";
+import { SessionPoolDisposedError, type PromptSessionLike } from "@/lib/ai/session-pool";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import {
   addManualPickup,
@@ -16,6 +16,7 @@ import {
   useManualPickupStore,
   type ManualPickupDeps,
 } from "./manual-pickups";
+import { flush } from "./pipeline-test-fixtures";
 import { resetPromptApiStoreForTests, usePromptApiStore } from "./prompt-api";
 import { resetSettingsStoreForTests, useSettingsStore } from "./settings";
 
@@ -266,6 +267,24 @@ describe("manual-pickups ストア", () => {
     expect(useManualPickupStore.getState().entries).toEqual({});
   });
 
+  it("プール差し替えで破棄されたジョブは、内部文言ではなく再試行を促す理由の failed になる(issue #75)", async () => {
+    const deps = createDeps({
+      generateMeaning: vi.fn(async () => {
+        throw new SessionPoolDisposedError();
+      }),
+    });
+
+    await addManualPickup("msg-1", "gg", "gg chat", deps);
+
+    expect(useManualPickupStore.getState().entries["msg-1"]).toEqual([
+      {
+        status: "failed",
+        term: "gg",
+        reason: "Cancelled because the settings or stream context changed. Select the term again to retry.",
+      },
+    ]);
+  });
+
   it("clearManualPickups で全発言の手動Pick upを破棄する", async () => {
     const deps = createDeps();
     await addManualPickup("msg-1", "no re", "gg no re chat", deps);
@@ -283,13 +302,6 @@ describe("manual-pickups ストア", () => {
  * デフォルト依存(deps 省略)で getDefineTermPool を経由させるため、define-term をモックしている。
  */
 describe("getDefineTermPool: プール差し替え時の破棄(issue #75)", () => {
-  /** ウォームアップ(ベースセッション生成)や dispose の destroy 呼び出しが落ち着くまでフラッシュする */
-  async function flushMicrotasks(times = 10) {
-    for (let i = 0; i < times; i++) {
-      await Promise.resolve();
-    }
-  }
-
   /** デフォルト依存が参照する設定ストア・Prompt API ストアを「利用可能」な状態にする */
   function setUpDefaultDepsEnvironment() {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, hydrated: true });
@@ -307,7 +319,7 @@ describe("getDefineTermPool: プール差し替え時の破棄(issue #75)", () =
 
     await addManualPickup("msg-1", "gg", "gg chat");
     await addManualPickup("msg-2", "poggers", "poggers wow");
-    await flushMicrotasks();
+    await flush();
 
     expect(defineTermMockState.createdBaseSessions).toHaveLength(1);
     expect(defineTermMockState.createdBaseSessions[0].destroyCount).toBe(0);
@@ -316,25 +328,36 @@ describe("getDefineTermPool: プール差し替え時の破棄(issue #75)", () =
   it("設定が変わって新しいプールを作るとき、旧プールのベースセッションを destroy する", async () => {
     setUpDefaultDepsEnvironment();
     await addManualPickup("msg-1", "gg", "gg chat");
-    await flushMicrotasks();
+    await flush();
     expect(defineTermMockState.createdBaseSessions).toHaveLength(1);
 
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, explainLang: "es" }, hydrated: true });
     await addManualPickup("msg-2", "poggers", "poggers wow");
-    await flushMicrotasks();
+    await flush();
 
     expect(defineTermMockState.createdBaseSessions).toHaveLength(2);
     expect(defineTermMockState.createdBaseSessions[0].destroyCount).toBe(1); // 旧プールは破棄する
     expect(defineTermMockState.createdBaseSessions[1].destroyCount).toBe(0); // 新プールは使い続ける
   });
 
+  it("clearManualPickups はキャッシュ中のプールのベースセッションを破棄する(チャンネル切替時のリーク防止)", async () => {
+    setUpDefaultDepsEnvironment();
+    await addManualPickup("msg-1", "gg", "gg chat");
+    await flush();
+
+    clearManualPickups();
+    await flush();
+
+    expect(defineTermMockState.createdBaseSessions[0].destroyCount).toBe(1);
+  });
+
   it("resetManualPickupStoreForTests はキャッシュ中のプールのベースセッションを破棄する", async () => {
     setUpDefaultDepsEnvironment();
     await addManualPickup("msg-1", "gg", "gg chat");
-    await flushMicrotasks();
+    await flush();
 
     resetManualPickupStoreForTests();
-    await flushMicrotasks();
+    await flush();
 
     expect(defineTermMockState.createdBaseSessions[0].destroyCount).toBe(1);
   });

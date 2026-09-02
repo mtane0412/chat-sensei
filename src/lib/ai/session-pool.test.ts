@@ -12,6 +12,7 @@ import {
   createPromptJobQueue,
   createSessionPool,
   LowPriorityQueueOverflowError,
+  SessionPoolDisposedError,
   type PromptJobQueue,
   type PromptSessionLike,
 } from "./session-pool";
@@ -446,6 +447,62 @@ describe("createSessionPool: dispose(issue #75)", () => {
     pool.dispose();
 
     await expect(pool.warmUp()).rejects.toThrow(/disposed/);
+  });
+
+  it("dispose() 後の enqueue は SessionPoolDisposedError で拒否され、呼び出し側が判別できる", async () => {
+    const pool = createPool(async () => createFakeSession([], "base"));
+    await pool.warmUp();
+    pool.dispose();
+
+    await expect(pool.enqueue("high", async () => "x")).rejects.toBeInstanceOf(SessionPoolDisposedError);
+  });
+
+  it("ベースセッションの clone() 実行中に dispose() しても、clone 完了を待ってから destroy する(clone 中の破棄レースを防ぐ)", async () => {
+    const cloneDeferred = createDeferred<PromptSessionLike>();
+    const cloneSession: PromptSessionLike = {
+      prompt: async () => "cloned response",
+      clone: async () => cloneSession,
+      destroy: vi.fn(),
+    };
+    const baseSession: PromptSessionLike = {
+      prompt: async () => "base response",
+      clone: () => cloneDeferred.promise,
+      destroy: vi.fn(),
+    };
+    const pool = createPool(async () => baseSession);
+
+    const pJob = pool.enqueue("high", (session) => session.prompt("hello"));
+    await flushMicrotasks(); // ジョブが clone() の完了待ちに入るまで進める
+
+    pool.dispose();
+    await flushMicrotasks();
+    expect(baseSession.destroy).not.toHaveBeenCalled(); // clone 完了前は destroy しない
+
+    cloneDeferred.resolve(cloneSession);
+    expect(await pJob).toBe("cloned response");
+    expect(baseSession.destroy).toHaveBeenCalledTimes(1); // clone 完了後に destroy する
+  });
+
+  it("ベースセッションの destroy() が失敗した場合は握りつぶさず console.warn で記録する", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const baseSession: PromptSessionLike = {
+        prompt: async () => "",
+        clone: async () => baseSession,
+        destroy: () => {
+          throw new Error("destroy failed");
+        },
+      };
+      const pool = createPool(async () => baseSession);
+      await pool.warmUp();
+
+      pool.dispose();
+      await flushMicrotasks();
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("実行中のジョブはクローンセッションで動作しているため、dispose() 後も完了できる", async () => {
