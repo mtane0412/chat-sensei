@@ -9,12 +9,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { resetPickupStoreForTests, startPickupPipeline, usePickupStore } from "./pickups";
 import { createDeps, createMessage, flush } from "./pipeline-test-fixtures";
 import { resetPromptApiStoreForTests } from "./prompt-api";
+import { resetTranslationStoreForTests, useTranslationStore } from "./translations";
 
 /** 「gg chat」に対する抽出結果(gg を略語として拾った想定)*/
 const 抽出結果 = { terms: [{ term: "gg", meaning: "good game の略、お疲れ" }] };
 
 afterEach(() => {
   resetPickupStoreForTests();
+  resetTranslationStoreForTests();
   resetPromptApiStoreForTests();
 });
 
@@ -117,18 +119,23 @@ describe("startPickupPipeline", () => {
   });
 });
 
-describe("startPickupPipeline(逆方向: 解説言語の発言を学ぶ言語へ訳して抽出)", () => {
-  it("解説言語と判定した発言は、逆方向のセッションプールで訳文からの抽出を実行して語句と意味のペアを保持する", async () => {
+describe("startPickupPipeline(逆方向: 翻訳パイプラインの訳文を再利用して抽出。issue #68)", () => {
+  it("解説言語と判定した発言は、翻訳ストアの訳文(学ぶ言語)を待ち、その訳文に対して逆方向のセッションプールで抽出する", async () => {
     const { deps, emit, enqueue, reverseEnqueue, reversePrompt } = createDeps({
       detectedLanguage: "ja",
-      reversePromptResults: [
-        Promise.resolve(
-          JSON.stringify({
-            translation: "fr that's true lmao",
-            terms: [{ term: "fr", meaning: "for real の略。マジで" }],
-          }),
-        ),
-      ],
+      reversePromptResults: [Promise.resolve(JSON.stringify({ terms: [{ term: "fr", meaning: "for real の略。マジで" }] }))],
+    });
+    // 翻訳パイプラインが先に生成した訳文(翻訳列に表示されるもの)を注入する。emote は空白として扱う
+    useTranslationStore.setState({
+      entries: {
+        "msg-1": {
+          status: "done",
+          segments: [
+            { type: "text", text: "fr that's true " },
+            { type: "emote", id: "25", text: "Kappa" },
+          ],
+        },
+      },
     });
 
     const stop = startPickupPipeline(deps);
@@ -138,17 +145,71 @@ describe("startPickupPipeline(逆方向: 解説言語の発言を学ぶ言語へ
 
     expect(enqueue).not.toHaveBeenCalled();
     expect(reverseEnqueue).toHaveBeenCalledWith("low", expect.any(Function), expect.any(AbortSignal));
-    // 逆方向は訳文(translation)も要求する responseConstraint で呼ぶ
+    // LLM には原文(日本語)ではなく訳文を渡し、順方向と同じ terms のみの responseConstraint で呼ぶ
+    // (訳文の再生成をしないことが issue #68 の主旨)
     expect(reversePrompt).toHaveBeenCalledWith(
-      expect.stringContaining("それなwww"),
+      expect.stringContaining("fr that's true"),
       expect.objectContaining({
-        responseConstraint: expect.objectContaining({ required: ["translation", "terms"] }),
+        responseConstraint: expect.objectContaining({ required: ["terms"] }),
       }),
     );
+    expect(reversePrompt).not.toHaveBeenCalledWith(expect.stringContaining("それなwww"), expect.anything());
     expect(usePickupStore.getState().entries["msg-1"]).toEqual({
       status: "done",
       terms: [{ term: "fr", meaning: "for real の略。マジで" }],
     });
+    stop();
+  });
+
+  it("訳文がまだ生成中(エントリ無し)の間は pending のまま待ち、訳文が done になった時点で抽出する", async () => {
+    const { deps, emit, reverseEnqueue } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [Promise.resolve(JSON.stringify({ terms: [] }))],
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "それなwww" }));
+    await flush();
+    expect(reverseEnqueue).not.toHaveBeenCalled();
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({ status: "pending" });
+
+    useTranslationStore.setState({
+      entries: { "msg-1": { status: "done", segments: [{ type: "text", text: "that's so true" }] } },
+    });
+    await flush();
+
+    expect(reverseEnqueue).toHaveBeenCalledTimes(1);
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({ status: "done", terms: [] });
+    stop();
+  });
+
+  it("翻訳が failed の場合は訳文が得られないため、理由付きで failed として保持する(暗黙のフォールバックはしない)", async () => {
+    const { deps, emit, reverseEnqueue } = createDeps({ detectedLanguage: "ja" });
+    useTranslationStore.setState({ entries: { "msg-1": { status: "failed", reason: "モデルがクラッシュしました" } } });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "それなwww" }));
+    await flush();
+
+    expect(reverseEnqueue).not.toHaveBeenCalled();
+    const entry = usePickupStore.getState().entries["msg-1"];
+    expect(entry?.status).toBe("failed");
+    expect(entry?.status === "failed" && entry.reason).toMatch(/モデルがクラッシュしました/);
+    stop();
+  });
+
+  it("翻訳が dropped(流量超過)の場合は Pick up も dropped として保持する", async () => {
+    const { deps, emit } = createDeps({ detectedLanguage: "ja" });
+    useTranslationStore.setState({ entries: { "msg-1": { status: "dropped" } } });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "それなwww" }));
+    await flush();
+
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({ status: "dropped" });
     stop();
   });
 
@@ -158,7 +219,6 @@ describe("startPickupPipeline(逆方向: 解説言語の発言を学ぶ言語へ
       reversePromptResults: [
         Promise.resolve(
           JSON.stringify({
-            translation: "welcome back viewer_taro, no cap",
             terms: [
               { term: "viewer_taro", meaning: "配信の常連" },
               { term: "no cap", meaning: "嘘じゃない、マジで" },
@@ -166,6 +226,9 @@ describe("startPickupPipeline(逆方向: 解説言語の発言を学ぶ言語へ
           }),
         ),
       ],
+    });
+    useTranslationStore.setState({
+      entries: { "msg-1": { status: "done", segments: [{ type: "text", text: "welcome back viewer_taro, no cap" }] } },
     });
 
     const stop = startPickupPipeline(deps);

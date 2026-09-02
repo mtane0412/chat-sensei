@@ -51,21 +51,6 @@ export const pickupSchema = z.object({
 export type PickupTerm = z.infer<typeof pickupTermSchema>;
 export type PickupResult = z.infer<typeof pickupSchema>;
 
-/**
- * 逆方向 Pick up(解説言語の発言を学ぶ言語へ翻訳し、その訳文から注目の表現を抽出する)の結果。
- * 語句(`terms[].term`)は原文ではなく訳文(`translation`)に登場する文字列であることを
- * `pickup.ts` が照合するため、訳文も応答に含めさせる(1回の生成で翻訳と抽出の両方を得る)。
- * 訳文が空だと照合ができないため空文字は拒否する。
- */
-export const reversePickupSchema = z.object({
-  /** 学ぶ言語での訳文(語句の照合にのみ使い、画面には表示しない) */
-  translation: z.string().min(1),
-  /** 訳文から抽出した表現。該当が無い場合は空配列 */
-  terms: z.array(pickupTermSchema),
-});
-
-export type ReversePickupResult = z.infer<typeof reversePickupSchema>;
-
 /** 解説対象の語句・フレーズの分類 */
 export const EXPLANATION_ITEM_KINDS = ["slang", "abbreviation", "idiom", "emote", "grammar", "word"] as const;
 

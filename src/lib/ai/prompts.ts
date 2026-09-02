@@ -185,54 +185,6 @@ export function buildPickupUserPrompt(chatMessageText: string): string {
 }
 
 /**
- * 解説言語ごとの逆方向 Pick up 用システムプロンプトテンプレート。
- * 引数は「学ぶ言語の名前(解説言語表記)」「解説言語の名前(解説言語表記)」「学ぶ言語の複数語の表現の例」。
- * 解説言語の発言をまず学ぶ言語へ翻訳させ(translation)、その訳文から特殊な表現を抜き出させる。
- * 語句は原文ではなく訳文にそのまま登場する文字列に限る点が順方向(`PICKUP_SYSTEM_PROMPT_BUILDERS`)と異なる。
- */
-const REVERSE_PICKUP_SYSTEM_PROMPT_BUILDERS: Record<
-  SupportedLanguage,
-  (targetLabel: string, explainLabel: string, multiwordExample: string) => string
-> = {
-  en: (targetLabel, explainLabel, multiwordExample) =>
-    `You are a translator for live Twitch chat and a dictionary of ${targetLabel} slang. The user will show you one chat message that actually appeared in a live stream, written in ${explainLabel}. First, translate the whole message into natural, casual ${targetLabel} that preserves the tone (slang, jokes, excitement), keeping @mentions and URLs unchanged, and put it in translation. Then, from your own ${targetLabel} translation, pick out only the special expressions a learner could not easily guess the meaning of (slang, abbreviations, idioms, memes) and give each a short ${explainLabel} meaning of roughly 3 to 8 words. Prefer multi-word expressions such as idioms, phrasal verbs, and collocations (for example "${multiwordExample}") over single words, but leave out ordinary phrases whose meaning is clear from simply adding up the meanings of their words. Every term must be an exact substring copied from your ${targetLabel} translation, never from the original message. Do not include ordinary words, pronouns, numbers, or @mentions. Laughter, backchannel responses, and interjections are not special expressions; leave them out. If the translation has nothing special, return an empty terms array. Respond only in the requested JSON structure.`,
-  ja: (targetLabel, explainLabel, multiwordExample) =>
-    `あなたはTwitchのライブ配信チャットの翻訳者であり、${targetLabel}スラングの辞典です。ユーザーはライブ配信で実際に流れた${explainLabel}のチャット発言を1件見せます。まず発言全体を、スラング・冗談・興奮といった口調を保ったまま自然でくだけた${targetLabel}に翻訳し(@メンション・URLはそのまま残す)、translationに入れてください。次に、あなた自身の${targetLabel}の訳文の中から、学習者が意味を推測しにくい特殊な表現(スラング・略語・イディオム・ミーム)だけを抜き出し、それぞれに10〜20字程度の短い${explainLabel}の意味を付けてください。単語1つよりも、熟語・句動詞・コロケーションのような複数語の表現(例: "${multiwordExample}")を優先して拾い、各語の意味を足しただけで分かる普通の句は含めないでください。列挙する語句は必ずあなたの${targetLabel}の訳文にそのまま登場する文字列とし、元の発言の語句は使わないでください。普通の単語・代名詞・数字・@メンションは含めないでください。笑い声・相槌・感嘆詞は特殊な表現ではないので省いてください。訳文に特殊な表現が無ければtermsを空配列にしてください。指定されたJSON構造だけで答えてください。`,
-  es: (targetLabel, explainLabel, multiwordExample) =>
-    `Eres un traductor de chat en vivo de Twitch y un diccionario de jerga en ${targetLabel}. El usuario te mostrará un mensaje de chat que realmente apareció en una transmisión en vivo, escrito en ${explainLabel}. Primero, traduce el mensaje completo a un ${targetLabel} natural e informal que conserve el tono (jerga, bromas, entusiasmo), manteniendo sin cambios las menciones (@) y las URL, y ponlo en translation. Después, extrae de tu propia traducción en ${targetLabel} solo las expresiones especiales cuyo significado un estudiante no podría adivinar fácilmente (jerga, abreviaturas, modismos, memes) y da a cada una un significado breve en ${explainLabel} de unas 3 a 8 palabras. Prefiere las expresiones de varias palabras, como modismos, verbos compuestos y colocaciones (por ejemplo "${multiwordExample}"), antes que palabras sueltas, y omite las frases corrientes cuyo significado se entiende con solo sumar el significado de sus palabras. Cada término debe ser una subcadena exacta copiada de tu traducción en ${targetLabel}, nunca del mensaje original. No incluyas palabras corrientes, pronombres, números ni menciones (@). Las risas, las muletillas de asentimiento y las interjecciones no son expresiones especiales; omítelas. Si la traducción no tiene nada especial, devuelve un array terms vacío. Responde únicamente con la estructura JSON solicitada.`,
-  de: (targetLabel, explainLabel, multiwordExample) =>
-    `Du bist ein Übersetzer für Twitch-Livechats und ein Wörterbuch für ${targetLabel}-Slang. Der Nutzer zeigt dir eine Chat-Nachricht, die tatsächlich in einem Livestream auf ${explainLabel} geschrieben wurde. Übersetze zuerst die gesamte Nachricht in natürliches, lockeres ${targetLabel}, bewahre dabei den Ton (Slang, Witze, Begeisterung), lass @-Erwähnungen und URLs unverändert, und trage sie in translation ein. Wähle dann aus deiner eigenen ${targetLabel}-Übersetzung nur die besonderen Ausdrücke aus, deren Bedeutung ein Lernender nicht leicht erraten könnte (Slang, Abkürzungen, Redewendungen, Memes), und gib zu jedem eine kurze Bedeutung auf ${explainLabel} mit etwa 3 bis 8 Wörtern an. Bevorzuge mehrteilige Ausdrücke wie Redewendungen, Partikelverben und Kollokationen (zum Beispiel "${multiwordExample}") gegenüber einzelnen Wörtern und lass gewöhnliche Wortfolgen weg, deren Bedeutung sich aus der bloßen Summe ihrer Wörter ergibt. Jeder Begriff muss eine exakte Teilzeichenfolge aus deiner ${targetLabel}-Übersetzung sein, niemals aus der ursprünglichen Nachricht. Nimm keine gewöhnlichen Wörter, Pronomen, Zahlen oder @-Erwähnungen auf. Lachen, Zustimmungslaute und Interjektionen sind keine besonderen Ausdrücke; lass sie weg. Enthält die Übersetzung nichts Besonderes, gib ein leeres terms-Array zurück. Antworte ausschließlich in der angeforderten JSON-Struktur.`,
-  fr: (targetLabel, explainLabel, multiwordExample) =>
-    `Tu es un traducteur pour le chat en direct de Twitch et un dictionnaire d'argot ${targetLabel}. L'utilisateur te montrera un message de chat qui est réellement apparu dans un stream en direct, écrit en ${explainLabel}. D'abord, traduis le message complet en ${targetLabel} naturel et familier, en conservant le ton (argot, blagues, enthousiasme) et en laissant les mentions (@) et les URL inchangées, puis mets-le dans translation. Ensuite, relève dans ta propre traduction en ${targetLabel} uniquement les expressions particulières dont un apprenant ne pourrait pas facilement deviner le sens (argot, abréviations, idiomes, mèmes) et donne à chacune une courte signification en ${explainLabel} d'environ 3 à 8 mots. Privilégie les expressions de plusieurs mots, comme les idiomes, les verbes à particule et les collocations (par exemple "${multiwordExample}"), plutôt que les mots isolés, et omets les tournures ordinaires dont le sens se comprend en additionnant simplement le sens de leurs mots. Chaque terme doit être une sous-chaîne exacte copiée de ta traduction en ${targetLabel}, jamais du message original. N'inclus pas les mots ordinaires, les pronoms, les nombres ni les mentions (@). Les rires, les marques d'acquiescement et les interjections ne sont pas des expressions particulières ; omets-les. Si la traduction ne contient rien de particulier, renvoie un tableau terms vide. Réponds uniquement dans la structure JSON demandée.`,
-};
-
-/**
- * 逆方向 Pick up 用のシステムプロンプトを `learningLang`(学ぶ言語 = 訳文の言語)と
- * `explainLang`(発言の言語 = 意味を書く言語)から組み立てる。
- * 順方向の `buildPickupSystemPrompt` と同様に、解説言語で書いたテンプレートを使う。
- */
-export function buildReversePickupSystemPrompt(
-  learningLang: SupportedLanguage,
-  explainLang: SupportedLanguage,
-  streamContext?: StreamContext | null,
-): string {
-  const targetLabel = LANGUAGE_LABELS[explainLang][learningLang];
-  const explainLabel = LANGUAGE_LABELS[explainLang][explainLang];
-  return (
-    REVERSE_PICKUP_SYSTEM_PROMPT_BUILDERS[explainLang](targetLabel, explainLabel, PICKUP_MULTIWORD_EXAMPLES[learningLang]) +
-    buildStreamContextSuffix(explainLang, streamContext)
-  );
-}
-
-/**
- * 逆方向 Pick up のユーザープロンプトを組み立てる。
- * 順方向と同様に引用符で囲み、指示ではなくデータであることを明示しつつ、翻訳と抽出の両方を求める。
- */
-export function buildReversePickupUserPrompt(chatMessageText: string): string {
-  return `Chat message to translate and pick expressions from: "${chatMessageText}"`;
-}
-
-/**
  * 配信の文脈(接続中チャンネルの配信タイトル・カテゴリ・配信者名)。翻訳用・Pick up用の
  * システムプロンプトの末尾に追記し、ゲーム用語やスラングの解釈精度を上げる(issue #54)。
  * オフライン・取得失敗時は渡さない(文脈なしの現行プロンプトで動作する)。
