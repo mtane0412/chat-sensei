@@ -21,6 +21,7 @@ import { resetBadgesForTests, useBadgeStore } from "@/store/badges";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetHiddenPickupStoreForTests } from "@/store/hidden-pickups";
+import { resetPickupAnnouncementStoreForTests } from "@/store/pickup-announcements";
 import { resetManualPickupStoreForTests, useManualPickupStore } from "@/store/manual-pickups";
 import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
 import { resetPromptApiStoreForTests, usePromptApiStore } from "@/store/prompt-api";
@@ -109,6 +110,7 @@ afterEach(() => {
   resetTranslationStoreForTests();
   resetPickupStoreForTests();
   resetHiddenPickupStoreForTests();
+  resetPickupAnnouncementStoreForTests();
   resetManualPickupStoreForTests();
   resetPromptApiStoreForTests();
   resetBotFilterStoreForTests();
@@ -549,6 +551,84 @@ describe("Home(Pick up列)", () => {
 
     expect(within(pickupColumn).queryByText("gg")).not.toBeInTheDocument();
     expect(within(pickupColumn).getByText("None")).toBeInTheDocument();
+  });
+
+
+  it("語句を削除すると、同じ発言の次の語句の削除ボタンへフォーカスが移る", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: {
+        "msg-1": {
+          status: "done",
+          terms: [
+            { term: "gg", meaning: "good game の略、お疲れ" },
+            { term: "no re", meaning: "再戦なし" },
+          ],
+        },
+      },
+    });
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "gg"' }));
+
+    expect(within(pickupColumn).getByRole("button", { name: 'Remove "no re"' })).toHaveFocus();
+  });
+
+  it("末尾の語句を削除すると、同じ発言の前の語句の削除ボタンへフォーカスが移る", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: {
+        "msg-1": {
+          status: "done",
+          terms: [
+            { term: "gg", meaning: "good game の略、お疲れ" },
+            { term: "no re", meaning: "再戦なし" },
+          ],
+        },
+      },
+    });
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "no re"' }));
+
+    expect(within(pickupColumn).getByRole("button", { name: 'Remove "gg"' })).toHaveFocus();
+  });
+
+  it("最後の語句を削除すると、行コンテナへフォーカスが移る", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ" }] } },
+    });
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    const row = within(pickupColumn).getByRole("listitem");
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "gg"' }));
+
+    expect(row).toHaveFocus();
+  });
+
+  it('語句を削除すると、スクリーンリーダー向けの通知リージョンに「Removed "<語句>"」が表示される', async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ" }] } },
+    });
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "gg"' }));
+
+    expect(screen.getByRole("status", { name: "Pick up updates" })).toHaveTextContent('Removed "gg"');
   });
 
   it("パイプライン再起動でエントリが再生成されても、削除した語句は表示されない", async () => {
