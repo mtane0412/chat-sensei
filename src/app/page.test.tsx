@@ -21,6 +21,7 @@ import { resetBadgesForTests, useBadgeStore } from "@/store/badges";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetHiddenPickupStoreForTests } from "@/store/hidden-pickups";
+import { resetManualPickupStoreForTests, useManualPickupStore } from "@/store/manual-pickups";
 import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
 import { resetPromptApiStoreForTests, usePromptApiStore } from "@/store/prompt-api";
 import { resetSettingsStoreForTests, useSettingsStore } from "@/store/settings";
@@ -44,6 +45,15 @@ vi.mock("@/store/pickups", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/store/pickups")>()),
   startPickupPipeline: () => mockStartPickupPipeline(),
   warmUpPickupPipeline: () => mockWarmUpPickupPipeline(),
+}));
+
+// 手動Pick up(issue #72)の追加はセッションプール生成(ブラウザAPI)まで到達するためモックし、
+// 呼び出し引数(発言ID・選択語句・発言本文)だけを検証する。表示はストアの state を直接注入して検証する
+const mockAddManualPickup = vi.fn();
+
+vi.mock("@/store/manual-pickups", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/store/manual-pickups")>()),
+  addManualPickup: (...args: unknown[]) => mockAddManualPickup(...args),
 }));
 
 vi.mock("@/lib/ai/runBrowserDiagnosis", () => ({
@@ -91,6 +101,7 @@ beforeEach(() => {
   mockStartPickupPipeline.mockClear();
   mockStopPickupPipeline.mockClear();
   mockWarmUpPickupPipeline.mockClear();
+  mockAddManualPickup.mockClear();
 });
 
 afterEach(() => {
@@ -98,6 +109,7 @@ afterEach(() => {
   resetTranslationStoreForTests();
   resetPickupStoreForTests();
   resetHiddenPickupStoreForTests();
+  resetManualPickupStoreForTests();
   resetPromptApiStoreForTests();
   resetBotFilterStoreForTests();
   resetSettingsStoreForTests();
@@ -844,5 +856,104 @@ describe("Home(言語判定でスキップした行)", () => {
     expect(
       within(screen.getByRole("region", { name: "Pick up" })).getByText("Not a learning language (ko)"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("Home(手動Pick up。issue #72)", () => {
+  it("手動Pick upの完了した語句と意味を、Pick up列の対応する行に表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    useManualPickupStore.setState({
+      entries: { "msg-1": [{ status: "done", term: "no re", meaning: "リマッチは無しという挨拶" }] },
+    });
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
+    expect(within(pickupColumn).getByText("リマッチは無しという挨拶")).toBeInTheDocument();
+  });
+
+  it("自動抽出の結果が空でも手動Pick upがあれば表示し、「None」は表示しない", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({ entries: { "msg-1": { status: "done", terms: [] } } });
+    useManualPickupStore.setState({
+      entries: { "msg-1": [{ status: "done", term: "no re", meaning: "リマッチは無しという挨拶" }] },
+    });
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
+    expect(within(pickupColumn).queryByText("None")).not.toBeInTheDocument();
+  });
+
+  it("自動抽出が生成中の行でも、手動Pick upは並行して表示する(暗黙に隠さない)", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({ entries: { "msg-1": { status: "pending" } } });
+    useManualPickupStore.setState({
+      entries: { "msg-1": [{ status: "done", term: "no re", meaning: "リマッチは無しという挨拶" }] },
+    });
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    expect(within(pickupColumn).getByText("Extracting...")).toBeInTheDocument();
+    expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
+  });
+
+  it("生成中の手動Pick upは「Looking up...」と表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    useManualPickupStore.setState({ entries: { "msg-1": [{ status: "pending", term: "no re" }] } });
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
+    expect(within(pickupColumn).getByText("Looking up...")).toBeInTheDocument();
+  });
+
+  it("失敗した手動Pick upは理由付きで表示する(暗黙に隠さない)", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    useManualPickupStore.setState({
+      entries: { "msg-1": [{ status: "failed", term: "no re", reason: "モデル呼び出しに失敗しました" }] },
+    });
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
+    expect(within(pickupColumn).getByText(/Lookup failed: モデル呼び出しに失敗しました/)).toBeInTheDocument();
+  });
+
+  it("手動Pick upの削除ボタンを押すと、その語句がストアからも表示からも消える", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    useManualPickupStore.setState({
+      entries: { "msg-1": [{ status: "done", term: "no re", meaning: "リマッチは無しという挨拶" }] },
+    });
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "no re"' }));
+
+    expect(within(pickupColumn).queryByText("no re")).not.toBeInTheDocument();
+    expect(useManualPickupStore.getState().entries).toEqual({});
+  });
+
+  it("生IRC列の発言行を範囲選択して「Pick up」を押すと、発言本文付きで手動Pick upを追加する", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    render(<Home />);
+
+    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const textNode = within(rawColumn).getByText("gg no re chat").firstChild;
+    if (!textNode) throw new Error("発言本文のテキストノードが見つかりません");
+    const range = document.createRange();
+    range.setStart(textNode, 3);
+    range.setEnd(textNode, 8); // "no re"
+    const selection = document.getSelection();
+    if (!selection) throw new Error("jsdom で Selection が取得できませんでした");
+    selection.removeAllRanges();
+    selection.addRange(range);
+    fireEvent(document, new Event("selectionchange"));
+
+    await user.click(screen.getByRole("button", { name: "Pick up" }));
+
+    expect(mockAddManualPickup).toHaveBeenCalledWith("msg-1", "no re", "gg no re chat");
   });
 });

@@ -6,7 +6,7 @@
  * JSON Schema を `toResponseConstraint` で組み立てられることを検証する。
  */
 import { describe, expect, it } from "vitest";
-import { explanationSchema, pickupSchema, toResponseConstraint, translationSchema } from "./schemas";
+import { explanationSchema, pickupSchema, termMeaningSchema, toResponseConstraint, translationSchema } from "./schemas";
 
 describe("explanationSchema", () => {
   it("正しい形のオブジェクトをパースできる", () => {
@@ -167,3 +167,19 @@ describe("toResponseConstraint(pickupSchema)", () => {
   });
 });
 
+
+describe("termMeaningSchema(手動Pick up。issue #72)", () => {
+  it("meaning が非空文字列のオブジェクトをパースできる", () => {
+    const raw = { meaning: "リマッチは無しという潔い挨拶" };
+
+    expect(termMeaningSchema.parse(raw)).toEqual(raw);
+  });
+
+  it("meaning が空文字列の場合は拒否する", () => {
+    expect(() => termMeaningSchema.parse({ meaning: "" })).toThrow();
+  });
+
+  it("meaning が欠けている場合は拒否する", () => {
+    expect(() => termMeaningSchema.parse({})).toThrow();
+  });
+});

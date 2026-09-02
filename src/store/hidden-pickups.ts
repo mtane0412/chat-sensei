@@ -25,14 +25,17 @@ interface HiddenPickupState {
 
 export const useHiddenPickupStore = create<HiddenPickupState>(() => ({ hiddenTerms: {} }));
 
-/** 語句の正準形。`pickup-filter.ts` の重複排除と同じ基準で、LLM 再生成による綴り揺れを吸収する */
-function normalizeTerm(term: string): string {
+/**
+ * 語句の正準形。`pickup-filter.ts` の重複排除と同じ基準で、LLM 再生成・選択による綴り揺れを吸収する。
+ * 手動Pick up(`manual-pickups.ts`。issue #72)の重複判定でも同じ基準を使うため公開する
+ */
+export function normalizePickupTerm(term: string): string {
   return term.trim().toLowerCase();
 }
 
 /** 指定した発言の語句を正準形で非表示集合へ追加する。既に追加済みなら何もしない */
 export function hidePickupTerm(messageId: string, term: string): void {
-  const normalized = normalizeTerm(term);
+  const normalized = normalizePickupTerm(term);
   useHiddenPickupStore.setState((state) => {
     const current = state.hiddenTerms[messageId] ?? [];
     if (current.includes(normalized)) return state;
@@ -42,7 +45,7 @@ export function hidePickupTerm(messageId: string, term: string): void {
 
 /** 非表示集合(`hiddenTerms[messageId]`)に語句が含まれるか。綴り揺れを正準形で吸収して照合する */
 export function isPickupTermHidden(hiddenTerms: readonly string[], term: string): boolean {
-  return hiddenTerms.includes(normalizeTerm(term));
+  return hiddenTerms.includes(normalizePickupTerm(term));
 }
 
 /** 非表示集合をすべて破棄する。チャンネル切り替え時(`chat-connection.ts` の connect())に呼ぶ */
