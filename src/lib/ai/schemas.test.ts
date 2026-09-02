@@ -6,7 +6,7 @@
  * JSON Schema を `toResponseConstraint` で組み立てられることを検証する。
  */
 import { describe, expect, it } from "vitest";
-import { explanationSchema, pickupSchema, reversePickupSchema, toResponseConstraint, translationSchema } from "./schemas";
+import { explanationSchema, pickupSchema, toResponseConstraint, translationSchema } from "./schemas";
 
 describe("explanationSchema", () => {
   it("正しい形のオブジェクトをパースできる", () => {
@@ -167,55 +167,3 @@ describe("toResponseConstraint(pickupSchema)", () => {
   });
 });
 
-describe("reversePickupSchema", () => {
-  it("訳文と、語句・意味のペアの配列をパースできる", () => {
-    // 「それなwww 完全に同意」という日本語発言を英訳して抽出した結果を想定したサンプル
-    const raw = {
-      translation: "fr lmao, totally agree",
-      terms: [
-        { term: "fr", meaning: "for real の略。マジで、それな" },
-        { term: "lmao", meaning: "大爆笑を表すネットスラング" },
-      ],
-    };
-
-    expect(reversePickupSchema.parse(raw)).toEqual(raw);
-  });
-
-  it("該当する表現が無い場合の空配列をパースできる", () => {
-    expect(reversePickupSchema.parse({ translation: "nice play", terms: [] })).toEqual({
-      translation: "nice play",
-      terms: [],
-    });
-  });
-
-  it("translationが欠けている・空文字の場合はパースエラーになる(訳文が無いと語句の照合ができない)", () => {
-    expect(() => reversePickupSchema.parse({ terms: [] })).toThrow();
-    expect(() => reversePickupSchema.parse({ translation: "", terms: [] })).toThrow();
-  });
-
-  it("termsが欠けている場合はパースエラーになる", () => {
-    expect(() => reversePickupSchema.parse({ translation: "nice play" })).toThrow();
-  });
-});
-
-describe("toResponseConstraint(reversePickupSchema)", () => {
-  it("訳文と語句・意味のペアの配列を要求するJSON Schemaオブジェクトを返す", () => {
-    const constraint = toResponseConstraint(reversePickupSchema);
-
-    expect(constraint).toMatchObject({
-      type: "object",
-      properties: {
-        translation: { type: "string" },
-        terms: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: { term: { type: "string" }, meaning: { type: "string" } },
-            required: ["term", "meaning"],
-          },
-        },
-      },
-      required: ["translation", "terms"],
-    });
-  });
-});

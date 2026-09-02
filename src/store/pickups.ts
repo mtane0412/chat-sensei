@@ -12,16 +12,16 @@
  *   除外名として渡す(@ 無しで本文に書かれたユーザー名を抽出結果から落とすため)
  * - セッションプール(ベースセッション)は翻訳用とは別に持つ(`structured-prompt.ts` に記載の issue #15 方針 (a))が、
  *   ジョブを流す直列キューは `auto-pipeline.ts` で翻訳列と共有する(issue #23)
- * - 発言ごとの言語判定(学ぶ言語ならその言語のセッションプールへ、解説言語と同じ・対象外ならスキップ)は
- *   `auto-pipeline.ts` が行う。ベースセッションは「学ぶ言語 1 つ × 解説言語」のペアごとに組み立てる
+ * - 発言ごとの言語判定(学ぶ言語なら順方向、解説言語と同じなら逆方向、どちらでもなければスキップ)は
+ *   `auto-pipeline.ts` が行う。ベースセッションは「学ぶ言語 × 解説言語」のペアから組み立てる
+ * - 逆方向(解説言語の発言): 訳文を自前で生成せず、翻訳パイプライン(`translations.ts`)が生成した
+ *   学ぶ言語の訳文(翻訳列に表示されるもの)を待って再利用し、その訳文に対して順方向と同じ抽出を行う
+ *   (issue #68。訳文の二重生成と、照合対象と表示訳文の不整合を防ぐ)
  * - Prompt API の利用可否は `prompt-api.ts` の共有ストアを参照する(翻訳列と共通)
  */
-import {
-  createPickupBaseSessionFactory,
-  createReversePickupBaseSessionFactory,
-  pickUpExpressions,
-  pickUpFromReverseTranslation,
-} from "@/lib/ai/pickup";
+import { createPickupBaseSessionFactory, pickUpExpressions } from "@/lib/ai/pickup";
+import { LowPriorityQueueOverflowError } from "@/lib/ai/session-pool";
+import type { MessageSegment } from "@/lib/twitch/emotes";
 import type { PickupTerm } from "@/lib/ai/schemas";
 import { isChatCommandMessage } from "@/lib/twitch/chat-command";
 import { isTextlessMessage } from "@/lib/twitch/emotes";
@@ -34,6 +34,7 @@ import {
 } from "./auto-pipeline";
 import { useSettingsStore } from "./settings";
 import { getStreamInfo } from "./stream-info";
+import { useTranslationStore } from "./translations";
 
 /** 抽出の完了時に保持する結果。該当する表現が無い場合は `terms` が空配列 */
 export interface PickupDone {
@@ -52,27 +53,94 @@ const pipeline = createAutoPipeline<PickupDone>({
   // 生成時点のストアの値を読めばよい
   createBaseSession: (targetLang, explainLang) =>
     createPickupBaseSessionFactory(useSettingsStore.getState().settings, targetLang, explainLang, getStreamInfo()),
-  // 逆方向(解説言語の発言を学ぶ言語へ訳し、その訳文から抽出する)は専用のシステムプロンプトを使う
+  // 逆方向は翻訳パイプラインが生成した学ぶ言語の訳文に対して抽出するため、
+  // 入力・出力の言語関係は順方向(学ぶ言語の本文 → 解説言語の意味)と同じでよく、同じプロンプトを使う
   createReverseBaseSession: (learningLang, explainLang) =>
-    createReversePickupBaseSessionFactory(useSettingsStore.getState().settings, learningLang, explainLang, getStreamInfo()),
+    createPickupBaseSessionFactory(useSettingsStore.getState().settings, learningLang, explainLang, getStreamInfo()),
   resolveWithoutModel: (message) =>
     isTextlessMessage(message.text, message.emotes) || isChatCommandMessage(message.text) ? { terms: [] } : null,
   runJob: (pool, message, context) => pickUpExpressions(pool, message.text, buildPickupJobOptions(message, context)),
-  runReverseJob: (pool, message, context) =>
-    pickUpFromReverseTranslation(pool, message.text, buildPickupJobOptions(message, context)),
+  // 逆方向: 翻訳パイプラインの訳文(翻訳列に表示されるもの)を待って再利用し、訳文を二重生成しない(issue #68)。
+  // 訳文は emote 復元済みのセグメント列なので、emote を空白に置き換えた本文に対して順方向と同じ抽出を行う
+  runReverseJob: async (pool, message, context) => {
+    if (message.id === null) {
+      // 共通ファクトリは ID の無い発言を投入しないため到達しない想定。暗黙に処理せず失敗させる(Fail-Fast)
+      throw new Error("ID の無い発言は逆方向 Pick up の対象にできません");
+    }
+    const segments = await waitForReverseTranslation(message.id, context.signal);
+    const translationText = segments.map((segment) => (segment.type === "text" ? segment.text : " ")).join("");
+    // 訳文は emote を空白化済みのため emotes は渡さない(順方向と異なり emote の位置情報も存在しない)
+    return pickUpExpressions(pool, translationText, {
+      priority: "low",
+      signal: context.signal,
+      excludedNames: collectExcludedNames(context),
+    });
+  },
 });
 
 /**
- * 順方向・逆方向で共通のジョブオプション。表示中の発言者名(username / displayName)を
+ * 翻訳パイプラインの逆方向訳文(学ぶ言語)が確定するのを待つ。
+ * - `done`: 訳文のセグメント列を返す
+ * - `dropped`: `LowPriorityQueueOverflowError` を投げ、Pick up 側も dropped として揃える
+ * - `failed` / `unavailable`: 理由付きのエラーを投げる(訳文が無い以上、抽出も暗黙にフォールバックしない)
+ * - エントリ無し / `pending`: 確定するまで翻訳ストアを購読して待つ(パイプライン停止時は signal で中断される)
+ */
+function waitForReverseTranslation(messageId: string, signal: AbortSignal): Promise<MessageSegment[]> {
+  return new Promise((resolve, reject) => {
+    let unsubscribe = () => {};
+    const settle = (): boolean => {
+      const entry = useTranslationStore.getState().entries[messageId];
+      if (!entry || entry.status === "pending") return false;
+      unsubscribe();
+      switch (entry.status) {
+        case "done":
+          resolve(entry.segments);
+          return true;
+        case "dropped":
+          reject(new LowPriorityQueueOverflowError());
+          return true;
+        default:
+          reject(
+            new Error(
+              `Could not pick up from the translation because it was not generated (translation status: ${entry.status}${
+                entry.status === "failed" ? `, reason: ${entry.reason}` : ""
+              })`,
+            ),
+          );
+          return true;
+      }
+    };
+    if (settle()) return;
+    unsubscribe = useTranslationStore.subscribe(() => {
+      settle();
+    });
+    signal.addEventListener(
+      "abort",
+      () => {
+        unsubscribe();
+        reject(new Error("The pickup pipeline was stopped while waiting for the translation"));
+      },
+      { once: true },
+    );
+  });
+}
+
+/**
+ * 順方向のジョブオプション。表示中の発言者名(username / displayName)を
  * 除外名として渡す(issue #26。@ 無しで本文に書かれたユーザー名を抽出結果から落とすため)
  */
-function buildPickupJobOptions(message: TwitchChatMessage, { signal, getMessages }: AutoPipelineJobContext) {
+function buildPickupJobOptions(message: TwitchChatMessage, context: AutoPipelineJobContext) {
   return {
     priority: "low" as const,
-    signal,
+    signal: context.signal,
     emotes: message.emotes,
-    excludedNames: getMessages().flatMap((item) => [item.username, item.displayName]),
+    excludedNames: collectExcludedNames(context),
   };
+}
+
+/** 表示中の発言者名(username / displayName)の一覧。順方向・逆方向の除外名として共通で使う */
+function collectExcludedNames({ getMessages }: AutoPipelineJobContext): string[] {
+  return getMessages().flatMap((item) => [item.username, item.displayName]);
 }
 
 export const usePickupStore = pipeline.useStore;
