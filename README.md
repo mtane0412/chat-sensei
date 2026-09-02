@@ -25,3 +25,14 @@ npm test            # Vitest
 npm run lint
 npm run type-check
 ```
+
+### Twitch Helix API(任意)
+
+Twitch Helix API の公開データ(チャンネル独自 Cheermote・配信情報など)を利用する場合は、[Twitch Developer Console](https://dev.twitch.tv/console/apps) でアプリケーションを登録し、以下の環境変数を設定してください(ローカルは `.env.local`、本番は Vercel の環境変数)。
+
+```bash
+TWITCH_CLIENT_ID=<Client ID>
+TWITCH_CLIENT_SECRET=<Client Secret>
+```
+
+サーバーサイド(`/api/twitch/*` の Route Handler)が App Access Token を取得・キャッシュして Helix API を中継するため、視聴者のログインは不要で、Client Secret がブラウザに露出することもありません。未設定の場合、Helix 依存の機能は無効になりますが、既存機能(IRC 接続・翻訳・Pick up)はそのまま動作します。
