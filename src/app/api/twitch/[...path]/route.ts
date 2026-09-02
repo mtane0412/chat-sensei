@@ -35,6 +35,8 @@ const ALLOWED_ENDPOINTS: ReadonlySet<string> = new Set([
   "bits/cheermotes",
   "chat/emotes",
   "search/channels",
+  "chat/badges",
+  "chat/badges/global",
 ]);
 
 /** エラーレスポンス(JSON)を組み立てる */

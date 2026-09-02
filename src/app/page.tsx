@@ -45,6 +45,7 @@ import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments, type MessageSegment } from "@/lib/twitch/emotes";
 import { useAvatarStore } from "@/store/avatars";
+import { useBadgeStore } from "@/store/badges";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
@@ -529,6 +530,8 @@ function ChatMessageRow({ message }: { message: TwitchChatMessage }) {
   const avatarUrl = useAvatarStore((state) =>
     message.userId === null ? undefined : state.avatars[message.userId],
   );
+  // バッジ対応表(issue #61)。未読み込み・Helix 利用不可時は空で、バッジ非表示の現行表示になる
+  const badgeImages = useBadgeStore((state) => state.badgeImages);
 
   return (
     <Row message={message} blurred={false}>
@@ -541,6 +544,21 @@ function ChatMessageRow({ message }: { message: TwitchChatMessage }) {
           className="mr-1 inline-block size-5 rounded-full align-text-bottom"
         />
       )}
+      {message.badges.map((badge) => {
+        const badgeImageUrl = badgeImages[`${badge.name}/${badge.version}`];
+        // 対応表に無いバッジ(未知の set_id など)は非表示のまま現行どおり動作する
+        if (badgeImageUrl === undefined) return null;
+        return (
+          // eslint-disable-next-line @next/next/no-img-element -- Twitch CDNの外部画像のためnext/imageのドメイン許可設定は不要な単純imgで表示する
+          <img
+            key={`${badge.name}/${badge.version}`}
+            src={badgeImageUrl}
+            alt={badge.name}
+            title={badge.name}
+            className="mr-1 inline-block h-[18px] w-[18px] align-text-bottom"
+          />
+        );
+      })}
       <span className="font-semibold" style={message.color ? { color: message.color } : undefined}>
         {message.displayName}
       </span>

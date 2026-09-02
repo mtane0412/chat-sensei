@@ -30,6 +30,7 @@ import { mergeThirdPartyEmotePositions } from "@/lib/twitch/third-party-emotes";
 import { matchesBotFilter } from "@/lib/bot-filter";
 import { isExcludedByBotFilter, useBotFilterStore } from "./bot-filter";
 import { clearAvatarLoadFailures, requestAvatar } from "./avatars";
+import { clearBadges, loadBadges } from "./badges";
 import { clearStreamInfo, loadStreamInfo } from "./stream-info";
 import { clearThirdPartyEmotes, getThirdPartyEmoteMap, loadThirdPartyEmotes } from "./third-party-emotes";
 import { clearCheermotes, getCheermoteSet, loadCheermotes } from "./cheermotes";
@@ -63,10 +64,11 @@ function getClient(): TwitchIrcClient {
       onEvent: (event) => {
         if (event.type === "roomstate") {
           // room-id(配信者の Twitch ユーザー ID)が判明した時点で
-          // サードパーティ emote と Cheermote 一覧(Helix)を読み込む
+          // サードパーティ emote と Cheermote 一覧・チャットバッジ対応表(Helix)を読み込む
           if (event.state.roomId !== null) {
             void loadThirdPartyEmotes(event.state.roomId);
             void loadCheermotes(event.state.roomId);
+            void loadBadges(event.state.roomId);
           }
           return;
         }
@@ -111,6 +113,7 @@ export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
     // (emote と Cheermote は ROOMSTATE 受信後に再読み込みされる)
     clearThirdPartyEmotes();
     clearCheermotes();
+    clearBadges();
     clearStreamInfo();
     // アバターのキャッシュはユーザー固有のため持ち越すが、取得失敗の記録はクリアして再試行できるようにする
     clearAvatarLoadFailures();
