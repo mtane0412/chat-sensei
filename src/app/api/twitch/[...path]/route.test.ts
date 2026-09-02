@@ -114,6 +114,16 @@ describe("GET /api/twitch/[...path]", () => {
     ]);
   });
 
+  it("ゲーム情報(games)も中継できる(ボックスアート取得用)", async () => {
+    fetchMock.mockResolvedValue(helixResponse({ data: [] }));
+
+    const response = await callGet(["games"], "?id=18122");
+
+    expect(response.status).toBe(200);
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe("https://api.twitch.tv/helix/games?id=18122");
+  });
+
   it("許可リストにないエンドポイントは 404 を返し、Helix へ中継しない", async () => {
     const response = await callGet(["moderation", "banned"]);
 

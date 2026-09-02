@@ -1,5 +1,11 @@
 /**
- * ホームページ(/) = 3カラムのチャット閲覧画面。
+ * ホームページ(/)。接続状態で画面が切り替わる。
+ *
+ * - 未接続(idle / closed): 画面中央にチャンネル入力と Connect ボタンの接続画面を表示する
+ * - 接続中(connecting / open / reconnecting): 上半分に配信embed(TwitchEmbedPlayer)と
+ *   配信者情報パネル(StreamInfoPanel)、下半分に3カラムのチャット閲覧領域を表示する。
+ *   全体がビューポート1ページに収まり(レイアウト側で高さを固定)、3カラム領域は
+ *   発言数に関わらず最初から下半分の全域を占める(スクロールは3カラム領域の内部で行う)
  *
  * Twitch チャンネル名を入力して匿名接続し、流れてくる発言を3列で表示する。
  *
@@ -17,9 +23,8 @@
  * 生IRC列の見出しには、新着発言に合わせてスクロール領域を最下部へ送り続ける追従トグル(FollowToggle。
  * 初期状態はオンで、利用者が上へスクロールして最下部から離れると自動でオフになる)と、
  * bot除外設定(BotFilterDialog)を開くアイコンを置く。
- * 言語ペア(学ぶ言語 / 解説言語)は接続フォームと同じ並びに常時表示するセレクト
- * (LanguagePairSelect)で切り替える。ファーストビューで「どのチャンネルに接続して、
- * 何の言語をどの言語で学んでいるか」が見えるようにするため、ダイアログではなくインラインに置く。除外パターンは
+ * 言語ペア(学ぶ言語 / 解説言語)のセレクトと設定ダイアログは、接続前後のどちらの画面でも
+ * 触れるようヘッダー(SiteHeader)に常時表示する(このページには置かない)。除外パターンは
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
  * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
@@ -29,7 +34,6 @@
  * Pick up列の各語句はユーザーが削除でき、
  * 削除した語句は hidden-pickups ストアが保持して表示時に除外する(issue #71)。Prompt API の利用可否は両列で共通の
  * prompt-api ストアを参照し、利用不可の理由は翻訳列・Pick up列それぞれの見出し下に表示する。
- * 接続フォームの横には設定ダイアログ(SettingsDialog。環境診断と設定の初期化)を開くアイコンを置く。
  * 言語設定は settings ストアが LocalStorage から復元し、パイプラインは復元後に開始する。言語設定が変わると
  * 両パイプラインを停止して新しい設定で開始し直す(生成済みの翻訳・Pick up は破棄され、表示中の発言は再生成される。
  * ただし削除した語句の非表示集合は破棄されないため、再生成後も削除は維持される)。
@@ -43,8 +47,8 @@ import { ChevronsDownIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
 import { ManualPickupOverlay, MESSAGE_TEXT_ATTRIBUTE, RAW_IRC_COLUMN_NAME } from "@/components/manual-pickup";
 import { ChannelAutocompleteInput } from "@/components/channel-autocomplete";
-import { LanguagePairSelect } from "@/components/language-pair-select";
-import { SettingsDialog } from "@/components/settings-dialog";
+import { CONNECTION_STATE_LABEL, StreamInfoPanel } from "@/components/stream-info-panel";
+import { TwitchEmbedPlayer } from "@/components/twitch-embed-player";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -70,14 +74,6 @@ import {
   warmUpTranslationPipeline,
   type TranslationDone,
 } from "@/store/translations";
-
-const CONNECTION_STATE_LABEL: Record<ConnectionState, string> = {
-  idle: "Idle",
-  connecting: "Connecting...",
-  open: "Connected",
-  reconnecting: "Reconnecting...",
-  closed: "Disconnected",
-};
 
 /** 翻訳列・Pick up 列の行に表示する状態文言。列ごとに動詞が異なるため文言一式で受け取る */
 interface PipelineCellLabels {
@@ -117,8 +113,8 @@ export default function Home() {
   const [channelInput, setChannelInput] = useState("");
   const connectionState = useChatConnectionStore((state) => state.connectionState);
   const messages = useChatConnectionStore((state) => state.messages);
+  const channel = useChatConnectionStore((state) => state.channel);
   const connect = useChatConnectionStore((state) => state.connect);
-  const disconnect = useChatConnectionStore((state) => state.disconnect);
 
   // 翻訳列・Pick up列のぼかし。初期状態はどちらも見える(自力で読みたいときに利用者がぼかす)
   const [translationBlurred, setTranslationBlurred] = useState(false);
@@ -216,43 +212,50 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="flex w-full flex-1 flex-col gap-4 p-6">
-      <div className="flex flex-wrap items-end gap-4">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="channel-input">Channel</Label>
-          <div className="flex items-center gap-2">
-            <ChannelAutocompleteInput
-              id="channel-input"
-              placeholder="e.g. zackrawrr"
-              value={channelInput}
-              onValueChange={setChannelInput}
-              disabled={connected}
-            />
-            {connected ? (
-              <Button onClick={disconnect} variant="outline">
-                Disconnect
-              </Button>
-            ) : (
+    <div className="flex min-h-0 w-full flex-1 flex-col gap-4 p-4">
+      {!connected ? (
+        // 未接続: 画面中央の接続画面(3カラム・配信embedは表示しない)
+        <div className="flex flex-1 items-center justify-center">
+          <div className="flex w-full max-w-sm flex-col gap-1.5">
+            <Label htmlFor="channel-input">Channel</Label>
+            <div className="flex items-center gap-2">
+              <ChannelAutocompleteInput
+                id="channel-input"
+                placeholder="e.g. zackrawrr"
+                value={channelInput}
+                onValueChange={setChannelInput}
+              />
               <Button onClick={handleConnect} disabled={channelInput.trim().length === 0}>
                 Connect
               </Button>
-            )}
-            <SettingsDialog />
+            </div>
+            <p className="text-xs text-muted-foreground" role="status">
+              Status: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground" role="status">
-            Status: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
-          </p>
         </div>
-        {/* ファーストビューで言語ペアが見えるよう、接続フォームと同じ並びに常時表示する */}
-        <LanguagePairSelect />
-      </div>
+      ) : (
+        <>
+          {/* 上半分: 配信embed + 配信者情報パネル */}
+          <div className="flex min-h-0 flex-1 gap-4">
+            {channel !== null && (
+              // iframe(TwitchEmbedPlayer)は幅基準(aspect-video w-full)のため、
+              // 高さ基準のラッパーで「上半分の高さいっぱいの16:9」に切り出す
+              <div className="aspect-video h-full min-w-0">
+                <TwitchEmbedPlayer channel={channel} />
+              </div>
+            )}
+            <StreamInfoPanel />
+          </div>
 
-      <ScrollArea className="h-[70vh]" viewportRef={scrollViewportRef}>
-        <div
-          className="grid grid-cols-3 gap-4"
-          // 見出し1行 + 発言数ぶんの行。各列は subgrid でこの行トラックを共有する
-          style={{ gridTemplateRows: `auto repeat(${messages.length}, auto)` }}
-        >
+          {/* 下半分: 3カラムのチャット閲覧領域(発言数に関わらず最初から全域を占め、内部でスクロールする) */}
+          <ScrollArea className="min-h-0 flex-1" viewportRef={scrollViewportRef}>
+            <div
+              className="grid min-h-full grid-cols-3 gap-4"
+              // 見出し1行 + 発言数ぶんの行 + 余白吸収の1fr行(発言が少なくても列が下半分の全域に伸びる)。
+              // 各列は subgrid でこの行トラックを共有する
+              style={{ gridTemplateRows: `auto repeat(${messages.length}, auto) 1fr` }}
+            >
           <Column
             title="Raw IRC"
             blurred={false}
@@ -314,8 +317,10 @@ export default function Home() {
               ))}
             </div>
           </Column>
-        </div>
-      </ScrollArea>
+            </div>
+          </ScrollArea>
+        </>
+      )}
       <ManualPickupOverlay onPickup={handleManualPickup} />
       <PickupRemovalAnnouncement />
     </div>

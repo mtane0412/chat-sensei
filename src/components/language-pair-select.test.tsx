@@ -36,6 +36,17 @@ describe("LanguagePairSelect", () => {
     expect(screen.getByRole("combobox", { name: "Explanation language" })).toHaveValue("en");
   });
 
+  it("compact 指定時はラベルを視覚的に隠す(sr-only)が、アクセシブル名としては保持する(ヘッダー配置用)", () => {
+    hydrateSettingsStore();
+
+    render(<LanguagePairSelect compact />);
+
+    const learningSelect = screen.getByRole("combobox", { name: "Learning language" });
+    expect(learningSelect).toBeInTheDocument();
+    expect(screen.getByText("Learning language")).toHaveClass("sr-only");
+    expect(screen.getByText("Explanation language")).toHaveClass("sr-only");
+  });
+
   it("ストアが未復元の間はセレクトを無効化する(復元前にデフォルト値で保存してしまう事故を防ぐ)", () => {
     render(<LanguagePairSelect />);
 

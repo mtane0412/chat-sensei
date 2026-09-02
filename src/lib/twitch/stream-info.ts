@@ -22,17 +22,24 @@ export interface StreamInfo {
   title: string;
   /** 配信カテゴリ = ゲーム名(Helix の `game_name`) */
   category: string;
+  /** 配信者の Twitch ユーザー ID(Helix の `user_id`)。アバター取得に使う。取得できない場合は空文字 */
+  broadcasterId: string;
   /** 配信者の username(Helix の `user_login`)。取得できない場合は空文字 */
   broadcasterLogin: string;
   /** 配信者の表示名 = DisplayName(Helix の `user_name`。日本語名など)。取得できない場合は空文字 */
   broadcasterName: string;
+  /** 配信カテゴリのゲーム ID(Helix の `game_id`)。ボックスアート取得に使う。取得できない場合は空文字 */
+  gameId: string;
+  /** 同時視聴者数(Helix の `viewer_count`)。取得できない場合は null(表示しないだけ) */
+  viewerCount: number | null;
 }
 
 /**
- * Helix の Get Streams API レスポンス(`{data: [{title, game_name, user_login, user_name, ...}]}`)を
+ * Helix の Get Streams API レスポンス(`{data: [{title, game_name, user_id, user_login, user_name, game_id, viewer_count, ...}]}`)を
  * 解析して StreamInfo を作る。オフライン(`data` が空)・形式が想定と異なる場合・
  * タイトルとカテゴリの両方が空の場合(文脈として意味が無い)は null を返す。
- * 配信者名(username・DisplayName)は取得できないフィールドだけを空文字として読み飛ばす。
+ * 配信者情報(ID・username・DisplayName)・ゲーム ID は取得できないフィールドだけを空文字として、
+ * 視聴者数は null として読み飛ばす(いずれも表示しないだけで、文脈としては成立する)。
  */
 export function parseStreamInfo(json: unknown): StreamInfo | null {
   const data = extractDataArray(json);
@@ -46,9 +53,12 @@ export function parseStreamInfo(json: unknown): StreamInfo | null {
   const category = typeof record.game_name === "string" ? record.game_name : "";
   if (title === "" && category === "") return null;
 
+  const broadcasterId = typeof record.user_id === "string" ? record.user_id : "";
   const broadcasterLogin = typeof record.user_login === "string" ? record.user_login : "";
   const broadcasterName = typeof record.user_name === "string" ? record.user_name : "";
-  return { title, category, broadcasterLogin, broadcasterName };
+  const gameId = typeof record.game_id === "string" ? record.game_id : "";
+  const viewerCount = typeof record.viewer_count === "number" ? record.viewer_count : null;
+  return { title, category, broadcasterId, broadcasterLogin, broadcasterName, gameId, viewerCount };
 }
 
 /**

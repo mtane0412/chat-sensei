@@ -31,6 +31,7 @@ const HELIX_BASE_URL = "https://api.twitch.tv/helix";
 const ALLOWED_ENDPOINTS: ReadonlySet<string> = new Set([
   "users",
   "streams",
+  "games",
   "channels",
   "bits/cheermotes",
   "chat/emotes",
