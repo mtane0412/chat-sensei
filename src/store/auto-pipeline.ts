@@ -143,9 +143,11 @@ interface ActivePipeline {
 
 /**
  * 全パイプラインで共有する Prompt API の直列キュー(issue #23)。
- * 言語ペアに依存しないため、パイプラインを再起動してもこのキューは作り直さない
+ * 言語ペアに依存しないため、パイプラインを再起動してもこのキューは作り直さない。
+ * 手動Pick up(`manual-pickups.ts`。issue #72)のようにパイプライン外から LLM を呼ぶ処理も
+ * このキューを共有し、アプリ全体で `prompt()` を並走させない
  */
-const sharedPromptJobQueue = createPromptJobQueue();
+export const sharedPromptJobQueue = createPromptJobQueue();
 
 export function createAutoPipeline<TDone extends object>(config: AutoPipelineConfig<TDone>): AutoPipeline<TDone> {
   const useStore = create<AutoPipelineState<TDone>>(() => ({ entries: {} }));

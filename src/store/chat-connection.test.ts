@@ -80,6 +80,7 @@ vi.mock("./badges", () => ({
 
 import { resetBotFilterStoreForTests, useBotFilterStore } from "./bot-filter";
 import { hidePickupTerm, resetHiddenPickupStoreForTests, useHiddenPickupStore } from "./hidden-pickups";
+import { resetManualPickupStoreForTests, useManualPickupStore } from "./manual-pickups";
 import { resetChatConnectionStoreForTests, subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
 
 /** テスト用のサンプル発言(実況チャットにありそうな「ナイスプレー」の一言) */
@@ -137,6 +138,18 @@ describe("useChatConnectionStore", () => {
     useChatConnectionStore.getState().connect("ZackRawrr");
 
     expect(useHiddenPickupStore.getState().hiddenTerms).toEqual({});
+  });
+
+  it("connect()を呼ぶと、手動Pick up(manual-pickups ストア)がクリアされる", () => {
+    // 前のチャンネルの発言IDは新しいチャンネルでは二度と参照されないため、持ち越すとメモリを浪費するだけになる(issue #72)
+    useManualPickupStore.setState({
+      entries: { "msg-1": [{ status: "done", term: "gg", meaning: "対戦後の挨拶" }] },
+    });
+
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    expect(useManualPickupStore.getState().entries).toEqual({});
+    resetManualPickupStoreForTests();
   });
 
   it("connect()を呼ぶと、直前までの発言一覧がクリアされる", () => {

@@ -35,6 +35,7 @@ import { clearStreamInfo, loadStreamInfo } from "./stream-info";
 import { clearThirdPartyEmotes, getThirdPartyEmoteMap, loadThirdPartyEmotes } from "./third-party-emotes";
 import { clearCheermotes, getCheermoteSet, loadCheermotes } from "./cheermotes";
 import { clearHiddenPickupTerms } from "./hidden-pickups";
+import { clearManualPickups } from "./manual-pickups";
 
 /** チャットに表示する発言の最大保持件数(古いものから捨てるリングバッファ) */
 const MAX_DISPLAYED_MESSAGES = 300;
@@ -116,8 +117,10 @@ export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
     clearCheermotes();
     clearBadges();
     clearStreamInfo();
-    // Pick up列で削除した語句の非表示集合も持ち越さない(前のチャンネルの発言IDは二度と参照されないため)
+    // Pick up列で削除した語句の非表示集合・手動Pick up(issue #72)も持ち越さない
+    // (前のチャンネルの発言IDは二度と参照されないため)
     clearHiddenPickupTerms();
+    clearManualPickups();
     // アバターのキャッシュはユーザー固有のため持ち越すが、取得失敗の記録はクリアして再試行できるようにする
     clearAvatarLoadFailures();
     const normalized = normalizeChannelName(channel);

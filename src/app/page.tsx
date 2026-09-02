@@ -23,7 +23,10 @@
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
  * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
- * 各パイプラインはこの画面のマウント時に開始する。Pick up列の各語句はユーザーが削除でき、
+ * 各パイプラインはこの画面のマウント時に開始する。生IRC列のテキストを範囲選択すると
+ * フローティングの「Pick up」ボタン(ManualPickupOverlay)が出て、選択した語句を手動でPick upできる
+ * (issue #72。意味の生成状態は manual-pickups ストアが保持し、Pick up列で自動抽出分とあわせて表示する)。
+ * Pick up列の各語句はユーザーが削除でき、
  * 削除した語句は hidden-pickups ストアが保持して表示時に除外する(issue #71)。Prompt API の利用可否は両列で共通の
  * prompt-api ストアを参照し、利用不可の理由は翻訳列・Pick up列それぞれの見出し下に表示する。
  * 接続フォームの横には設定ダイアログ(SettingsDialog。環境診断と設定の初期化)を開くアイコンを置く。
@@ -38,6 +41,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronsDownIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
+import { ManualPickupOverlay } from "@/components/manual-pickup";
 import { ChannelAutocompleteInput } from "@/components/channel-autocomplete";
 import { LanguagePairSelect } from "@/components/language-pair-select";
 import { SettingsDialog } from "@/components/settings-dialog";
@@ -54,6 +58,7 @@ import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
 import { hidePickupTerm, isPickupTermHidden, useHiddenPickupStore } from "@/store/hidden-pickups";
+import { addManualPickup, removeManualPickup, useManualPickupStore } from "@/store/manual-pickups";
 import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupDone } from "@/store/pickups";
 import { usePromptApiStore, type PromptApiStatus } from "@/store/prompt-api";
 import { hydrateSettingsStore, useSettingsStore } from "@/store/settings";
@@ -201,6 +206,14 @@ export default function Home() {
 
   const connected = isConnectingOrConnected(connectionState);
 
+  // 生IRC列の範囲選択から手動Pick up(issue #72)。選択した語句の意味を、発言本文を文脈として生成する
+  const handleManualPickup = useCallback((messageId: string, term: string) => {
+    const message = useChatConnectionStore.getState().messages.find((item) => item.id === messageId);
+    // 選択からクリックまでの間に発言がリングバッファから溢れた場合、結果を表示する行が無いため追加しない
+    if (!message) return;
+    void addManualPickup(messageId, term, message.text);
+  }, []);
+
   return (
     <div className="flex w-full flex-1 flex-col gap-4 p-6">
       <div className="flex flex-wrap items-end gap-4">
@@ -242,6 +255,7 @@ export default function Home() {
           <Column
             title="Raw IRC"
             blurred={false}
+            dataColumn="raw-irc"
             headerAction={
               <>
                 <FollowToggle following={followLatest} onFollowingChange={setFollowLatest} />
@@ -293,12 +307,15 @@ export default function Home() {
                     labels={PICKUP_LABELS}
                     renderDone={(done, messageId) => <PickupTerms messageId={messageId} terms={done.terms} />}
                   />
+                  {/* 手動Pick up(issue #72)は自動抽出の状態(生成中・失敗など)に関わらず表示する */}
+                  {message.id !== null && <ManualPickupTerms messageId={message.id} />}
                 </Row>
               ))}
             </div>
           </Column>
         </div>
       </ScrollArea>
+      <ManualPickupOverlay onPickup={handleManualPickup} />
     </div>
   );
 }
@@ -369,6 +386,7 @@ function FollowToggle({
 function Column({
   title,
   blurred,
+  dataColumn,
   headerExtra,
   headerAction,
   children,
@@ -376,6 +394,8 @@ function Column({
   title: string;
   /** 列全体がぼかし中か(実際のぼかしは行単位で適用し、ここでは data 属性で状態を公開する) */
   blurred: boolean;
+  /** 列の識別子(`data-column` 属性)。手動Pick upの選択範囲の判定(生IRC列に限定)に使う */
+  dataColumn?: string;
   /** 見出しの下に表示する補足(Prompt API 利用不可の理由など) */
   headerExtra?: React.ReactNode;
   /** 見出しの右端に置く操作(追従トグル・bot除外設定のアイコンなど) */
@@ -385,6 +405,7 @@ function Column({
   return (
     <section
       aria-label={title}
+      data-column={dataColumn}
       data-blurred={blurred}
       className="grid min-w-0 grid-rows-subgrid row-[1/-1] rounded-xl border bg-card pb-3"
     >
@@ -502,9 +523,13 @@ const PickupTerms = memo(function PickupTerms({
   terms: PickupDone["terms"];
 }) {
   const hiddenTerms = useHiddenPickupStore((state) => state.hiddenTerms[messageId]);
+  // 手動Pick up(issue #72)がある行では、自動抽出が空でも「None」を出さない(手動分は ManualPickupTerms が表示する)
+  const hasManualPickups = useManualPickupStore((state) => (state.entries[messageId] ?? []).length > 0);
   const visibleTerms =
     hiddenTerms === undefined ? terms : terms.filter((term) => !isPickupTermHidden(hiddenTerms, term.term));
-  if (visibleTerms.length === 0) return <span className="text-muted-foreground">None</span>;
+  if (visibleTerms.length === 0) {
+    return hasManualPickups ? null : <span className="text-muted-foreground">None</span>;
+  }
   return (
     <dl className="flex flex-col gap-0.5">
       {visibleTerms.map((term) => (
@@ -522,6 +547,41 @@ const PickupTerms = memo(function PickupTerms({
             </Button>
           </dt>
           <dd className="text-muted-foreground">{term.meaning}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+});
+
+/**
+ * 手動Pick up(範囲選択で追加した語句。issue #72)の一覧。manual-pickups ストアを購読し、
+ * 自動抽出分(PickupTerms)とは独立に、Pick up列の同じ行の中で自動分の下に表示する。
+ * 生成中(Looking up...)・失敗(理由付き)の状態も暗黙に隠さず明示する
+ * (自動抽出の PipelineCellContent と同じ考え方)。削除ボタンは自動分と同じ見た目・挙動で、
+ * こちらは非表示集合ではなく手動Pick upのストアから直接削除する(再生成が無いため復活の懸念が無い)。
+ */
+const ManualPickupTerms = memo(function ManualPickupTerms({ messageId }: { messageId: string }) {
+  const entries = useManualPickupStore((state) => state.entries[messageId]);
+  if (entries === undefined || entries.length === 0) return null;
+  return (
+    <dl className="flex flex-col gap-0.5">
+      {entries.map((entry) => (
+        <div key={entry.term} className="group/term flex flex-wrap items-baseline gap-x-2">
+          <dt className="font-semibold">
+            {entry.term}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`Remove "${entry.term}"`}
+              className="ml-1 align-middle opacity-0 group-hover/term:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+              onClick={() => removeManualPickup(messageId, entry.term)}
+            >
+              <XIcon />
+            </Button>
+          </dt>
+          {entry.status === "pending" && <dd className="text-muted-foreground">Looking up...</dd>}
+          {entry.status === "done" && <dd className="text-muted-foreground">{entry.meaning}</dd>}
+          {entry.status === "failed" && <dd className="text-destructive">Lookup failed: {entry.reason}</dd>}
         </div>
       ))}
     </dl>

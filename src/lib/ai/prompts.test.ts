@@ -8,6 +8,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildExplainSystemPrompt,
+  buildDefineTermSystemPrompt,
+  buildDefineTermUserPrompt,
   buildExplainUserPrompt,
   buildPickupSystemPrompt,
   buildPickupUserPrompt,
@@ -428,3 +430,56 @@ describe("配信の文脈への配信者名の注入(issue #54)", () => {
   });
 });
 
+
+describe("buildDefineTermSystemPrompt(手動Pick up。issue #72)", () => {
+  it("解説言語が日本語の場合、日本語のプロンプトに学ぶ言語名と意味の長さの目安(文字数)を含む", () => {
+    const prompt = buildDefineTermSystemPrompt("en", "ja");
+
+    expect(prompt).toContain("英語");
+    expect(prompt).toContain("10〜20字");
+  });
+
+  it("解説言語が英語の場合、英語のプロンプトに学ぶ言語名と意味の長さの目安(語数)を含む", () => {
+    const prompt = buildDefineTermSystemPrompt("ja", "en");
+
+    expect(prompt).toContain("Japanese");
+    expect(prompt).toMatch(/3 to 8 words/);
+  });
+
+  it("翻訳用・自動Pick up用のシステムプロンプトとは異なる(選択済みの語句の意味だけを求める専用プロンプト)", () => {
+    expect(buildDefineTermSystemPrompt("en", "ja")).not.toBe(buildTranslateSystemPrompt("en", "ja"));
+    expect(buildDefineTermSystemPrompt("en", "ja")).not.toBe(buildPickupSystemPrompt("en", "ja"));
+  });
+
+  it("対応する全言語ペアで例外なく組み立てられる", () => {
+    for (const targetLang of SUPPORTED_LANGUAGES) {
+      for (const explainLang of SUPPORTED_LANGUAGES) {
+        expect(() => buildDefineTermSystemPrompt(targetLang, explainLang)).not.toThrow();
+      }
+    }
+  });
+
+  it("配信の文脈を渡すと、文脈なしのプロンプトの末尾に追記される(issue #54 と同じ機構)", () => {
+    const prompt = buildDefineTermSystemPrompt("en", "ja", {
+      title: "Road to Gladiator",
+      category: "World of Warcraft",
+    });
+
+    expect(prompt.startsWith(buildDefineTermSystemPrompt("en", "ja"))).toBe(true);
+    expect(prompt).toContain("World of Warcraft");
+  });
+
+  it("文脈を渡さない・null の場合は文脈なしのプロンプトと同一(オフライン・API 失敗時の動作)", () => {
+    expect(buildDefineTermSystemPrompt("en", "ja", null)).toBe(buildDefineTermSystemPrompt("en", "ja"));
+    expect(buildDefineTermSystemPrompt("en", "ja", undefined)).toBe(buildDefineTermSystemPrompt("en", "ja"));
+  });
+});
+
+describe("buildDefineTermUserPrompt(手動Pick up。issue #72)", () => {
+  it("選択した語句と発言本文の両方を引用符で囲んで含む(指示ではなくデータであることの明示)", () => {
+    const prompt = buildDefineTermUserPrompt("no re", "gg no re chat");
+
+    expect(prompt).toContain('"no re"');
+    expect(prompt).toContain('"gg no re chat"');
+  });
+});

@@ -279,3 +279,49 @@ function buildStreamContextSuffix(explainLang: SupportedLanguage, streamContext?
     buildBroadcasterLabel(streamContext),
   )}`;
 }
+
+/**
+ * 解説言語ごとの手動Pick up(範囲選択した語句の意味生成。issue #72)用システムプロンプトテンプレート。
+ * 引数は「学ぶ言語の名前(解説言語表記)」「解説言語の名前(解説言語表記)」。
+ * 語句はユーザーが選択済みのため、抽出の指示は含めず「選択した表現の意味を短く説明する」ことだけを求める。
+ * 意味の長さの目安は自動Pick up(`PICKUP_SYSTEM_PROMPT_BUILDERS`)と同じ基準
+ * (日本語は10〜20字、アルファベット言語は3〜8語)に揃える。
+ */
+const DEFINE_TERM_SYSTEM_PROMPT_BUILDERS: Record<
+  SupportedLanguage,
+  (targetLabel: string, explainLabel: string) => string
+> = {
+  en: (targetLabel, explainLabel) =>
+    `You are a dictionary of ${targetLabel} as used in live Twitch chat. The user selected one word or phrase from a chat message that actually appeared in a live stream, written in ${targetLabel}, and will show you both the selected expression and the full message. Explain what the selected expression means in this message, as a short ${explainLabel} meaning of roughly 3 to 8 words. Use the full message only as context for the meaning. If the expression has a special meaning in chat culture (slang, abbreviation, idiom, meme), explain that meaning rather than the literal one. Respond only in the requested JSON structure.`,
+  ja: (targetLabel, explainLabel) =>
+    `あなたはTwitchのライブ配信チャットで使われる${targetLabel}の辞典です。ユーザーはライブ配信で実際に流れた${targetLabel}のチャット発言から1つの単語やフレーズを範囲選択し、選択した表現と発言全体の両方を見せます。選択した表現がこの発言の中で持つ意味を、10〜20字程度の短い${explainLabel}で説明してください。発言全体は意味を判断するための文脈としてだけ使ってください。チャット文化特有の意味(スラング・略語・イディオム・ミーム)がある場合は、字義どおりの意味ではなくその意味を説明してください。指定されたJSON構造だけで答えてください。`,
+  es: (targetLabel, explainLabel) =>
+    `Eres un diccionario de ${targetLabel} tal como se usa en el chat en vivo de Twitch. El usuario seleccionó una palabra o frase de un mensaje de chat que realmente apareció en una transmisión en vivo, escrito en ${targetLabel}, y te mostrará tanto la expresión seleccionada como el mensaje completo. Explica qué significa la expresión seleccionada en este mensaje, con un significado breve en ${explainLabel} de unas 3 a 8 palabras. Usa el mensaje completo solo como contexto para el significado. Si la expresión tiene un significado especial en la cultura del chat (jerga, abreviatura, modismo, meme), explica ese significado en lugar del literal. Responde únicamente con la estructura JSON solicitada.`,
+  de: (targetLabel, explainLabel) =>
+    `Du bist ein Wörterbuch für ${targetLabel}, wie es in Twitch-Livechats verwendet wird. Der Nutzer hat ein Wort oder eine Phrase aus einer Chat-Nachricht ausgewählt, die tatsächlich in einem Livestream auf ${targetLabel} geschrieben wurde, und zeigt dir sowohl den ausgewählten Ausdruck als auch die vollständige Nachricht. Erkläre, was der ausgewählte Ausdruck in dieser Nachricht bedeutet, als kurze Bedeutung auf ${explainLabel} mit etwa 3 bis 8 Wörtern. Nutze die vollständige Nachricht nur als Kontext für die Bedeutung. Hat der Ausdruck eine besondere Bedeutung in der Chat-Kultur (Slang, Abkürzung, Redewendung, Meme), erkläre diese statt der wörtlichen. Antworte ausschließlich in der angeforderten JSON-Struktur.`,
+  fr: (targetLabel, explainLabel) =>
+    `Tu es un dictionnaire de ${targetLabel} tel qu'il est utilisé dans le chat en direct de Twitch. L'utilisateur a sélectionné un mot ou une expression dans un message de chat qui est réellement apparu dans un stream en direct, écrit en ${targetLabel}, et te montrera à la fois l'expression sélectionnée et le message complet. Explique ce que signifie l'expression sélectionnée dans ce message, sous forme d'une courte signification en ${explainLabel} d'environ 3 à 8 mots. Utilise le message complet uniquement comme contexte pour la signification. Si l'expression a un sens particulier dans la culture du chat (argot, abréviation, idiome, mème), explique ce sens plutôt que le sens littéral. Réponds uniquement dans la structure JSON demandée.`,
+};
+
+/**
+ * 手動Pick up(範囲選択した語句の意味生成。issue #72)用のシステムプロンプトを
+ * `targetLang`(学ぶ言語)と `explainLang`(意味を書く言語)から組み立てる。
+ * 翻訳用・自動Pick up用とは独立したテンプレートを使い、配信の文脈(issue #54)も同じ機構で追記できる。
+ */
+export function buildDefineTermSystemPrompt(
+  targetLang: SupportedLanguage,
+  explainLang: SupportedLanguage,
+  streamContext?: StreamContext | null,
+): string {
+  const targetLabel = LANGUAGE_LABELS[explainLang][targetLang];
+  const explainLabel = LANGUAGE_LABELS[explainLang][explainLang];
+  return DEFINE_TERM_SYSTEM_PROMPT_BUILDERS[explainLang](targetLabel, explainLabel) + buildStreamContextSuffix(explainLang, streamContext);
+}
+
+/**
+ * 選択した語句と、それが登場したチャット本文からユーザープロンプトを組み立てる。
+ * 他用途と同様に引用符で囲み、指示ではなくデータであることを明示する。
+ */
+export function buildDefineTermUserPrompt(term: string, chatMessageText: string): string {
+  return `Expression to define: "${term}"\nChat message it appeared in: "${chatMessageText}"`;
+}

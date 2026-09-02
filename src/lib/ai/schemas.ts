@@ -78,3 +78,14 @@ export const explanationSchema = z.object({
 export type ExplanationItemKind = (typeof EXPLANATION_ITEM_KINDS)[number];
 export type ExplanationItem = z.infer<typeof explanationItemSchema>;
 export type ExplanationResult = z.infer<typeof explanationSchema>;
+
+/**
+ * 手動Pick up(範囲選択した語句の意味生成。issue #72)の結果。
+ * 語句はユーザーが選択済みのため、抽出用の `pickupSchema` と異なり意味だけを求める最小構造にする。
+ */
+export const termMeaningSchema = z.object({
+  /** 選択した語句の、解説言語での短い意味 */
+  meaning: z.string().min(1),
+});
+
+export type TermMeaningResult = z.infer<typeof termMeaningSchema>;
