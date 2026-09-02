@@ -27,7 +27,7 @@ import { registerCheermoteImageUrls } from "@/lib/twitch/emotes";
 let cheermoteSet: CheermoteSet = STATIC_CHEERMOTE_SET;
 /** 読み込み済み(または読み込み中)の Twitch ユーザー ID。未読み込みなら null */
 let loadedRoomId: string | null = null;
-/** クリアのたびに進める世代番号。読み込み完了時に世代が変わっていたら結果を破棄する */
+/** クリア・読み込み開始のたびに進める世代番号。読み込み完了時に世代が変わっていたら結果を破棄する */
 let generation = 0;
 
 /** 現在の Cheermote 一覧を返す。未読み込み・クリア直後は静的一覧(STATIC_CHEERMOTE_SET) */
@@ -46,7 +46,9 @@ export async function loadCheermotes(
 ): Promise<void> {
   if (loadedRoomId === roomId) return;
   loadedRoomId = roomId;
-  const requestGeneration = generation;
+  // 世代番号を進めてから控える。別チャンネルの読み込みを新しく開始した時点で
+  // 進行中の古い読み込みを無効化し、遅れて届いた結果による上書きを防ぐ
+  const requestGeneration = ++generation;
 
   const set = await fetchSet(roomId);
 

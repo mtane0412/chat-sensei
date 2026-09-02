@@ -84,6 +84,26 @@ describe("loadCheermotes", () => {
     expect(getCheermoteSet()).toBe(STATIC_CHEERMOTE_SET);
   });
 
+  it("別チャンネルの読み込みが先に完了した後、古いチャンネルの結果が遅れて届いても上書きしない", async () => {
+    // ROOMSTATE が別チャンネルで連続した場合(clearCheermotes を挟まないケース)のレース対策
+    let resolveOldFetch: (set: CheermoteSet | null) => void = () => {};
+    const oldSet: CheermoteSet = new Map([
+      ["oldcustom", [{ minBits: 1, imageUrl: "https://example.com/oldcustom/1/2.gif" }]],
+    ]);
+    const fetchOld = vi.fn(
+      () => new Promise<CheermoteSet | null>((resolve) => (resolveOldFetch = resolve)),
+    );
+    const fetchNew = vi.fn(async () => FAKE_CHEERMOTE_SET);
+
+    const oldLoading = loadCheermotes("11111", fetchOld);
+    await loadCheermotes("22222", fetchNew);
+    resolveOldFetch(oldSet);
+    await oldLoading;
+
+    expect(getCheermoteSet()).toBe(FAKE_CHEERMOTE_SET);
+    expect(buildEmoteImageUrl("cheer:mycustom/1")).toBe("https://example.com/mycustom/1/2.gif");
+  });
+
   it("clearCheermotes すると静的一覧・静的 CDN URL に戻り、同じ ID でも再読み込みできる", async () => {
     const fetchSet = vi.fn(async () => FAKE_CHEERMOTE_SET);
 
