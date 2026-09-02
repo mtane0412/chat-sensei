@@ -116,3 +116,67 @@ describe("startPickupPipeline", () => {
     stop();
   });
 });
+
+describe("startPickupPipeline(逆方向: 解説言語の発言を学ぶ言語へ訳して抽出)", () => {
+  it("解説言語と判定した発言は、逆方向のセッションプールで訳文からの抽出を実行して語句と意味のペアを保持する", async () => {
+    const { deps, emit, enqueue, reverseEnqueue, reversePrompt } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [
+        Promise.resolve(
+          JSON.stringify({
+            translation: "fr that's true lmao",
+            terms: [{ term: "fr", meaning: "for real の略。マジで" }],
+          }),
+        ),
+      ],
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "それなwww" }));
+    await flush();
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(reverseEnqueue).toHaveBeenCalledWith("low", expect.any(Function), expect.any(AbortSignal));
+    // 逆方向は訳文(translation)も要求する responseConstraint で呼ぶ
+    expect(reversePrompt).toHaveBeenCalledWith(
+      expect.stringContaining("それなwww"),
+      expect.objectContaining({
+        responseConstraint: expect.objectContaining({ required: ["translation", "terms"] }),
+      }),
+    );
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "fr", meaning: "for real の略。マジで" }],
+    });
+    stop();
+  });
+
+  it("逆方向でも表示中の発言者名(username / displayName)を除外名として渡し、モデルが返しても結果から落とす", async () => {
+    const { deps, emit } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [
+        Promise.resolve(
+          JSON.stringify({
+            translation: "welcome back viewer_taro, no cap",
+            terms: [
+              { term: "viewer_taro", meaning: "配信の常連" },
+              { term: "no cap", meaning: "嘘じゃない、マジで" },
+            ],
+          }),
+        ),
+      ],
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "おかえりviewer_taro、マジだよ" }));
+    await flush();
+
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "no cap", meaning: "嘘じゃない、マジで" }],
+    });
+    stop();
+  });
+});

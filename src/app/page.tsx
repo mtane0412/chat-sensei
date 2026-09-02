@@ -16,9 +16,10 @@
  * (自力で読む練習をしたいときに使う。初期状態はどちらも見える)。
  * 生IRC列の見出しには、新着発言に合わせてスクロール領域を最下部へ送り続ける追従トグル(FollowToggle。
  * 初期状態はオンで、利用者が上へスクロールして最下部から離れると自動でオフになる)と、
- * 学ぶ言語(LearningLanguagesDialog。複数選択可)、bot除外設定(BotFilterDialog)を開くアイコンを置く。
- * 翻訳列の見出しには解説言語(ExplanationLanguageDialog)を開くアイコンを置く。言語は配信ごとに異なるため、
- * アプリ全体の設定(歯車)ではなく対象の列から切り替える。除外パターンは
+ * bot除外設定(BotFilterDialog)を開くアイコンを置く。
+ * 言語ペア(学ぶ言語 / 解説言語)は接続フォームと同じ並びに常時表示するセレクト
+ * (LanguagePairSelect)で切り替える。ファーストビューで「どのチャンネルに接続して、
+ * 何の言語をどの言語で学んでいるか」が見えるようにするため、ダイアログではなくインラインに置く。除外パターンは
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
  * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
@@ -27,7 +28,8 @@
  * 接続フォームの横には設定ダイアログ(SettingsDialog。環境診断と設定の初期化)を開くアイコンを置く。
  * 言語設定は settings ストアが LocalStorage から復元し、パイプラインは復元後に開始する。言語設定が変わると
  * 両パイプラインを停止して新しい設定で開始し直す(生成済みの翻訳・Pick up は破棄され、表示中の発言は再生成される)。
- * 発言ごとの言語判定で処理しなかった行(解説言語と同じ / 学ぶ言語ではない)は、その旨を各列に表示する。
+ * 解説言語と同じ言語の発言は逆方向(学ぶ言語への翻訳 + その訳文からの Pick up)で処理されるため、
+ * 発言ごとの言語判定で処理しなかった行(学ぶ言語でも解説言語でもない)だけ、その旨を各列に表示する。
  */
 "use client";
 
@@ -35,7 +37,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronsDownIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
 import { ChannelAutocompleteInput } from "@/components/channel-autocomplete";
-import { ExplanationLanguageDialog, LearningLanguagesDialog } from "@/components/language-dialogs";
+import { LanguagePairSelect } from "@/components/language-pair-select";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -153,7 +155,7 @@ export default function Home() {
   // (`setSettings` は同じ内容でも新しいオブジェクトを作るため、参照比較では再起動してしまう)。
   // LLM 設定はセッションプールの生成(どのプロバイダ・モデル・キーで作るか)に影響するため含める
   const settingsKey = [
-    settings.learningLangs.join(","),
+    settings.learningLang,
     settings.explainLang,
     settings.llmProvider,
     settings.openRouterApiKey,
@@ -224,6 +226,8 @@ export default function Home() {
             Status: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
           </p>
         </div>
+        {/* ファーストビューで言語ペアが見えるよう、接続フォームと同じ並びに常時表示する */}
+        <LanguagePairSelect />
       </div>
 
       <ScrollArea className="h-[70vh]" viewportRef={scrollViewportRef}>
@@ -238,7 +242,6 @@ export default function Home() {
             headerAction={
               <>
                 <FollowToggle following={followLatest} onFollowingChange={setFollowLatest} />
-                <LearningLanguagesDialog />
                 <BotFilterDialog />
               </>
             }
@@ -253,10 +256,7 @@ export default function Home() {
             title="Translation"
             blurred={translationBlurred}
             headerAction={
-              <>
-                <ExplanationLanguageDialog />
-                <BlurToggle label="Blur translation" blurred={translationBlurred} onBlurredChange={setTranslationBlurred} />
-              </>
+              <BlurToggle label="Blur translation" blurred={translationBlurred} onBlurredChange={setTranslationBlurred} />
             }
             headerExtra={<PromptApiUnavailableReason promptApi={promptApi} />}
           >
@@ -429,7 +429,7 @@ function PromptApiUnavailableReason({ promptApi }: { promptApi: PromptApiStatus 
 
 /**
  * 翻訳列・Pick up列で共通の1行の中身。生成中・失敗・キュー溢れ・Prompt API 利用不可・
- * 言語判定によるスキップ(解説言語と同じ / 学ぶ言語ではない)の各状態を暗黙に隠さず明示する。表示文言は `labels`(翻訳列・Pick up 列ごとの文言一式)から選び、完了時の描画だけを
+ * 言語判定によるスキップ(学ぶ言語でも解説言語でもない)の各状態を暗黙に隠さず明示する。表示文言は `labels`(翻訳列・Pick up 列ごとの文言一式)から選び、完了時の描画だけを
  * `renderDone` で列ごとに差し替える。
  */
 function PipelineCellContent<TDone extends object>({
@@ -470,8 +470,6 @@ function PipelineCellContent<TDone extends object>({
       return <span className="text-muted-foreground">{labels.notYet} (too many messages)</span>;
     case "unavailable":
       return <span className="text-muted-foreground">{labels.unavailable}</span>;
-    case "same-language":
-      return <span className="text-muted-foreground">Same language</span>;
     case "other-language":
       return <span className="text-muted-foreground">Not a learning language ({entry.detectedLanguage})</span>;
   }

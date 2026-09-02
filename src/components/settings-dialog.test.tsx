@@ -89,7 +89,7 @@ describe("SettingsDialog(設定の初期化・通知)", () => {
 
   it("「設定を初期化する」で LocalStorage の設定を削除し、ストアもデフォルトに戻る", async () => {
     const user = userEvent.setup();
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ learningLangs: ["fr"], explainLang: "en" }));
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ learningLang: "fr", explainLang: "en" }));
     hydrateSettingsStore();
     render(<SettingsDialog />);
 

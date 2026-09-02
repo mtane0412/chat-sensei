@@ -17,8 +17,15 @@ import type { Settings } from "@/lib/settings";
 import type { EmotePosition } from "@/lib/twitch/irc-parser";
 import { createLlmBaseSessionFactory } from "./llm-provider";
 import { filterPickupTerms, preparePickupInput } from "./pickup-filter";
-import { buildPickupSystemPrompt, buildPickupUserPrompt, type StreamContext, type SupportedLanguage } from "./prompts";
-import { pickupSchema, type PickupResult } from "./schemas";
+import {
+  buildPickupSystemPrompt,
+  buildPickupUserPrompt,
+  buildReversePickupSystemPrompt,
+  buildReversePickupUserPrompt,
+  type StreamContext,
+  type SupportedLanguage,
+} from "./prompts";
+import { pickupSchema, reversePickupSchema, type PickupResult } from "./schemas";
 import type { JobPriority, PromptSessionLike, SessionPool } from "./session-pool";
 import { runStructuredPrompt } from "./structured-prompt";
 
@@ -65,6 +72,39 @@ export async function pickUpExpressions(
 }
 
 /**
+ * 解説言語のチャット本文を学ぶ言語へ翻訳させ、その訳文から注目の表現を抽出する(逆方向 Pick up)。
+ * 翻訳と抽出を 1 回の構造化生成(`reversePickupSchema`)で行い、訳文(`translation`)は
+ * 語句の照合にのみ使って結果には含めない(翻訳列の表示は翻訳パイプラインが別途生成する)。
+ * 語句は原文ではなく訳文に登場する文字列であることを照合し、失敗した場合はエラーを投げる
+ * (照合は `pickUpExpressions` と同じく大文字小文字を区別しない)。
+ */
+export async function pickUpFromReverseTranslation(
+  sessionPool: SessionPool,
+  chatMessageText: string,
+  options: PickupOptions = {},
+): Promise<PickupResult> {
+  const prepared = preparePickupInput(chatMessageText, options.emotes ?? []);
+  if (prepared.text === "") {
+    return { terms: [] };
+  }
+
+  const result = await runStructuredPrompt(sessionPool, {
+    userPrompt: buildReversePickupUserPrompt(prepared.text),
+    schema: reversePickupSchema,
+    priority: options.priority ?? "low",
+    signal: options.signal,
+  });
+
+  const terms = filterPickupTerms(result.terms, prepared, options.excludedNames ?? []);
+  const normalizedTranslation = result.translation.toLowerCase();
+  const unknownTerm = terms.find((term) => !normalizedTranslation.includes(term.term.toLowerCase()));
+  if (unknownTerm) {
+    throw new Error(`The Prompt API returned a term that does not appear in the translation: ${unknownTerm.term}`);
+  }
+  return { terms };
+}
+
+/**
  * 設定(LLM プロバイダ)と学ぶ言語・意味を書く言語のペアから、
  * Pick up 専用の `SessionPool` に渡すベースセッション生成関数を組み立てる。
  * `streamContext`(配信タイトル・カテゴリ)を渡すとシステムプロンプトの末尾に
@@ -80,6 +120,27 @@ export function createPickupBaseSessionFactory(
     settings,
     (target, explain) => buildPickupSystemPrompt(target, explain, streamContext),
     targetLang,
+    explainLang,
+  );
+}
+
+/**
+ * 設定(LLM プロバイダ)と学ぶ言語・解説言語のペアから、逆方向 Pick up 専用の
+ * `SessionPool` に渡すベースセッション生成関数を組み立てる。入力は解説言語の発言、
+ * 出力は学ぶ言語の訳文と解説言語の意味の混在になるため、`expectedInputs` に両言語を渡し、
+ * `expectedOutputs` は意味の言語(解説言語)を渡す(順方向と同じ引数順のまま流用する)。
+ * `streamContext` の扱いは順方向(issue #54)と同じ。
+ */
+export function createReversePickupBaseSessionFactory(
+  settings: Settings,
+  learningLang: SupportedLanguage,
+  explainLang: SupportedLanguage,
+  streamContext?: StreamContext | null,
+): () => Promise<PromptSessionLike> {
+  return createLlmBaseSessionFactory(
+    settings,
+    (target, explain) => buildReversePickupSystemPrompt(target, explain, streamContext),
+    learningLang,
     explainLang,
   );
 }

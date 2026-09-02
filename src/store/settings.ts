@@ -1,5 +1,5 @@
 /**
- * 言語設定(学ぶ言語 `learningLangs` / 解説言語 `explainLang`)を保持する、モジュールスコープのストア。
+ * 言語設定(学ぶ言語 `learningLang` / 解説言語 `explainLang`)を保持する、モジュールスコープのストア。
  *
  * 設定の正本は LocalStorage(`lib/settings.ts`)だが、翻訳・Pick up のパイプラインの起動と
  * 設定ダイアログの表示で参照するため、Zustand ストアにキャッシュして参照する(`bot-filter.ts` と同じ構成)。

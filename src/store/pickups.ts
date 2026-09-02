@@ -16,7 +16,12 @@
  *   `auto-pipeline.ts` が行う。ベースセッションは「学ぶ言語 1 つ × 解説言語」のペアごとに組み立てる
  * - Prompt API の利用可否は `prompt-api.ts` の共有ストアを参照する(翻訳列と共通)
  */
-import { createPickupBaseSessionFactory, pickUpExpressions } from "@/lib/ai/pickup";
+import {
+  createPickupBaseSessionFactory,
+  createReversePickupBaseSessionFactory,
+  pickUpExpressions,
+  pickUpFromReverseTranslation,
+} from "@/lib/ai/pickup";
 import type { PickupTerm } from "@/lib/ai/schemas";
 import { isChatCommandMessage } from "@/lib/twitch/chat-command";
 import { isTextlessMessage } from "@/lib/twitch/emotes";
@@ -41,10 +46,20 @@ const pipeline = createAutoPipeline<PickupDone>({
   // 生成時点のストアの値を読めばよい
   createBaseSession: (targetLang, explainLang) =>
     createPickupBaseSessionFactory(useSettingsStore.getState().settings, targetLang, explainLang, getStreamInfo()),
+  // 逆方向(解説言語の発言を学ぶ言語へ訳し、その訳文から抽出する)は専用のシステムプロンプトを使う
+  createReverseBaseSession: (learningLang, explainLang) =>
+    createReversePickupBaseSessionFactory(useSettingsStore.getState().settings, learningLang, explainLang, getStreamInfo()),
   resolveWithoutModel: (message) =>
     isTextlessMessage(message.text, message.emotes) || isChatCommandMessage(message.text) ? { terms: [] } : null,
   runJob: (pool, message, { signal, getMessages }) =>
     pickUpExpressions(pool, message.text, {
+      priority: "low",
+      signal,
+      emotes: message.emotes,
+      excludedNames: getMessages().flatMap((item) => [item.username, item.displayName]),
+    }),
+  runReverseJob: (pool, message, { signal, getMessages }) =>
+    pickUpFromReverseTranslation(pool, message.text, {
       priority: "low",
       signal,
       emotes: message.emotes,

@@ -4,12 +4,14 @@
  * それ以外の流れは同一のため、ここに 1 つだけ実装する(issue #24)。
  *
  * - 結果は発言 ID(`TwitchChatMessage.id`)をキーに保持し、ページ側は左列と同じ発言順で `entries[id]` を引いて描画する
- * - 発言ごとに Language Detector で言語を判定し(`detect-language.ts`)、学ぶ言語ならその言語専用の
- *   セッションプールへ、解説言語と同じなら `same-language`、どちらでもなければ `other-language` として
- *   モデルを呼ばずに確定する。配信によって英語と日本語のようにチャットの言語が混ざるため、学ぶ言語は複数選べる
+ * - 発言ごとに Language Detector で言語を判定し(`detect-language.ts`)、学ぶ言語なら順方向
+ *   (学ぶ言語→解説言語)のセッションプールへ、解説言語と同じなら逆方向(解説言語→学ぶ言語)の
+ *   セッションプールへ投入し、どちらでもなければ `other-language` としてモデルを呼ばずに確定する。
+ *   逆方向は「日本語の発言を英語に訳し、その英訳から Pick up する」ような学習機会を増やすための処理で、
+ *   これにより日英混在チャットも学ぶ言語と解説言語の 1:1 ペアのままカバーできる
  * - ジョブは「自動で全件」を基本とし、`SessionPool` の低優先度キューに積む。
  *   流量が多く追いつかない分はキュー側で古いものから破棄され、`dropped` として明示する
- * - セッションプールは「パイプライン(用途ごとのシステムプロンプト)× 学ぶ言語」ごとに持ち、必要になった時点で生成する。
+ * - セッションプールは「パイプライン(用途ごとのシステムプロンプト)× 方向(順方向・逆方向)」ごとに持ち、必要になった時点で生成する。
  *   ジョブを流す直列キューはこのモジュールで 1 つだけ作り、全プールで共有する。Gemini Nano への `prompt()` が
  *   翻訳と Pick up で並走しないようにするため(issue #23)
  * - Prompt API / Language Detector の利用可否は `prompt-api.ts` の共有ストアに集約する。パイプラインは診断を 1 回だけ
@@ -56,8 +58,6 @@ export type PipelineEntry<TDone extends object> =
   | { status: "dropped" }
   /** Prompt API / Language Detector が利用できない環境で受信した */
   | { status: "unavailable" }
-  /** 解説言語と同じ言語の発言のため、翻訳・Pick up をしない */
-  | { status: "same-language" }
   /** 学ぶ言語にも解説言語にも該当しない言語(未判定 `und` を含む)の発言のため、翻訳・Pick up をしない */
   | { status: "other-language"; detectedLanguage: string };
 
@@ -70,8 +70,10 @@ export interface AutoPipelineState<TDone extends object> {
 export interface AutoPipelineDeps {
   diagnose: () => Promise<EnvironmentDiagnosis>;
   loadSettings: () => Settings;
-  /** 学ぶ言語 1 つと解説言語のペアに対応するセッションプールを生成する */
+  /** 順方向(学ぶ言語→解説言語)のセッションプールを生成する */
   createPool: (targetLang: SupportedLanguage, explainLang: SupportedLanguage) => SessionPool;
+  /** 逆方向(解説言語→学ぶ言語)のセッションプールを生成する */
+  createReversePool: (learningLang: SupportedLanguage, explainLang: SupportedLanguage) => SessionPool;
   /** 発言の言語判定に使う Language Detector を生成する */
   createDetector: () => Promise<LanguageDetectorLike>;
   subscribeToChatMessages: (listener: (message: TwitchChatMessage) => void) => () => void;
@@ -89,15 +91,22 @@ export interface AutoPipelineJobContext {
 
 /** 翻訳・Pick up など用途ごとに異なる部分の定義 */
 export interface AutoPipelineConfig<TDone extends object> {
-  /** 学ぶ言語 1 つと解説言語のペアから、この用途専用のベースセッション生成関数を組み立てる */
+  /** 学ぶ言語と解説言語のペアから、順方向(学ぶ言語の発言用)のベースセッション生成関数を組み立てる */
   createBaseSession: (targetLang: SupportedLanguage, explainLang: SupportedLanguage) => () => Promise<PromptSessionLike>;
+  /** 学ぶ言語と解説言語のペアから、逆方向(解説言語の発言用)のベースセッション生成関数を組み立てる */
+  createReverseBaseSession: (
+    learningLang: SupportedLanguage,
+    explainLang: SupportedLanguage,
+  ) => () => Promise<PromptSessionLike>;
   /**
    * LLM を呼ばずに結果を確定できる発言(emote だけの発言・チャットコマンドなど)はここで結果を返す。
-   * `null` を返した発言だけを `runJob` に渡す
+   * `null` を返した発言だけを `runJob` / `runReverseJob` に渡す
    */
   resolveWithoutModel?: (message: TwitchChatMessage) => TDone | null;
-  /** 発言 1 件を処理して結果を返す。低優先度キューの溢れは `LowPriorityQueueOverflowError` で通知される */
+  /** 学ぶ言語の発言 1 件を処理して結果を返す。低優先度キューの溢れは `LowPriorityQueueOverflowError` で通知される */
   runJob: (pool: SessionPool, message: TwitchChatMessage, context: AutoPipelineJobContext) => Promise<TDone>;
+  /** 解説言語の発言 1 件を逆方向(学ぶ言語への翻訳ベース)で処理して結果を返す。`pool` は逆方向のセッションプール */
+  runReverseJob: (pool: SessionPool, message: TwitchChatMessage, context: AutoPipelineJobContext) => Promise<TDone>;
 }
 
 export interface AutoPipeline<TDone extends object> {
@@ -154,6 +163,11 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
         createBaseSession: config.createBaseSession(targetLang, explainLang),
         queue: sharedPromptJobQueue,
       }),
+    createReversePool: (learningLang, explainLang) =>
+      createSessionPool({
+        createBaseSession: config.createReverseBaseSession(learningLang, explainLang),
+        queue: sharedPromptJobQueue,
+      }),
     createDetector: createBrowserLanguageDetector,
     subscribeToChatMessages,
     getMessages: () => useChatConnectionStore.getState().messages,
@@ -177,8 +191,10 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
   function start(deps: AutoPipelineDeps = defaultDeps): () => void {
     const controller = new AbortController();
     const settings = deps.loadSettings();
-    /** 学ぶ言語ごとのセッションプール。必要になった時点で生成する */
-    const pools = new Map<SupportedLanguage, SessionPool>();
+    /** 順方向(学ぶ言語→解説言語)のセッションプール。必要になった時点で生成する */
+    let forwardPool: SessionPool | null = null;
+    /** 逆方向(解説言語→学ぶ言語)のセッションプール。必要になった時点で生成する */
+    let reversePool: SessionPool | null = null;
     /** Language Detector。生成に失敗したら次回に再試行できるようキャッシュを捨てる */
     let detectorPromise: Promise<LanguageDetectorLike> | null = null;
     /** 環境診断が終わるまでに受信した発言。診断結果に応じてまとめて処理する */
@@ -186,13 +202,14 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
     /** 診断完了前にウォームアップを要求されたか */
     let warmUpRequested = false;
 
-    function getPool(targetLang: SupportedLanguage): SessionPool {
-      let pool = pools.get(targetLang);
-      if (!pool) {
-        pool = deps.createPool(targetLang, settings.explainLang);
-        pools.set(targetLang, pool);
-      }
-      return pool;
+    function getForwardPool(): SessionPool {
+      forwardPool ??= deps.createPool(settings.learningLang, settings.explainLang);
+      return forwardPool;
+    }
+
+    function getReversePool(): SessionPool {
+      reversePool ??= deps.createReversePool(settings.learningLang, settings.explainLang);
+      return reversePool;
     }
 
     function getDetector(): Promise<LanguageDetectorLike> {
@@ -205,11 +222,6 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
       return detectorPromise;
     }
 
-    /** 解説言語を除いた学ぶ言語。解説言語と同じ言語の発言は処理しないため、そのプールは作らない */
-    function processableLearningLangs(): SupportedLanguage[] {
-      return settings.learningLangs.filter((lang) => lang !== settings.explainLang);
-    }
-
     function setFailed(id: string, error: unknown): void {
       if (controller.signal.aborted) return;
       if (error instanceof LowPriorityQueueOverflowError) {
@@ -219,14 +231,21 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
       setEntry(id, { status: "failed", reason: error instanceof Error ? error.message : String(error) });
     }
 
-    /** 学ぶ言語と判定した発言を、その言語のセッションプールで処理する */
-    function runJob(message: TwitchChatMessage, id: string, targetLang: SupportedLanguage): Promise<void> {
+    /** 学ぶ言語と判定した発言を、順方向のセッションプールで処理する */
+    function runJob(message: TwitchChatMessage, id: string): Promise<void> {
       return config
-        .runJob(getPool(targetLang), message, { signal: controller.signal, getMessages: deps.getMessages })
+        .runJob(getForwardPool(), message, { signal: controller.signal, getMessages: deps.getMessages })
         .then((result) => setEntry(id, { status: "done", ...result }));
     }
 
-    /** 発言の言語を判定し、学ぶ言語ならジョブを投入、そうでなければモデルを呼ばずに確定する */
+    /** 解説言語と判定した発言を、逆方向(解説言語→学ぶ言語)のセッションプールで処理する */
+    function runReverseJob(message: TwitchChatMessage, id: string): Promise<void> {
+      return config
+        .runReverseJob(getReversePool(), message, { signal: controller.signal, getMessages: deps.getMessages })
+        .then((result) => setEntry(id, { status: "done", ...result }));
+    }
+
+    /** 発言の言語を判定し、学ぶ言語なら順方向・解説言語なら逆方向のジョブを投入、どちらでもなければモデルを呼ばずに確定する */
     async function detectAndRun(message: TwitchChatMessage, id: string): Promise<void> {
       const detector = await getDetector();
       const plainText = extractPlainText(message.text, message.emotes);
@@ -235,10 +254,10 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
       const classification = classifyDetectedLanguage(plainText, candidates, settings);
       switch (classification.kind) {
         case "learning":
-          await runJob(message, id, classification.lang);
+          await runJob(message, id);
           return;
         case "same-as-explanation":
-          setEntry(id, { status: "same-language" });
+          await runReverseJob(message, id);
           return;
         case "other":
           setEntry(id, { status: "other-language", detectedLanguage: classification.detectedLanguage });
@@ -285,7 +304,8 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
     }
 
     /**
-     * Language Detector と、処理対象の学ぶ言語ごとのベースセッションを先に生成する。
+     * Language Detector と、順方向・逆方向それぞれのベースセッションを先に生成する。
+     * 逆方向も接続直後から解説言語の発言(視聴者の母語のチャット)が流れてくるため同時に温める。
      * 失敗した場合は共有の Prompt API 状態を利用不可にして理由を保持する
      */
     function warmUp(): void {
@@ -295,9 +315,8 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
         markPromptApiUnavailable(`Could not create ${what}: ${error instanceof Error ? error.message : String(error)}`);
       };
       getDetector().catch(markFailed("a Language Detector session"));
-      processableLearningLangs().forEach((lang) => {
-        getPool(lang).warmUp().catch(markFailed("a Prompt API session"));
-      });
+      getForwardPool().warmUp().catch(markFailed("a Prompt API session"));
+      getReversePool().warmUp().catch(markFailed("a Prompt API session"));
     }
 
     /** 診断結果が確定したら、保留していた発言のうち表示中のものを投入するか「利用不可」として確定させる */

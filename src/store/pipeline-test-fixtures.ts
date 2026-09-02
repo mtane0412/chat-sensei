@@ -62,6 +62,8 @@ export function createDeferred<T>() {
  * - `emit(message)` で発言受信を模擬する(表示用リングバッファにも追加する)
  * - `setMessages(next)` で表示用リングバッファの中身を差し替える(発言が溢れた状況の模擬)
  * - `pool.enqueue` は run にフェイクセッション(`prompt` スパイ)を渡し、prompt の結果は `promptResults` から順に取り出す
+ * - 逆方向(解説言語→学ぶ言語)のジョブ用に、順方向とは別の `reversePool`(`reverseEnqueue` / `reversePrompt` /
+ *   `reverseWarmUp`。結果は `reversePromptResults` から取り出す)を `createReversePool` が返す
  * - `detect` はフェイクの Language Detector。既定では全発言を `detectedLanguage`(既定 "en")と判定する
  * - `settings` は既定で「英語を学ぶ / 日本語で解説」
  */
@@ -69,6 +71,7 @@ export function createDeps(
   options: {
     ready?: boolean;
     promptResults?: Array<Promise<string>>;
+    reversePromptResults?: Array<Promise<string>>;
     detectedLanguage?: string;
     settings?: Settings;
   } = {},
@@ -76,7 +79,8 @@ export function createDeps(
   const listeners = new Set<(message: TwitchChatMessage) => void>();
   let messages: TwitchChatMessage[] = [];
   const promptResults = [...(options.promptResults ?? [])];
-  const settings: Settings = options.settings ?? { ...DEFAULT_SETTINGS, learningLangs: ["en"], explainLang: "ja" };
+  const reversePromptResults = [...(options.reversePromptResults ?? [])];
+  const settings: Settings = options.settings ?? { ...DEFAULT_SETTINGS, learningLang: "en", explainLang: "ja" };
 
   /** フェイクセッションの prompt。LLM に渡された本文(ユーザープロンプト)を検証するために公開する */
   const prompt = vi.fn((): Promise<string> => {
@@ -90,6 +94,18 @@ export function createDeps(
   const warmUp = vi.fn(async () => {});
   const pool = { enqueue, warmUp } as unknown as SessionPool;
 
+  /** 逆方向ジョブ用のフェイクセッションの prompt。順方向と分けて検証できるようにする */
+  const reversePrompt = vi.fn((): Promise<string> => {
+    const next = reversePromptResults.shift();
+    if (!next) throw new Error("テストの reversePromptResults が不足しています");
+    return next;
+  });
+  const reverseEnqueue = vi.fn(async (_priority: "high" | "low", run: (session: unknown) => Promise<string>) => {
+    return run({ prompt: reversePrompt });
+  });
+  const reverseWarmUp = vi.fn(async () => {});
+  const reversePool = { enqueue: reverseEnqueue, warmUp: reverseWarmUp } as unknown as SessionPool;
+
   /** フェイクの Language Detector。判定に渡された本文を検証するために公開する */
   const detect = vi.fn(
     async (): Promise<DetectedLanguageCandidate[]> => [
@@ -102,6 +118,7 @@ export function createDeps(
     diagnose: vi.fn(async () => createDiagnosis(options.ready ?? true)),
     loadSettings: () => settings,
     createPool: vi.fn(() => pool),
+    createReversePool: vi.fn(() => reversePool),
     createDetector,
     subscribeToChatMessages: (listener) => {
       listeners.add(listener);
@@ -119,7 +136,20 @@ export function createDeps(
     messages = next;
   }
 
-  return { deps, emit, setMessages, enqueue, prompt, warmUp, detect, createDetector, listeners };
+  return {
+    deps,
+    emit,
+    setMessages,
+    enqueue,
+    prompt,
+    warmUp,
+    reverseEnqueue,
+    reversePrompt,
+    reverseWarmUp,
+    detect,
+    createDetector,
+    listeners,
+  };
 }
 
 /** 非同期の状態更新(診断 → 投入 → 完了)が落ち着くまでマイクロタスクをフラッシュする */

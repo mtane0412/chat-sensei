@@ -10,8 +10,8 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
-import { createPickupBaseSessionFactory, pickUpExpressions } from "./pickup";
-import { buildExplainSystemPrompt, buildTranslateSystemPrompt } from "./prompts";
+import { createPickupBaseSessionFactory, createReversePickupBaseSessionFactory, pickUpExpressions, pickUpFromReverseTranslation } from "./pickup";
+import { buildExplainSystemPrompt, buildReversePickupSystemPrompt, buildTranslateSystemPrompt } from "./prompts";
 import type { SessionPool } from "./session-pool";
 import { STRUCTURED_PROMPT_MAX_ATTEMPTS } from "./structured-prompt";
 
@@ -269,6 +269,167 @@ describe("createPickupBaseSessionFactory と配信の文脈(issue #54)", () => {
     vi.stubGlobal("LanguageModel", { create, availability: vi.fn() });
 
     const factory = createPickupBaseSessionFactory(DEFAULT_SETTINGS, "en", "ja", {
+      title: "Mythic raid progression! !drops",
+      category: "World of Warcraft",
+    });
+    await factory();
+
+    const content = create.mock.calls[0][0].initialPrompts[0].content;
+    expect(content).toContain("Mythic raid progression! !drops");
+    expect(content).toContain("World of Warcraft");
+  });
+});
+
+describe("pickUpFromReverseTranslation(解説言語の発言を学ぶ言語へ訳し、訳文から抽出する)", () => {
+  const 逆方向抽出結果 = {
+    translation: "fr lmao, totally agree",
+    terms: [{ term: "fr", meaning: "for real の略。マジで、それな" }],
+  };
+
+  it("Gemini Nanoが返した訳文と語句一覧をパースし、語句と意味のペアだけを返す(訳文は照合にのみ使う)", async () => {
+    const pool = createFakeSessionPool(JSON.stringify(逆方向抽出結果));
+
+    const result = await pickUpFromReverseTranslation(pool, "それなwww 完全に同意");
+
+    expect(result).toEqual({ terms: 逆方向抽出結果.terms });
+  });
+
+  it("抽出は全件自動生成のため、優先度を指定しない場合は既定で low として enqueue する", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ translation: "nice", terms: [] }));
+
+    await pickUpFromReverseTranslation(pool, "ナイス");
+
+    expect(pool.enqueue).toHaveBeenCalledWith("low", expect.any(Function), undefined);
+  });
+
+  it("逆方向用のユーザープロンプトと、訳文を含む responseConstraint で session.prompt を呼ぶ", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ translation: "nice", terms: [] }));
+
+    await pickUpFromReverseTranslation(pool, "ナイスプレー");
+
+    expect(pool.prompt).toHaveBeenCalledWith(
+      expect.stringContaining("ナイスプレー"),
+      expect.objectContaining({
+        responseConstraint: expect.objectContaining({ required: ["translation", "terms"] }),
+      }),
+    );
+  });
+
+  it("語句の照合は原文ではなく訳文に対して行う(原文に無い学ぶ言語の語句を許容する)", async () => {
+    // 原文「それな」に "fr" は登場しないが、訳文に登場するので有効な語句として返す
+    const pool = createFakeSessionPool(
+      JSON.stringify({ translation: "fr that's true", terms: [{ term: "fr", meaning: "for real の略" }] }),
+    );
+
+    const result = await pickUpFromReverseTranslation(pool, "それな");
+
+    expect(result.terms).toEqual([{ term: "fr", meaning: "for real の略" }]);
+  });
+
+  it("訳文に登場しない語句が含まれる場合はエラーを投げる(モデルの捏造語句を表示しない)", async () => {
+    const pool = createFakeSessionPool(
+      JSON.stringify({ translation: "that's true", terms: [{ term: "no cap", meaning: "嘘じゃない" }] }),
+    );
+
+    await expect(pickUpFromReverseTranslation(pool, "それな")).rejects.toThrow(/does not appear in the translation/);
+  });
+
+  it("大文字小文字の違いは許容する(訳文が「W」でも「w」として返した語句を有効とみなす)", async () => {
+    const pool = createFakeSessionPool(
+      JSON.stringify({ translation: "that was a W", terms: [{ term: "w", meaning: "勝利" }] }),
+    );
+
+    const result = await pickUpFromReverseTranslation(pool, "今のは勝ちだわ");
+
+    expect(result.terms).toEqual([{ term: "w", meaning: "勝利" }]);
+  });
+
+  it("emote だけの発言は LLM を呼ばずに terms が空の結果を返す", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ translation: "x", terms: [] }));
+
+    const result = await pickUpFromReverseTranslation(pool, "Kappa", { emotes: [{ id: "25", start: 0, end: 4 }] });
+
+    expect(result).toEqual({ terms: [] });
+    expect(pool.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("emote・@メンション・URL を除いた本文をユーザープロンプトに渡す", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ translation: "did that", terms: [] }));
+
+    await pickUpFromReverseTranslation(pool, "xqcPeepo @AUBREY やったな https://example.com/clip", {
+      emotes: [{ id: "emotesv2_1", start: 0, end: 7 }],
+    });
+
+    const [userPrompt] = pool.prompt.mock.calls[0] as unknown as [string];
+    expect(userPrompt).toContain("やったな");
+    expect(userPrompt).not.toContain("xqcPeepo");
+    expect(userPrompt).not.toContain("@AUBREY");
+    expect(userPrompt).not.toContain("https://example.com/clip");
+  });
+
+  it("excludedNames に指定した発言者名を、モデルが語句として返しても結果から落とす", async () => {
+    const pool = createFakeSessionPool(
+      JSON.stringify({
+        translation: "welcome back space_toilet_master, sticky situation",
+        terms: [
+          { term: "space_toilet_master", meaning: "配信の常連" },
+          { term: "sticky situation", meaning: "厄介な状況" },
+        ],
+      }),
+    );
+
+    const result = await pickUpFromReverseTranslation(pool, "おかえりspace_toilet_master、面倒なことになったね", {
+      excludedNames: ["space_toilet_master"],
+    });
+
+    expect(result.terms).toEqual([{ term: "sticky situation", meaning: "厄介な状況" }]);
+  });
+
+  it("応答のJSONがスキーマに合わない(訳文が無い)場合はエラーを投げる", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [] }));
+
+    await expect(pickUpFromReverseTranslation(pool, "それな")).rejects.toThrow();
+  });
+});
+
+describe("createReversePickupBaseSessionFactory", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("逆方向Pick up専用のsystem promptとexpectedInputs/expectedOutputsでLanguageModel.createを呼ぶ", async () => {
+    /** LanguageModel.create() に渡されるオプションのうち、このテストで検証したい部分だけの形 */
+    interface CapturedCreateOptions {
+      initialPrompts: Array<{ role: string; content: string }>;
+      expectedInputs: Array<{ type: string; languages: string[] }>;
+      expectedOutputs: Array<{ type: string; languages: string[] }>;
+    }
+
+    const created = { prompt: vi.fn(), clone: vi.fn(), destroy: vi.fn() };
+    const create = vi.fn<(options: CapturedCreateOptions) => Promise<typeof created>>(async () => created);
+    vi.stubGlobal("LanguageModel", { create, availability: vi.fn() });
+
+    const factory = createReversePickupBaseSessionFactory(DEFAULT_SETTINGS, "en", "ja");
+    const session = await factory();
+
+    expect(session).toBe(created);
+    const options = create.mock.calls[0][0];
+    expect(options.initialPrompts[0].role).toBe("system");
+    // 順方向の Pick up プロンプトではなく、逆方向(訳文からの抽出)のプロンプトであること
+    expect(options.initialPrompts[0].content).toBe(buildReversePickupSystemPrompt("en", "ja"));
+    expect(options.expectedInputs).toEqual([{ type: "text", languages: ["en", "ja"] }]);
+    expect(options.expectedOutputs).toEqual([{ type: "text", languages: ["ja"] }]);
+  });
+
+  it("配信情報を渡すと、システムプロンプトに配信タイトル・カテゴリが含まれる(issue #54 と同じ機構)", async () => {
+    interface CapturedCreateOptions {
+      initialPrompts: Array<{ role: string; content: string }>;
+    }
+    const created = { prompt: vi.fn(), clone: vi.fn(), destroy: vi.fn() };
+    const create = vi.fn<(options: CapturedCreateOptions) => Promise<typeof created>>(async () => created);
+    vi.stubGlobal("LanguageModel", { create, availability: vi.fn() });
+
+    const factory = createReversePickupBaseSessionFactory(DEFAULT_SETTINGS, "en", "ja", {
       title: "Mythic raid progression! !drops",
       category: "World of Warcraft",
     });

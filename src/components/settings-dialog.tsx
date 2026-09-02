@@ -69,8 +69,8 @@ export function SettingsDialog() {
         <DialogHeader>
           <DialogTitle>{DIALOG_TITLE}</DialogTitle>
           <DialogDescription>
-            Check whether this browser can run the on-device AI. Learning languages and the explanation language are
-            set from the Raw IRC and Translation column headers.
+            Check whether this browser can run the on-device AI. The learning and explanation languages are set with
+            the selects next to the channel form.
           </DialogDescription>
         </DialogHeader>
 
