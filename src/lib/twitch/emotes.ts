@@ -39,6 +39,22 @@ export interface EmoteSegment {
 export type MessageSegment = TextSegment | EmoteSegment;
 
 /**
+ * Cheermote(`cheer:` プレフィックス)の「`プレフィックス/ティア` → 画像 URL」対応表。
+ * Helix の Cheermotes API から取得した画像 URL を `src/store/cheermotes.ts` が
+ * `registerCheermoteImageUrls` で登録する。未登録の ID は静的 CDN URL にフォールバックする
+ * (Helix が利用できない場合の意図した仕様。issue #53)。
+ */
+let cheermoteImageUrls: ReadonlyMap<string, string> = new Map();
+
+/**
+ * Cheermote の画像 URL 対応表を登録する(全体を置き換える)。
+ * 空の Map を渡すと静的 CDN URL へのフォールバックに戻る(チャンネル切り替え時)。
+ */
+export function registerCheermoteImageUrls(urls: ReadonlyMap<string, string>): void {
+  cheermoteImageUrls = urls;
+}
+
+/**
  * プレフィックス付き ID(サードパーティ emote: `third-party-emotes.ts`、
  * Cheering Emote: `cheermotes.ts`)から各サービスの CDN URL を組み立てる関数の表。
  * theme / scale の指定には対応していないため、ライブチャット表示に適した
@@ -48,8 +64,11 @@ const PREFIXED_EMOTE_URL_BUILDERS: Record<string, (id: string) => string> = {
   bttv: (id) => `https://cdn.betterttv.net/emote/${id}/2x`,
   ffz: (id) => `https://cdn.frankerfacez.com/emote/${id}/2`,
   "7tv": (id) => `https://cdn.7tv.app/emote/${id}/2x.webp`,
-  // Cheering Emote(cheermotes.ts): `cheer:{プレフィックス}/{ティア}` 形式の ID から静的 CDN URL を組み立てる
+  // Cheering Emote(cheermotes.ts): `cheer:{プレフィックス}/{ティア}` 形式の ID。
+  // API 由来の登録済み URL を優先し、未登録なら静的 CDN URL を組み立てる
   cheer: (id) => {
+    const registered = cheermoteImageUrls.get(id);
+    if (registered !== undefined) return registered;
     const [name, tier] = id.split("/");
     return `https://d3aqoihi2n8ty8.cloudfront.net/actions/${name}/dark/animated/${tier}/2.gif`;
   },

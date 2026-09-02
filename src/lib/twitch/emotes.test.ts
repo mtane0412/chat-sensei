@@ -5,7 +5,7 @@
  * 実際の画像表示に使えるCDN URLや、テキスト/emoteが交互に並ぶ
  * 描画用セグメントに変換する純関数を検証する。
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   buildEmoteImageUrl,
   extractPlainText,
@@ -14,6 +14,7 @@ import {
   maskEmotesWithPlaceholders,
   restoreEmotesFromPlaceholders,
   splitMessageIntoSegments,
+  registerCheermoteImageUrls,
 } from "./emotes";
 import type { EmotePosition } from "./irc-parser";
 
@@ -277,6 +278,36 @@ describe("buildEmoteImageUrl(Cheering Emote)", () => {
     );
     expect(buildEmoteImageUrl("cheer:showlove/1000")).toBe(
       "https://d3aqoihi2n8ty8.cloudfront.net/actions/showlove/dark/animated/1000/2.gif",
+    );
+  });
+});
+
+describe("registerCheermoteImageUrls(Helix Cheermotes API の画像 URL)", () => {
+  afterEach(() => {
+    // モジュールスコープのレジストリを空(静的 CDN URL へのフォールバック)に戻す
+    registerCheermoteImageUrls(new Map());
+  });
+
+  it("登録済みの ID は API 由来の画像 URL を返す", () => {
+    registerCheermoteImageUrls(new Map([["mycustom/100", "https://example.com/mycustom/100/2.gif"]]));
+
+    expect(buildEmoteImageUrl("cheer:mycustom/100")).toBe("https://example.com/mycustom/100/2.gif");
+  });
+
+  it("未登録の ID は静的 CDN URL にフォールバックする", () => {
+    registerCheermoteImageUrls(new Map([["mycustom/100", "https://example.com/mycustom/100/2.gif"]]));
+
+    expect(buildEmoteImageUrl("cheer:cheer/100")).toBe(
+      "https://d3aqoihi2n8ty8.cloudfront.net/actions/cheer/dark/animated/100/2.gif",
+    );
+  });
+
+  it("空の対応表を登録すると、すべて静的 CDN URL に戻る", () => {
+    registerCheermoteImageUrls(new Map([["cheer/100", "https://example.com/cheer/100/2.gif"]]));
+    registerCheermoteImageUrls(new Map());
+
+    expect(buildEmoteImageUrl("cheer:cheer/100")).toBe(
+      "https://d3aqoihi2n8ty8.cloudfront.net/actions/cheer/dark/animated/100/2.gif",
     );
   });
 });

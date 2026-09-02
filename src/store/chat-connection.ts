@@ -30,6 +30,7 @@ import { mergeThirdPartyEmotePositions } from "@/lib/twitch/third-party-emotes";
 import { matchesBotFilter } from "@/lib/bot-filter";
 import { isExcludedByBotFilter, useBotFilterStore } from "./bot-filter";
 import { clearThirdPartyEmotes, getThirdPartyEmoteMap, loadThirdPartyEmotes } from "./third-party-emotes";
+import { clearCheermotes, getCheermoteSet, loadCheermotes } from "./cheermotes";
 
 /** チャットに表示する発言の最大保持件数(古いものから捨てるリングバッファ) */
 const MAX_DISPLAYED_MESSAGES = 300;
@@ -59,8 +60,12 @@ function getClient(): TwitchIrcClient {
       onStateChange: (state) => useChatConnectionStore.setState({ connectionState: state }),
       onEvent: (event) => {
         if (event.type === "roomstate") {
-          // room-id(配信者の Twitch ユーザー ID)が判明した時点でサードパーティ emote を読み込む
-          if (event.state.roomId !== null) void loadThirdPartyEmotes(event.state.roomId);
+          // room-id(配信者の Twitch ユーザー ID)が判明した時点で
+          // サードパーティ emote と Cheermote 一覧(Helix)を読み込む
+          if (event.state.roomId !== null) {
+            void loadThirdPartyEmotes(event.state.roomId);
+            void loadCheermotes(event.state.roomId);
+          }
           return;
         }
         if (event.type !== "privmsg") return;
@@ -72,6 +77,7 @@ function getClient(): TwitchIrcClient {
           event.message.text,
           event.message.emotes,
           event.message.bits,
+          getCheermoteSet(),
         );
         const message: TwitchChatMessage = {
           ...event.message,
@@ -96,8 +102,10 @@ export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
   messages: [],
   channel: null,
   connect: (channel) => {
-    // 前のチャンネルのサードパーティ emote 対応表を持ち越さない(ROOMSTATE 受信後に再読み込みされる)
+    // 前のチャンネルのサードパーティ emote 対応表・Cheermote 一覧を持ち越さない
+    // (ROOMSTATE 受信後に再読み込みされる)
     clearThirdPartyEmotes();
+    clearCheermotes();
     set({ messages: [], channel: normalizeChannelName(channel) });
     getClient().connect(channel);
   },
