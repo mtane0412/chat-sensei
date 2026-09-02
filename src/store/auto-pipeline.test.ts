@@ -2,13 +2,13 @@
  * src/store/auto-pipeline.ts(受信した発言を自動で LLM ジョブに流す共通パイプラインのファクトリ)のテスト。
  *
  * 翻訳列・Pick up 列に共通する振る舞い ―― 受信した発言ごとに Language Detector で言語を判定し、
- * 学ぶ言語ならその言語のセッションプールへジョブを低優先度で投入し、その結果
- * (生成中・完了・失敗・キュー溢れ・Prompt API 利用不可・同じ言語・対象外の言語)を発言 ID に紐づけて保持すること、
- * 環境診断が終わるまで発言を保留すること、ウォームアップ、リングバッファから消えた発言の破棄 ――
- * をここで検証する。翻訳・Pick up 固有の振る舞いは `translations.test.ts` / `pickups.test.ts` が担当する。
+ * 学ぶ言語なら順方向のセッションプールへ、解説言語と同じなら逆方向(解説言語→学ぶ言語)のセッションプールへ
+ * ジョブを低優先度で投入し、その結果(生成中・完了・失敗・キュー溢れ・Prompt API 利用不可・対象外の言語)を
+ * 発言 ID に紐づけて保持すること、環境診断が終わるまで発言を保留すること、ウォームアップ、
+ * リングバッファから消えた発言の破棄 ―― をここで検証する。
+ * 翻訳・Pick up 固有の振る舞いは `translations.test.ts` / `pickups.test.ts` が担当する。
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS } from "@/lib/settings";
 import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
 import { LowPriorityQueueOverflowError } from "@/lib/ai/session-pool";
 import { createAutoPipeline, MAX_WAITING_FOR_DIAGNOSIS } from "./auto-pipeline";
@@ -23,15 +23,23 @@ interface EchoResult {
 /**
  * テスト用のパイプライン。発言本文をそのままモデルに渡し、応答文字列を `result` として保持する。
  * `resolveWithoutModel` は「skip:」で始まる発言だけをモデルを呼ばずに確定させる。
+ * 逆方向ジョブは順方向と区別できるよう、応答に `reverse:` を付けて保持する。
  */
 const pipeline = createAutoPipeline<EchoResult>({
   createBaseSession: () => async () => {
     throw new Error("テストでは createPool を注入するため呼ばれない");
   },
+  createReverseBaseSession: () => async () => {
+    throw new Error("テストでは createReversePool を注入するため呼ばれない");
+  },
   resolveWithoutModel: (message) => (message.text.startsWith("skip:") ? { result: message.text } : null),
   runJob: async (pool, message, { signal }) => {
     const raw = await pool.enqueue("low", (session) => session.prompt(message.text), signal);
     return { result: raw };
+  },
+  runReverseJob: async (pool, message, { signal }) => {
+    const raw = await pool.enqueue("low", (session) => session.prompt(message.text), signal);
+    return { result: `reverse:${raw}` };
   },
 });
 
@@ -235,26 +243,27 @@ describe("createAutoPipeline().start", () => {
     stop();
   });
 
-  it("学ぶ言語が複数のとき、判定した言語ごとに別のセッションプールを使う", async () => {
+  it("学ぶ言語の発言と解説言語の発言が混ざるとき、順方向・逆方向それぞれのセッションプールを使う", async () => {
     const { deps, emit, detect } = createDeps({
-      promptResults: [Promise.resolve("英語の結果"), Promise.resolve("スペイン語の結果")],
-      settings: { ...DEFAULT_SETTINGS, learningLangs: ["en", "es"], explainLang: "ja" },
+      promptResults: [Promise.resolve("英語の結果")],
+      reversePromptResults: [Promise.resolve("日本語発言の英訳の結果")],
     });
     detect
       .mockResolvedValueOnce([{ detectedLanguage: "en", confidence: 0.9 }])
-      .mockResolvedValueOnce([{ detectedLanguage: "es", confidence: 0.9 }]);
+      .mockResolvedValueOnce([{ detectedLanguage: "ja", confidence: 0.9 }]);
 
     const stop = start(deps);
     await flush();
     emit(createMessage({ id: "msg-en", text: "gg chat" }));
-    emit(createMessage({ id: "msg-es", text: "vamos equipo" }));
+    emit(createMessage({ id: "msg-ja", text: "a latin free text" }));
     await flush();
 
-    expect(deps.createPool).toHaveBeenCalledTimes(2);
-    expect(deps.createPool).toHaveBeenNthCalledWith(1, "en", "ja");
-    expect(deps.createPool).toHaveBeenNthCalledWith(2, "es", "ja");
+    expect(deps.createPool).toHaveBeenCalledTimes(1);
+    expect(deps.createPool).toHaveBeenCalledWith("en", "ja");
+    expect(deps.createReversePool).toHaveBeenCalledTimes(1);
+    expect(deps.createReversePool).toHaveBeenCalledWith("en", "ja");
     expect(useStore.getState().entries["msg-en"]).toEqual({ status: "done", result: "英語の結果" });
-    expect(useStore.getState().entries["msg-es"]).toEqual({ status: "done", result: "スペイン語の結果" });
+    expect(useStore.getState().entries["msg-ja"]).toEqual({ status: "done", result: "reverse:日本語発言の英訳の結果" });
     stop();
   });
 
@@ -271,10 +280,10 @@ describe("createAutoPipeline().start", () => {
     stop();
   });
 
-  it("解説言語と同じ言語と判定した発言は、モデルを呼ばず same-language として保持する", async () => {
-    const { deps, emit, enqueue } = createDeps({
+  it("解説言語と同じ言語と判定した発言は、逆方向のセッションプールで runReverseJob を実行して done として保持する", async () => {
+    const { deps, emit, enqueue, reverseEnqueue } = createDeps({
       detectedLanguage: "ja",
-      settings: { ...DEFAULT_SETTINGS, learningLangs: ["en", "ja"], explainLang: "ja" },
+      reversePromptResults: [Promise.resolve("nice play")],
     });
 
     const stop = start(deps);
@@ -284,7 +293,70 @@ describe("createAutoPipeline().start", () => {
 
     expect(enqueue).not.toHaveBeenCalled();
     expect(deps.createPool).not.toHaveBeenCalled();
-    expect(useStore.getState().entries["msg-1"]).toEqual({ status: "same-language" });
+    expect(reverseEnqueue).toHaveBeenCalledWith("low", expect.any(Function), expect.any(AbortSignal));
+    expect(useStore.getState().entries["msg-1"]).toEqual({ status: "done", result: "reverse:nice play" });
+    stop();
+  });
+
+  it("解説言語の発言が続いても、逆方向のセッションプールは 1 つだけ生成する", async () => {
+    const { deps, emit } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [Promise.resolve("1"), Promise.resolve("2")],
+    });
+
+    const stop = start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "それな" }));
+    emit(createMessage({ id: "msg-2", text: "たしかに" }));
+    await flush();
+
+    expect(deps.createReversePool).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("runReverseJob を省略した用途では、解説言語の発言も runJob を逆方向のセッションプールで実行する(翻訳のように処理が同一の用途向け)", async () => {
+    const sameJobPipeline = createAutoPipeline<EchoResult>({
+      createBaseSession: () => async () => {
+        throw new Error("テストでは createPool を注入するため呼ばれない");
+      },
+      createReverseBaseSession: () => async () => {
+        throw new Error("テストでは createReversePool を注入するため呼ばれない");
+      },
+      runJob: async (pool, message, { signal }) => ({
+        result: await pool.enqueue("low", (session) => session.prompt(message.text), signal),
+      }),
+    });
+    const { deps, emit, reverseEnqueue } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [Promise.resolve("nice play")],
+    });
+
+    const stop = sameJobPipeline.start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "ナイスプレー" }));
+    await flush();
+
+    expect(reverseEnqueue).toHaveBeenCalledTimes(1);
+    expect(sameJobPipeline.useStore.getState().entries["msg-1"]).toEqual({ status: "done", result: "nice play" });
+    stop();
+    sameJobPipeline.resetForTests();
+  });
+
+  it("逆方向ジョブが失敗した場合は理由付きで failed として保持する(暗黙のフォールバックはしない)", async () => {
+    const { deps, emit } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [Promise.reject(new Error("モデルがクラッシュしました"))],
+    });
+
+    const stop = start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "それな" }));
+    await flush();
+
+    expect(useStore.getState().entries["msg-1"]).toEqual({
+      status: "failed",
+      reason: "モデルがクラッシュしました",
+    });
     stop();
   });
 
@@ -411,8 +483,14 @@ describe("createAutoPipeline().start", () => {
       createBaseSession: () => async () => {
         throw new Error("テストでは createPool を注入するため呼ばれない");
       },
+      createReverseBaseSession: () => async () => {
+        throw new Error("テストでは createReversePool を注入するため呼ばれない");
+      },
       runJob: async (pool, message, { signal }) => ({
         result: await pool.enqueue("low", (session) => session.prompt(message.text), signal),
+      }),
+      runReverseJob: async (pool, message, { signal }) => ({
+        result: `reverse:${await pool.enqueue("low", (session) => session.prompt(message.text), signal)}`,
       }),
     });
     const { deps } = createDeps({ ready: true });
@@ -432,11 +510,8 @@ describe("createAutoPipeline().start", () => {
 });
 
 describe("createAutoPipeline().warmUp", () => {
-  it("診断が ready のとき、ユーザー操作の延長で Language Detector と学ぶ言語ごとのセッションプールを生成しウォームアップする", async () => {
-    const { deps, warmUp, createDetector } = createDeps({
-      ready: true,
-      settings: { ...DEFAULT_SETTINGS, learningLangs: ["en", "es"], explainLang: "ja" },
-    });
+  it("診断が ready のとき、ユーザー操作の延長で Language Detector と順方向・逆方向のセッションプールを生成しウォームアップする", async () => {
+    const { deps, warmUp, reverseWarmUp, createDetector } = createDeps({ ready: true });
 
     const stop = start(deps);
     await flush();
@@ -444,27 +519,12 @@ describe("createAutoPipeline().warmUp", () => {
     await flush();
 
     expect(createDetector).toHaveBeenCalledTimes(1);
-    expect(deps.createPool).toHaveBeenCalledTimes(2);
-    expect(deps.createPool).toHaveBeenNthCalledWith(1, "en", "ja");
-    expect(deps.createPool).toHaveBeenNthCalledWith(2, "es", "ja");
-    expect(warmUp).toHaveBeenCalledTimes(2);
-    stop();
-  });
-
-  it("学ぶ言語に解説言語が含まれていても、解説言語のセッションプールはウォームアップしない(その言語の発言は処理しないため)", async () => {
-    const { deps, warmUp } = createDeps({
-      ready: true,
-      settings: { ...DEFAULT_SETTINGS, learningLangs: ["en", "ja"], explainLang: "ja" },
-    });
-
-    const stop = start(deps);
-    await flush();
-    warmUpPipeline();
-    await flush();
-
     expect(deps.createPool).toHaveBeenCalledTimes(1);
     expect(deps.createPool).toHaveBeenCalledWith("en", "ja");
+    expect(deps.createReversePool).toHaveBeenCalledTimes(1);
+    expect(deps.createReversePool).toHaveBeenCalledWith("en", "ja");
     expect(warmUp).toHaveBeenCalledTimes(1);
+    expect(reverseWarmUp).toHaveBeenCalledTimes(1);
     stop();
   });
 

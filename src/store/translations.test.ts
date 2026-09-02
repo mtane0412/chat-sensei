@@ -159,3 +159,54 @@ describe("startTranslationPipeline", () => {
     stop();
   });
 });
+
+describe("startTranslationPipeline(逆方向: 解説言語の発言の学ぶ言語への翻訳)", () => {
+  it("解説言語と判定した発言は、逆方向のセッションプールで学ぶ言語への訳文を生成して保持する", async () => {
+    const { deps, emit, enqueue, reverseEnqueue } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [Promise.resolve(JSON.stringify({ translation: "nice play, chat" }))],
+    });
+
+    const stop = startTranslationPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "ナイスプレーだよチャット" }));
+    await flush();
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(reverseEnqueue).toHaveBeenCalledWith("low", expect.any(Function), expect.any(AbortSignal));
+    expect(useTranslationStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      segments: [{ type: "text", text: "nice play, chat" }],
+    });
+    stop();
+  });
+
+  it("逆方向でも emote はプレースホルダに置き換えて LLM に渡し、訳文中のプレースホルダを emote セグメントに戻す(issue #44 と同じ機構)", async () => {
+    const { deps, emit, reversePrompt } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [Promise.resolve(JSON.stringify({ translation: "hi there [[E0]]" }))],
+    });
+
+    const stop = startTranslationPipeline(deps);
+    await flush();
+    emit(
+      createMessage({
+        id: "msg-1",
+        text: "やあ peepoWave",
+        emotes: [{ id: "emotesv2_wave", start: 3, end: 11 }],
+      }),
+    );
+    await flush();
+
+    expect(reversePrompt).toHaveBeenCalledWith(expect.stringContaining("やあ [[E0]]"), expect.anything());
+    expect(reversePrompt).not.toHaveBeenCalledWith(expect.stringContaining("peepoWave"), expect.anything());
+    expect(useTranslationStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      segments: [
+        { type: "text", text: "hi there " },
+        { type: "emote", id: "emotesv2_wave", text: "peepoWave" },
+      ],
+    });
+    stop();
+  });
+});

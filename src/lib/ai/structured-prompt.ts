@@ -68,16 +68,19 @@ export async function runStructuredPrompt<TSchema extends z.ZodType>(
  * システムプロンプトの組み立て関数と、学ぶ言語・解説言語のペアから、
  * `SessionPool` に渡すベースセッション生成関数を組み立てる。
  * `window.LanguageModel` は診断済み(availability.ts)である前提で呼び出す。
+ * `expectedOutputLanguages` は応答に含まれる言語の宣言。既定は解説言語のみだが、
+ * 逆方向 Pick up のように学ぶ言語の訳文と解説言語の意味が混在する応答では両言語を渡す。
  */
 export function createBaseSessionFactory(
   buildSystemPrompt: (targetLang: SupportedLanguage, explainLang: SupportedLanguage) => string,
   targetLang: SupportedLanguage,
   explainLang: SupportedLanguage,
+  expectedOutputLanguages: readonly SupportedLanguage[] = [explainLang],
 ): () => Promise<PromptSessionLike> {
   return async () =>
     LanguageModel.create({
       initialPrompts: [{ role: "system", content: buildSystemPrompt(targetLang, explainLang) }],
       expectedInputs: [{ type: "text", languages: [targetLang, explainLang] }],
-      expectedOutputs: [{ type: "text", languages: [explainLang] }],
+      expectedOutputs: [{ type: "text", languages: [...expectedOutputLanguages] }],
     });
 }

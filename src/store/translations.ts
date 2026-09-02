@@ -44,6 +44,11 @@ const pipeline = createAutoPipeline<TranslationDone>({
   // 生成時点のストアの値を読めばよい
   createBaseSession: (targetLang, explainLang) =>
     createTranslateBaseSessionFactory(useSettingsStore.getState().settings, targetLang, explainLang, getStreamInfo()),
+  // 逆方向は翻訳元・訳文の言語を入れ替えるだけでよいため、順方向のファクトリを引数の入れ替えで流用する
+  // (システムプロンプトは学ぶ言語で書かれ、解説言語→学ぶ言語の翻訳を指示する)。
+  // ジョブの処理は順方向と同一のため runReverseJob は定義せず、共通ファクトリのフォールバック(runJob)に任せる
+  createReverseBaseSession: (learningLang, explainLang) =>
+    createTranslateBaseSessionFactory(useSettingsStore.getState().settings, explainLang, learningLang, getStreamInfo()),
   resolveWithoutModel: (message) =>
     isTextlessMessage(message.text, message.emotes) || isChatCommandMessage(message.text)
       ? { segments: splitMessageIntoSegments(message.text, message.emotes) }

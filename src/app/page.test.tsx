@@ -669,105 +669,78 @@ describe("Home(設定ダイアログ)", () => {
     await user.click(screen.getByRole("button", { name: "Settings" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
-    // 言語設定(学ぶ言語・解説言語)は各列の見出しのダイアログから設定するため、ここには置かない
-    expect(within(dialog).queryByLabelText("Learning languages")).not.toBeInTheDocument();
+    // 言語設定(学ぶ言語・解説言語)は接続フォーム横の常時表示セレクトで行うため、ここには置かない
+    expect(within(dialog).queryByLabelText("Learning language")).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Explanation language")).not.toBeInTheDocument();
   });
 
   it("マウント時に LocalStorage から言語設定を復元してから、パイプラインを開始する", () => {
-    window.localStorage.setItem("chat-sensei:settings", JSON.stringify({ learningLangs: ["fr"], explainLang: "ja" }));
+    window.localStorage.setItem("chat-sensei:settings", JSON.stringify({ learningLang: "fr", explainLang: "ja" }));
 
     render(<Home />);
 
-    expect(useSettingsStore.getState().settings).toEqual({ ...DEFAULT_SETTINGS, learningLangs: ["fr"], explainLang: "ja" });
+    expect(useSettingsStore.getState().settings).toEqual({ ...DEFAULT_SETTINGS, learningLang: "fr", explainLang: "ja" });
     expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);
     expect(mockStartPickupPipeline).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("Home(列見出しの言語設定)", () => {
-  it("生IRC列の見出しから学ぶ言語のダイアログを開け、現在の設定がチェックされている", async () => {
+describe("Home(言語ペアの設定)", () => {
+  it("接続フォームと同じ並びに、学ぶ言語・解説言語のセレクトを現在の設定値で常時表示する", () => {
+    window.localStorage.setItem("chat-sensei:settings", JSON.stringify({ learningLang: "es", explainLang: "en" }));
+    render(<Home />);
+
+    // ダイアログを開かなくてもファーストビューで言語ペアが見える
+    expect(screen.getByRole("combobox", { name: "Learning language" })).toHaveValue("es");
+    expect(screen.getByRole("combobox", { name: "Explanation language" })).toHaveValue("en");
+  });
+
+  it("学ぶ言語を変更すると、翻訳・Pick up のパイプラインを停止して新しい設定で開始し直す", async () => {
     const user = userEvent.setup();
-    window.localStorage.setItem("chat-sensei:settings", JSON.stringify({ learningLangs: ["es", "ja"], explainLang: "en" }));
+    render(<Home />);
+    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Learning language" }), "de");
+
+    expect(mockStopPipeline).toHaveBeenCalledTimes(1);
+    expect(mockStopPickupPipeline).toHaveBeenCalledTimes(1);
+    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(2);
+    expect(mockStartPickupPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it("解説言語を変更すると、翻訳・Pick up のパイプラインを停止して新しい設定で開始し直す", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Explanation language" }), "fr");
+
+    expect(mockStopPipeline).toHaveBeenCalledTimes(1);
+    expect(mockStopPickupPipeline).toHaveBeenCalledTimes(1);
+    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(2);
+    expect(mockStartPickupPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it("学ぶ言語に解説言語と同じ言語を選ぶと両者を入れ替えて保存し、パイプラインを再起動する", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Learning language" }), "ja");
+
+    expect(useSettingsStore.getState().settings).toEqual({ ...DEFAULT_SETTINGS, learningLang: "ja", explainLang: "en" });
+    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it("列見出しには言語設定のダイアログを置かない(接続フォーム横のセレクトに一本化)", () => {
     render(<Home />);
 
     const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
-    await user.click(within(rawColumn).getByRole("button", { name: "Learning languages" }));
-
-    const dialog = await screen.findByRole("dialog", { name: "Learning languages" });
-    expect(within(dialog).getByRole("checkbox", { name: "Español" })).toBeChecked();
-    expect(within(dialog).getByRole("checkbox", { name: "日本語" })).toBeChecked();
-    expect(within(dialog).getByRole("checkbox", { name: "English" })).not.toBeChecked();
-  });
-
-  it("翻訳列の見出しから解説言語のダイアログを開け、現在の設定が選ばれている", async () => {
-    const user = userEvent.setup();
-    window.localStorage.setItem("chat-sensei:settings", JSON.stringify({ learningLangs: ["es"], explainLang: "en" }));
-    render(<Home />);
-
     const translationColumn = screen.getByRole("region", { name: "Translation" });
-    await user.click(within(translationColumn).getByRole("button", { name: "Explanation language" }));
-
-    const dialog = await screen.findByRole("dialog", { name: "Explanation language" });
-    expect(within(dialog).getByRole("combobox", { name: "Explanation language" })).toHaveValue("en");
-  });
-
-  it("学ぶ言語を変更して保存すると、翻訳・Pick up のパイプラインを停止して新しい設定で開始し直す", async () => {
-    const user = userEvent.setup();
-    render(<Home />);
-    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);
-
-    await user.click(screen.getByRole("button", { name: "Learning languages" }));
-    const dialog = await screen.findByRole("dialog", { name: "Learning languages" });
-    await user.click(within(dialog).getByRole("checkbox", { name: "Deutsch" }));
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
-
-    expect(mockStopPipeline).toHaveBeenCalledTimes(1);
-    expect(mockStopPickupPipeline).toHaveBeenCalledTimes(1);
-    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(2);
-    expect(mockStartPickupPipeline).toHaveBeenCalledTimes(2);
-  });
-
-  it("解説言語を変更して保存すると、翻訳・Pick up のパイプラインを停止して新しい設定で開始し直す", async () => {
-    const user = userEvent.setup();
-    render(<Home />);
-
-    await user.click(screen.getByRole("button", { name: "Explanation language" }));
-    const dialog = await screen.findByRole("dialog", { name: "Explanation language" });
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Explanation language" }), "en");
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
-
-    expect(mockStopPipeline).toHaveBeenCalledTimes(1);
-    expect(mockStopPickupPipeline).toHaveBeenCalledTimes(1);
-    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(2);
-    expect(mockStartPickupPipeline).toHaveBeenCalledTimes(2);
-  });
-
-  it("言語設定を変えずに保存した場合は、パイプラインを再起動しない", async () => {
-    const user = userEvent.setup();
-    render(<Home />);
-
-    await user.click(screen.getByRole("button", { name: "Learning languages" }));
-    const dialog = await screen.findByRole("dialog", { name: "Learning languages" });
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
-
-    expect(mockStopPipeline).not.toHaveBeenCalled();
-    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);
+    expect(within(rawColumn).queryByRole("button", { name: "Learning languages" })).not.toBeInTheDocument();
+    expect(within(translationColumn).queryByRole("button", { name: "Explanation language" })).not.toBeInTheDocument();
   });
 });
 
 describe("Home(言語判定でスキップした行)", () => {
-  it("解説言語と同じ言語の行は、翻訳列・Pick up列とも「Same language」と控えめに表示する", () => {
-    useChatConnectionStore.setState({ messages: [サンプル発言] });
-    useTranslationStore.setState({ entries: { "msg-1": { status: "same-language" } } });
-    usePickupStore.setState({ entries: { "msg-1": { status: "same-language" } } });
-
-    render(<Home />);
-
-    expect(within(screen.getByRole("region", { name: "Translation" })).getByText("Same language")).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("Same language")).toBeInTheDocument();
-  });
-
   it("学ぶ言語ではない行は、判定した言語コードを添えて「Not a learning language」と表示する", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
     useTranslationStore.setState({ entries: { "msg-1": { status: "other-language", detectedLanguage: "ko" } } });

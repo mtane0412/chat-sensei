@@ -11,6 +11,8 @@ import {
   buildExplainUserPrompt,
   buildPickupSystemPrompt,
   buildPickupUserPrompt,
+  buildReversePickupSystemPrompt,
+  buildReversePickupUserPrompt,
   buildTranslateSystemPrompt,
   buildTranslateUserPrompt,
   SUPPORTED_LANGUAGES,
@@ -425,5 +427,73 @@ describe("配信の文脈への配信者名の注入(issue #54)", () => {
       expect(prompt).toContain("らっだぁ");
       expect(prompt).toContain("raddaa");
     }
+  });
+});
+
+describe("buildReversePickupSystemPrompt(解説言語の発言を学ぶ言語へ訳し、訳文から Pick up する)", () => {
+  it("解説言語がjaのとき、日本語の発言を学ぶ言語へ翻訳し、訳文から特殊な表現を抜き出して日本語で意味を示すよう指示する日本語のシステムプロンプトを組み立てる", () => {
+    const prompt = buildReversePickupSystemPrompt("en", "ja");
+
+    expect(prompt).toContain("日本語");
+    expect(prompt).toContain("英語");
+    expect(prompt).toContain("翻訳");
+    // 語句は原文ではなく「訳文」にそのまま登場する文字列に限る指示を含む
+    expect(prompt).toContain("訳文");
+  });
+
+  it("解説言語がenのとき、英語のシステムプロンプトを組み立てる", () => {
+    const prompt = buildReversePickupSystemPrompt("ja", "en");
+
+    expect(prompt).toContain("English");
+    expect(prompt).toContain("Japanese");
+    expect(prompt).toContain("translation");
+  });
+
+  it("複数語の表現の例は学ぶ言語(訳文の言語)の表現を示す(issue #30 と同じ方針)", () => {
+    // 学ぶ言語が英語なら、すべての解説言語で "put effort into" を例示する
+    for (const explainLang of SUPPORTED_LANGUAGES) {
+      if (explainLang === "en") continue;
+      expect(buildReversePickupSystemPrompt("en", explainLang)).toContain('"put effort into"');
+    }
+  });
+
+  it("順方向の Pick up 用システムプロンプトとは別物である(原文ではなく訳文からの抽出のため)", () => {
+    expect(buildReversePickupSystemPrompt("en", "ja")).not.toBe(buildPickupSystemPrompt("en", "ja"));
+  });
+
+  it("学ぶ言語と解説言語が異なるすべての組み合わせでエラーなくプロンプトを生成できる", () => {
+    for (const learningLang of SUPPORTED_LANGUAGES) {
+      for (const explainLang of SUPPORTED_LANGUAGES) {
+        if (learningLang === explainLang) continue;
+        expect(() => buildReversePickupSystemPrompt(learningLang, explainLang)).not.toThrow();
+      }
+    }
+  });
+
+  it("配信の文脈を渡すと、タイトルとカテゴリが末尾に追記される(issue #54 と同じ機構)", () => {
+    const prompt = buildReversePickupSystemPrompt("en", "ja", {
+      title: "Mythic raid progression! !drops",
+      category: "World of Warcraft",
+    });
+
+    expect(prompt).toContain("Mythic raid progression! !drops");
+    expect(prompt).toContain("World of Warcraft");
+    expect(prompt.startsWith(buildReversePickupSystemPrompt("en", "ja"))).toBe(true);
+  });
+
+  it("文脈を渡さない・null の場合は文脈なしのプロンプトと同一", () => {
+    expect(buildReversePickupSystemPrompt("en", "ja", null)).toBe(buildReversePickupSystemPrompt("en", "ja"));
+  });
+});
+
+describe("buildReversePickupUserPrompt", () => {
+  it("チャット本文をそのまま埋め込んだユーザープロンプトを組み立てる", () => {
+    const prompt = buildReversePickupUserPrompt("それなwww 完全に同意");
+
+    expect(prompt).toContain("それなwww 完全に同意");
+  });
+
+  it("順方向の Pick up 用ユーザープロンプトとは異なる文言で翻訳と抽出の両方を求めることを示す", () => {
+    expect(buildReversePickupUserPrompt("hello")).not.toBe(buildPickupUserPrompt("hello"));
   });
 });

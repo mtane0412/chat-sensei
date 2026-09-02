@@ -10,8 +10,8 @@
  * - 翻訳・Pick up に使う LLM プロバイダを切り替える(Gemini Nano / OpenRouter)。OpenRouter を選ぶ場合は
  *   API キーと、モデル一覧 API から取得した選択肢の中のモデルを保存する(キーはこのブラウザの LocalStorage にのみ保存する)
  *
- * 言語設定(学ぶ言語 / 解説言語)は配信ごとに変わるため、ここではなく各列の見出しのダイアログ
- * (`language-dialogs.tsx`)から設定する。
+ * 言語設定(学ぶ言語 / 解説言語)は配信ごとに変わるため、ここではなく接続フォーム横の
+ * 常時表示セレクト(`language-pair-select.tsx`)から設定する。
  * ストアが LocalStorage から未復元の間(`hydrated === false`)はトリガーを無効にし、
  * 復元前に初期化して永続化済みの設定を消してしまう事故を防ぐ。
  */
@@ -69,8 +69,8 @@ export function SettingsDialog() {
         <DialogHeader>
           <DialogTitle>{DIALOG_TITLE}</DialogTitle>
           <DialogDescription>
-            Check whether this browser can run the on-device AI. Learning languages and the explanation language are
-            set from the Raw IRC and Translation column headers.
+            Check whether this browser can run the on-device AI. The learning and explanation languages are set with
+            the selects next to the channel form.
           </DialogDescription>
         </DialogHeader>
 
