@@ -20,6 +20,7 @@ import { resetAvatarsForTests, useAvatarStore } from "@/store/avatars";
 import { resetBadgesForTests, useBadgeStore } from "@/store/badges";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
+import { resetHiddenPickupStoreForTests } from "@/store/hidden-pickups";
 import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
 import { resetPromptApiStoreForTests, usePromptApiStore } from "@/store/prompt-api";
 import { resetSettingsStoreForTests, useSettingsStore } from "@/store/settings";
@@ -96,6 +97,7 @@ afterEach(() => {
   resetChatConnectionStoreForTests();
   resetTranslationStoreForTests();
   resetPickupStoreForTests();
+  resetHiddenPickupStoreForTests();
   resetPromptApiStoreForTests();
   resetBotFilterStoreForTests();
   resetSettingsStoreForTests();
@@ -374,9 +376,12 @@ describe("Home(翻訳列)", () => {
     const toggle = screen.getByRole("switch", { name: "Blur translation" });
     await user.click(toggle);
     expect(translationRow).toHaveClass("blur-sm");
+    // ぼかし中はフォーカス・読み上げの対象からも外す(視覚だけ隠して中身が漏れないように)
+    expect(translationRow).toHaveAttribute("inert");
 
     await user.click(toggle);
     expect(translationRow).not.toHaveClass("blur-sm");
+    expect(translationRow).not.toHaveAttribute("inert");
   });
 });
 
@@ -485,9 +490,94 @@ describe("Home(Pick up列)", () => {
     const toggle = screen.getByRole("switch", { name: "Blur Pick up" });
     await user.click(toggle);
     expect(row).toHaveClass("blur-sm");
+    // ぼかし中は語句の削除ボタンにフォーカスが移らず、読み上げでも語句が漏れないようにする
+    expect(row).toHaveAttribute("inert");
+    expect(within(row).getByRole("button", { name: 'Remove "gg"', hidden: true })).toBeInTheDocument();
 
     await user.click(toggle);
     expect(row).not.toHaveClass("blur-sm");
+    expect(row).not.toHaveAttribute("inert");
+  });
+
+  it("語句の削除ボタンを押すと、その語句だけが表示から消える", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: {
+        "msg-1": {
+          status: "done",
+          terms: [
+            { term: "gg", meaning: "good game の略、お疲れ" },
+            { term: "no re", meaning: "再戦なし" },
+          ],
+        },
+      },
+    });
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "gg"' }));
+
+    expect(within(pickupColumn).queryByText("gg")).not.toBeInTheDocument();
+    expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
+  });
+
+  it("すべての語句を削除した行は「None」と表示する", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ" }] } },
+    });
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "gg"' }));
+
+    expect(within(pickupColumn).queryByText("gg")).not.toBeInTheDocument();
+    expect(within(pickupColumn).getByText("None")).toBeInTheDocument();
+  });
+
+  it("パイプライン再起動でエントリが再生成されても、削除した語句は表示されない", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: {
+        "msg-1": {
+          status: "done",
+          terms: [
+            { term: "gg", meaning: "good game の略、お疲れ" },
+            { term: "no re", meaning: "再戦なし" },
+          ],
+        },
+      },
+    });
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "gg"' }));
+
+    // 言語設定変更・配信情報変化時の再起動を模す: エントリを破棄してから抽出結果を再生成する。
+    // LLM の再実行では同じ語句でも綴り(大文字小文字・前後空白)が揺れ得るため、揺れた綴りで再生成する
+    act(() => {
+      usePickupStore.setState({ entries: {} });
+      usePickupStore.setState({
+        entries: {
+          "msg-1": {
+            status: "done",
+            terms: [
+              { term: " GG ", meaning: "good game の略、お疲れ" },
+              { term: "no re", meaning: "再戦なし" },
+            ],
+          },
+        },
+      });
+    });
+
+    expect(within(pickupColumn).queryByText(/gg/i)).not.toBeInTheDocument();
+    expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
   });
 });
 
