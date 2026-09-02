@@ -60,6 +60,15 @@ vi.mock("./cheermotes", async () => {
   };
 });
 
+// 発言者アバターの読み込みも実 API(Helix プロキシ)を呼ぶため、ストア連携だけをモックで検証する
+const mockRequestAvatar = vi.fn();
+const mockClearAvatarLoadFailures = vi.fn();
+
+vi.mock("./avatars", () => ({
+  requestAvatar: (userId: string | null) => mockRequestAvatar(userId),
+  clearAvatarLoadFailures: () => mockClearAvatarLoadFailures(),
+}));
+
 import { resetBotFilterStoreForTests, useBotFilterStore } from "./bot-filter";
 import { resetChatConnectionStoreForTests, subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
 
@@ -95,6 +104,8 @@ afterEach(() => {
   mockClearThirdPartyEmotes.mockClear();
   mockLoadCheermotes.mockClear();
   mockClearCheermotes.mockClear();
+  mockRequestAvatar.mockClear();
+  mockClearAvatarLoadFailures.mockClear();
   fakeThirdPartyEmoteMap = new Map();
   window.localStorage.clear();
 });
@@ -363,6 +374,33 @@ describe("Cheermote 一覧(Helix Cheermotes API)", () => {
     useChatConnectionStore.getState().connect("ZackRawrr");
 
     expect(mockClearCheermotes).toHaveBeenCalled();
+  });
+});
+
+describe("発言者アバター(Helix Get Users API)", () => {
+  it("privmsg 受信時に、発言者の user-id でアバターの取得を要求する", () => {
+    useChatConnectionStore.getState().connect("somechannel");
+    const message = createSampleMessage({ userId: "987654" });
+
+    capturedCallbacks?.onEvent({ type: "privmsg", channel: "somechannel", message });
+
+    expect(mockRequestAvatar).toHaveBeenCalledWith("987654");
+  });
+
+  it("bot 除外に一致する発言では、アバターの取得を要求しない", () => {
+    useBotFilterStore.getState().setPatterns(["streamelements"]);
+    useChatConnectionStore.getState().connect("somechannel");
+    const botMessage = createSampleMessage({ username: "streamelements", userId: "100135110" });
+
+    capturedCallbacks?.onEvent({ type: "privmsg", channel: "somechannel", message: botMessage });
+
+    expect(mockRequestAvatar).not.toHaveBeenCalled();
+  });
+
+  it("connect() を呼ぶと、アバター取得失敗の記録をクリアして再試行できるようにする", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    expect(mockClearAvatarLoadFailures).toHaveBeenCalled();
   });
 });
 

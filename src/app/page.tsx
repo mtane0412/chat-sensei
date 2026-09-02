@@ -44,6 +44,7 @@ import { cn } from "@/lib/utils";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments, type MessageSegment } from "@/lib/twitch/emotes";
+import { useAvatarStore } from "@/store/avatars";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
@@ -521,9 +522,22 @@ function ChatMessageRow({ message }: { message: TwitchChatMessage }) {
     () => splitMessageIntoSegments(message.text, message.emotes),
     [message.text, message.emotes],
   );
+  // 発言者のアバター(issue #60)。未取得・取得失敗(Helix 利用不可を含む)は undefined で、アバターなしの表示になる
+  const avatarUrl = useAvatarStore((state) =>
+    message.userId === null ? undefined : state.avatars[message.userId],
+  );
 
   return (
     <Row message={message} blurred={false}>
+      {avatarUrl !== undefined && (
+        // eslint-disable-next-line @next/next/no-img-element -- Twitch CDNの外部画像のためnext/imageのドメイン許可設定は不要な単純imgで表示する
+        <img
+          src={avatarUrl}
+          // 直後に表示名がテキストで続くため、アバターは装飾画像として扱う
+          alt=""
+          className="mr-1 inline-block size-5 rounded-full align-text-bottom"
+        />
+      )}
       <span className="font-semibold" style={message.color ? { color: message.color } : undefined}>
         {message.displayName}
       </span>
