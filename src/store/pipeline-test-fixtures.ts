@@ -114,7 +114,9 @@ export function createDeps(
       { detectedLanguage: options.detectedLanguage ?? "en", confidence: 0.9 },
     ],
   );
-  const createDetector = vi.fn(async (): Promise<LanguageDetectorLike> => ({ detect }));
+  /** フェイクの Language Detector の destroy。停止時にネイティブセッションを破棄することを検証するために公開する */
+  const detectorDestroy = vi.fn();
+  const createDetector = vi.fn(async (): Promise<LanguageDetectorLike> => ({ detect, destroy: detectorDestroy }));
 
   const deps: AutoPipelineDeps = {
     diagnose: vi.fn(async () => createDiagnosis(options.ready ?? true)),
@@ -151,6 +153,7 @@ export function createDeps(
     reverseWarmUp,
     reverseDispose,
     detect,
+    detectorDestroy,
     createDetector,
     listeners,
   };
