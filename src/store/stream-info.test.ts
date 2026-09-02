@@ -24,6 +24,8 @@ afterEach(() => {
 const FAKE_STREAM_INFO: StreamInfo = {
   title: "Mythic raid progression! !drops",
   category: "World of Warcraft",
+  broadcasterLogin: "zackrawrr",
+  broadcasterName: "ZackRawrr",
 };
 
 describe("loadStreamInfo", () => {
@@ -68,7 +70,12 @@ describe("loadStreamInfo", () => {
     const secondLoading = loadStreamInfo("newchannel", async () => FAKE_STREAM_INFO);
 
     await secondLoading;
-    resolveFirst({ title: "古いチャンネルの配信", category: "Old Game" });
+    resolveFirst({
+      title: "古いチャンネルの配信",
+      category: "Old Game",
+      broadcasterLogin: "oldchannel",
+      broadcasterName: "OldChannel",
+    });
     await firstLoading;
 
     expect(getStreamInfo()).toEqual(FAKE_STREAM_INFO);

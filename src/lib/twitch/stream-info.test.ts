@@ -15,6 +15,7 @@ function createHelixStreamsJson(overrides: Record<string, unknown> = {}): unknow
     data: [
       {
         user_login: "zackrawrr",
+        user_name: "ZackRawrr",
         type: "live",
         title: "Mythic raid progression! !drops",
         game_name: "World of Warcraft",
@@ -25,10 +26,12 @@ function createHelixStreamsJson(overrides: Record<string, unknown> = {}): unknow
 }
 
 describe("parseStreamInfo", () => {
-  it("ライブ配信のレスポンスからタイトルとカテゴリを取り出す", () => {
+  it("ライブ配信のレスポンスからタイトル・カテゴリ・配信者名(username と DisplayName)を取り出す", () => {
     expect(parseStreamInfo(createHelixStreamsJson())).toEqual({
       title: "Mythic raid progression! !drops",
       category: "World of Warcraft",
+      broadcasterLogin: "zackrawrr",
+      broadcasterName: "ZackRawrr",
     });
   });
 
@@ -36,10 +39,21 @@ describe("parseStreamInfo", () => {
     expect(parseStreamInfo({ data: [] })).toBeNull();
   });
 
-  it("カテゴリ未設定(game_name が空文字)の場合はタイトルだけを保持する", () => {
+  it("カテゴリ未設定(game_name が空文字)の場合はカテゴリを空文字として保持する", () => {
     expect(parseStreamInfo(createHelixStreamsJson({ game_name: "" }))).toEqual({
       title: "Mythic raid progression! !drops",
       category: "",
+      broadcasterLogin: "zackrawrr",
+      broadcasterName: "ZackRawrr",
+    });
+  });
+
+  it("配信者名のフィールドが無い・型が違う場合は空文字として保持する(タイトル・カテゴリがあれば文脈は成立する)", () => {
+    expect(parseStreamInfo(createHelixStreamsJson({ user_login: undefined, user_name: 123 }))).toEqual({
+      title: "Mythic raid progression! !drops",
+      category: "World of Warcraft",
+      broadcasterLogin: "",
+      broadcasterName: "",
     });
   });
 
@@ -62,7 +76,12 @@ describe("fetchStreamInfo", () => {
     const info = await fetchStreamInfo("zackrawrr", fetchFn);
 
     expect(fetchFn).toHaveBeenCalledWith("/api/twitch/streams?user_login=zackrawrr");
-    expect(info).toEqual({ title: "Mythic raid progression! !drops", category: "World of Warcraft" });
+    expect(info).toEqual({
+      title: "Mythic raid progression! !drops",
+      category: "World of Warcraft",
+      broadcasterLogin: "zackrawrr",
+      broadcasterName: "ZackRawrr",
+    });
   });
 
   it("オフライン(data が空)の場合は null を返す", async () => {

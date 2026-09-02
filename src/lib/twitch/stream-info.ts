@@ -20,12 +20,17 @@ export interface StreamInfo {
   title: string;
   /** 配信カテゴリ = ゲーム名(Helix の `game_name`) */
   category: string;
+  /** 配信者の username(Helix の `user_login`)。取得できない場合は空文字 */
+  broadcasterLogin: string;
+  /** 配信者の表示名 = DisplayName(Helix の `user_name`。日本語名など)。取得できない場合は空文字 */
+  broadcasterName: string;
 }
 
 /**
- * Helix の Get Streams API レスポンス(`{data: [{title, game_name, ...}]}`)を解析して
- * StreamInfo を作る。オフライン(`data` が空)・形式が想定と異なる場合・
+ * Helix の Get Streams API レスポンス(`{data: [{title, game_name, user_login, user_name, ...}]}`)を
+ * 解析して StreamInfo を作る。オフライン(`data` が空)・形式が想定と異なる場合・
  * タイトルとカテゴリの両方が空の場合(文脈として意味が無い)は null を返す。
+ * 配信者名(username・DisplayName)は取得できないフィールドだけを空文字として読み飛ばす。
  */
 export function parseStreamInfo(json: unknown): StreamInfo | null {
   if (typeof json !== "object" || json === null) return null;
@@ -39,7 +44,10 @@ export function parseStreamInfo(json: unknown): StreamInfo | null {
   const title = typeof record.title === "string" ? record.title : "";
   const category = typeof record.game_name === "string" ? record.game_name : "";
   if (title === "" && category === "") return null;
-  return { title, category };
+
+  const broadcasterLogin = typeof record.user_login === "string" ? record.user_login : "";
+  const broadcasterName = typeof record.user_name === "string" ? record.user_name : "";
+  return { title, category, broadcasterLogin, broadcasterName };
 }
 
 /**
