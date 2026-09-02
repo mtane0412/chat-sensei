@@ -50,6 +50,23 @@ describe("loadThirdPartyEmotes", () => {
     expect(getThirdPartyEmoteMap().size).toBe(0);
   });
 
+  it("別チャンネルの読み込みが先に完了した後、古いチャンネルの結果が遅れて届いても上書きしない", async () => {
+    // ROOMSTATE が別チャンネルで連続した場合(clearThirdPartyEmotes を挟まないケース)のレース対策
+    let resolveOldFetch: (map: Map<string, string>) => void = () => {};
+    const fetchOld = vi.fn(
+      () => new Promise<Map<string, string>>((resolve) => (resolveOldFetch = resolve)),
+    );
+    const fetchNew = vi.fn(async () => new Map([["newPog", "7tv:new1"]]));
+
+    const oldLoading = loadThirdPartyEmotes("11111", fetchOld);
+    await loadThirdPartyEmotes("22222", fetchNew);
+    resolveOldFetch(new Map([["oldKEKW", "bttv:old1"]]));
+    await oldLoading;
+
+    expect(getThirdPartyEmoteMap().get("newPog")).toBe("7tv:new1");
+    expect(getThirdPartyEmoteMap().has("oldKEKW")).toBe(false);
+  });
+
   it("clearThirdPartyEmotes すると対応表が空になり、同じ ID でも再読み込みできる", async () => {
     const fetchEmoteMap = vi.fn(async () => new Map([["catJAM", "bttv:g1"]]));
 
