@@ -184,6 +184,7 @@ describe("parseTwitchIrcMessage", () => {
         r9k: false,
         slowSeconds: 0,
         subsOnly: false,
+        roomId: "552120296",
       },
     });
   });

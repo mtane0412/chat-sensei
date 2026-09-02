@@ -29,6 +29,22 @@ describe("buildEmoteImageUrl", () => {
       "https://static-cdn.jtvnw.net/emoticons/v2/25/default/light/1.0",
     );
   });
+
+  it("bttv: プレフィックス付き ID は BTTV の CDN URL を組み立てる", () => {
+    expect(buildEmoteImageUrl("bttv:60ae958e229664e8667aea38")).toBe(
+      "https://cdn.betterttv.net/emote/60ae958e229664e8667aea38/2x",
+    );
+  });
+
+  it("ffz: プレフィックス付き ID は FrankerFaceZ の CDN URL を組み立てる", () => {
+    expect(buildEmoteImageUrl("ffz:128054")).toBe("https://cdn.frankerfacez.com/emote/128054/2");
+  });
+
+  it("7tv: プレフィックス付き ID は 7TV の CDN URL を組み立てる", () => {
+    expect(buildEmoteImageUrl("7tv:01F6MZGCNG000255K4X1K7NTHR")).toBe(
+      "https://cdn.7tv.app/emote/01F6MZGCNG000255K4X1K7NTHR/2x.webp",
+    );
+  });
 });
 
 describe("splitMessageIntoSegments", () => {

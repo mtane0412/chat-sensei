@@ -39,10 +39,27 @@ export interface EmoteSegment {
 export type MessageSegment = TextSegment | EmoteSegment;
 
 /**
- * emote ID から Twitch の emote 画像CDN URLを組み立てる。
- * デフォルトはダークテーマ・2倍サイズ(ライブチャット表示に適したサイズ)。
+ * サードパーティ emote(`third-party-emotes.ts`)のプレフィックス付き ID から、
+ * 各サービスの CDN URL を組み立てる関数の表。theme / scale の指定には対応していないため、
+ * ライブチャット表示に適した2倍サイズ相当の URL を固定で返す。
+ */
+const THIRD_PARTY_EMOTE_URL_BUILDERS: Record<string, (id: string) => string> = {
+  bttv: (id) => `https://cdn.betterttv.net/emote/${id}/2x`,
+  ffz: (id) => `https://cdn.frankerfacez.com/emote/${id}/2`,
+  "7tv": (id) => `https://cdn.7tv.app/emote/${id}/2x.webp`,
+};
+
+/**
+ * emote ID から emote 画像CDN URLを組み立てる。
+ * `bttv:` / `ffz:` / `7tv:` プレフィックス付き ID は各サードパーティの CDN URL、
+ * それ以外は Twitch の CDN URL(デフォルトはダークテーマ・2倍サイズ)を返す。
  */
 export function buildEmoteImageUrl(emoteId: string, options: EmoteImageOptions = {}): string {
+  const colonIndex = emoteId.indexOf(":");
+  if (colonIndex !== -1) {
+    const buildThirdPartyUrl = THIRD_PARTY_EMOTE_URL_BUILDERS[emoteId.slice(0, colonIndex)];
+    if (buildThirdPartyUrl) return buildThirdPartyUrl(emoteId.slice(colonIndex + 1));
+  }
   const theme = options.theme ?? "dark";
   const scale = options.scale ?? "2.0";
   return `https://static-cdn.jtvnw.net/emoticons/v2/${emoteId}/default/${theme}/${scale}`;
