@@ -1,5 +1,6 @@
 /**
- * 学ぶ言語(learningLangs: 1つ以上)・解説言語(explainLang)の設定を LocalStorage に保存・復元するモジュール。
+ * 学ぶ言語(learningLangs: 1つ以上)・解説言語(explainLang)・LLM プロバイダ
+ * (llmProvider / openRouterApiKey / openRouterModel)の設定を LocalStorage に保存・復元するモジュール。
  *
  * 学ぶ言語は配信ごとに複数の言語が混ざるチャット(英語と日本語など)に対応するため複数選べる。
  * 学ぶ言語と解説言語が同じ組み合わせは禁止しない。解説言語と同じ言語の発言は翻訳・Pick up をしない、
@@ -16,6 +17,11 @@ import { SUPPORTED_LANGUAGES, type SupportedLanguage } from "./ai/prompts";
 
 export const SETTINGS_STORAGE_KEY = "chat-sensei:settings";
 
+/** 翻訳・Pick up の生成に使う LLM プロバイダの選択肢 */
+export const LLM_PROVIDERS = ["gemini-nano", "openrouter"] as const;
+
+export type LlmProvider = (typeof LLM_PROVIDERS)[number];
+
 export const settingsSchema = z.object({
   /** 学ぶ言語(Twitchチャットの原文として翻訳・Pick up の対象にする言語)。1つ以上、重複なし */
   learningLangs: z
@@ -24,6 +30,21 @@ export const settingsSchema = z.object({
     .refine((langs) => new Set(langs).size === langs.length, { message: "Learning languages must not repeat" }),
   /** 解説言語(訳文・Pick up の意味の言語) */
   explainLang: z.enum(SUPPORTED_LANGUAGES),
+  /** 翻訳・Pick up の生成に使う LLM プロバイダ。旧形式(項目なし)の保存データは Gemini Nano として復元する */
+  llmProvider: z.enum(LLM_PROVIDERS).default("gemini-nano"),
+  /** OpenRouter の API キー。プロバイダが openrouter のときのみ必須 */
+  openRouterApiKey: z.string().default(""),
+  /** OpenRouter のモデル ID(例: "anthropic/claude-sonnet-5")。プロバイダが openrouter のときのみ必須 */
+  openRouterModel: z.string().default(""),
+}).superRefine((settings, ctx) => {
+  // OpenRouter を選んだのにキー・モデルが無い設定は動作しないため、保存時点で拒否する(Fail-Fast)
+  if (settings.llmProvider !== "openrouter") return;
+  if (settings.openRouterApiKey.trim() === "") {
+    ctx.addIssue({ code: "custom", message: "Enter your OpenRouter API key", path: ["openRouterApiKey"] });
+  }
+  if (settings.openRouterModel.trim() === "") {
+    ctx.addIssue({ code: "custom", message: "Select an OpenRouter model", path: ["openRouterModel"] });
+  }
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -31,6 +52,15 @@ export type Settings = z.infer<typeof settingsSchema>;
 export const DEFAULT_SETTINGS: Settings = {
   learningLangs: ["en"],
   explainLang: "ja",
+  llmProvider: "gemini-nano",
+  openRouterApiKey: "",
+  openRouterModel: "",
+};
+
+/** 設定画面のセレクトボックスに表示する、各 LLM プロバイダの表示名 */
+export const LLM_PROVIDER_DISPLAY_NAMES: Record<LlmProvider, string> = {
+  "gemini-nano": "Gemini Nano (on-device)",
+  openrouter: "OpenRouter",
 };
 
 /** 設定画面のセレクトボックスに表示する、各言語のネイティブ表記 */

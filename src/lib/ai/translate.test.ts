@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildExplainSystemPrompt } from "./prompts";
 import type { SessionPool } from "./session-pool";
 import { STRUCTURED_PROMPT_MAX_ATTEMPTS } from "./structured-prompt";
+import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { createTranslateBaseSessionFactory, translateChatMessage } from "./translate";
 
 /**
@@ -149,7 +150,7 @@ describe("createTranslateBaseSessionFactory", () => {
     const create = vi.fn<(options: CapturedCreateOptions) => Promise<typeof created>>(async () => created);
     vi.stubGlobal("LanguageModel", { create, availability: vi.fn() });
 
-    const factory = createTranslateBaseSessionFactory("en", "ja");
+    const factory = createTranslateBaseSessionFactory(DEFAULT_SETTINGS, "en", "ja");
     const session = await factory();
 
     expect(session).toBe(created);

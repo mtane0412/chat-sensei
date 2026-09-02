@@ -1,5 +1,6 @@
 /**
  * Prompt API(Gemini Nano)と Language Detector API の利用可否を 1 か所で保持する共有ストア。
+ * LLM プロバイダが OpenRouter の場合は Prompt API を使わないため、Language Detector の可否だけで判定する。
  * 翻訳・Pick up は発言ごとの言語判定(Language Detector)を前提にするため、両方が使えて初めて `ready` とする。
  *
  * 翻訳列(`translations.ts`)と Pick up 列(`pickups.ts`)は同じ環境で動くため、環境診断は 1 回だけ実行し、
@@ -13,9 +14,10 @@
  *   Prompt API が使えない環境で暗黙にフォールバックせず、理由を保持して行ごとに「〜不可」を表示できるようにする
  */
 import { create } from "zustand";
-import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
+import { isUsableApiAvailability, type EnvironmentDiagnosis } from "@/lib/ai/availability";
 import { describeDiagnosis } from "@/lib/ai/describeDiagnosis";
 import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
+import type { LlmProvider } from "@/lib/settings";
 
 /** Prompt API の利用可否(環境診断の結果と、その後のウォームアップ失敗を反映したもの) */
 export type PromptApiStatus =
@@ -35,16 +37,33 @@ export const usePromptApiStore = create<PromptApiState>(() => ({
 let inFlightDiagnosis: Promise<PromptApiStatus> | null = null;
 
 /**
+ * 診断の世代番号。`resetPromptApiDiagnosis` のたびに進め、実行中だった古い診断の完了ハンドラが
+ * リセット後の checking 状態を古い結果で上書きしないようにする(プロバイダ変更直後の巻き戻り防止)。
+ */
+let diagnosisGeneration = 0;
+
+/**
  * 環境診断結果から、利用者に見せる「使えない理由」を取り出す。
  * Prompt API と Language Detector API のうち error になっているものを優先し、
- * どちらも error でなければ(診断の判定と食い違う場合)Prompt API のメッセージを返す
+ * どちらも error でなければ(診断の判定と食い違う場合)Prompt API のメッセージを返す。
+ * OpenRouter プロバイダでは Prompt API(LanguageModel)を使わないため、Language Detector の理由だけを対象にする
  */
-function describePromptApiUnavailableReason(diagnosis: EnvironmentDiagnosis): string {
-  const messages = describeDiagnosis(diagnosis).filter(
-    (item) => item.id === "language-model" || item.id === "language-detector",
-  );
+function describePromptApiUnavailableReason(diagnosis: EnvironmentDiagnosis, llmProvider: LlmProvider): string {
+  const relevantIds: string[] =
+    llmProvider === "openrouter" ? ["language-detector"] : ["language-model", "language-detector"];
+  const messages = describeDiagnosis(diagnosis).filter((item) => relevantIds.includes(item.id));
   const failed = messages.find((item) => item.level === "error");
   return failed?.message ?? messages[0]?.message ?? "The Prompt API is not available.";
+}
+
+/**
+ * 診断結果と LLM プロバイダから利用可否を判定する。
+ * Gemini Nano では Prompt API と Language Detector の両方、OpenRouter では
+ * (モデルはクラウド側にあるため)発言ごとの言語判定に使う Language Detector だけを必要とする
+ */
+function isDiagnosisReady(diagnosis: EnvironmentDiagnosis, llmProvider: LlmProvider): boolean {
+  if (llmProvider === "openrouter") return isUsableApiAvailability(diagnosis.languageDetector.availability);
+  return diagnosis.overallReady;
 }
 
 /**
@@ -54,17 +73,19 @@ function describePromptApiUnavailableReason(diagnosis: EnvironmentDiagnosis): st
  */
 export function ensurePromptApiDiagnosed(
   diagnose: () => Promise<EnvironmentDiagnosis> = runBrowserDiagnosis,
+  llmProvider: LlmProvider = "gemini-nano",
 ): Promise<PromptApiStatus> {
   const current = usePromptApiStore.getState().status;
   if (current.status !== "checking") return Promise.resolve(current);
   if (inFlightDiagnosis) return inFlightDiagnosis;
 
+  const generation = diagnosisGeneration;
   inFlightDiagnosis = diagnose()
     .then(
       (diagnosis): PromptApiStatus =>
-        diagnosis.overallReady
+        isDiagnosisReady(diagnosis, llmProvider)
           ? { status: "ready" }
-          : { status: "unavailable", reason: describePromptApiUnavailableReason(diagnosis) },
+          : { status: "unavailable", reason: describePromptApiUnavailableReason(diagnosis, llmProvider) },
     )
     .catch(
       (error: unknown): PromptApiStatus => ({
@@ -73,6 +94,8 @@ export function ensurePromptApiDiagnosed(
       }),
     )
     .then((status) => {
+      // 診断中にリセットされていた(世代が進んでいた)場合、この結果は古い設定に基づくため捨てる
+      if (generation !== diagnosisGeneration) return usePromptApiStore.getState().status;
       inFlightDiagnosis = null;
       // 診断中にウォームアップ失敗などで unavailable が確定していた場合はそちらを優先する
       const settled = usePromptApiStore.getState().status;
@@ -89,9 +112,18 @@ export function markPromptApiUnavailable(reason: string): void {
 }
 
 /**
+ * 確定済みの診断状態を破棄して checking に戻す。次の `ensurePromptApiDiagnosed` が診断をやり直す。
+ * LLM プロバイダの設定変更時(`store/settings.ts`)に、新しいプロバイダの条件で判定し直すために使う。
+ */
+export function resetPromptApiDiagnosis(): void {
+  diagnosisGeneration += 1;
+  inFlightDiagnosis = null;
+  usePromptApiStore.setState({ status: { status: "checking" } });
+}
+
+/**
  * テスト専用: ストアと実行中の診断を初期状態に戻す。各テストの afterEach で呼び出すこと。
  */
 export function resetPromptApiStoreForTests(): void {
-  inFlightDiagnosis = null;
-  usePromptApiStore.setState({ status: { status: "checking" } });
+  resetPromptApiDiagnosis();
 }

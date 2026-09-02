@@ -33,7 +33,7 @@ describe("LearningLanguagesDialog", () => {
   it("開くと、対応 5 言語のチェックボックスに現在の学ぶ言語が反映されている", async () => {
     const user = userEvent.setup();
     hydrateSettingsStore();
-    useSettingsStore.getState().setSettings({ learningLangs: ["en", "ja"], explainLang: "ja" });
+    useSettingsStore.getState().setSettings({ ...DEFAULT_SETTINGS, learningLangs: ["en", "ja"], explainLang: "ja" });
     render(<LearningLanguagesDialog />);
 
     await user.click(screen.getByRole("button", { name: "Learning languages" }));
@@ -55,8 +55,9 @@ describe("LearningLanguagesDialog", () => {
     await user.click(within(dialog).getByRole("checkbox", { name: "Español" }));
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
-    expect(useSettingsStore.getState().settings).toEqual({ learningLangs: ["en", "es"], explainLang: "ja" });
+    expect(useSettingsStore.getState().settings).toEqual({ ...DEFAULT_SETTINGS, learningLangs: ["en", "es"], explainLang: "ja" });
     expect(JSON.parse(window.localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "null")).toEqual({
+      ...DEFAULT_SETTINGS,
       learningLangs: ["en", "es"],
       explainLang: "ja",
     });
@@ -105,7 +106,7 @@ describe("ExplanationLanguageDialog", () => {
   it("開くと、セレクトに現在の解説言語が入っている", async () => {
     const user = userEvent.setup();
     hydrateSettingsStore();
-    useSettingsStore.getState().setSettings({ learningLangs: ["es"], explainLang: "en" });
+    useSettingsStore.getState().setSettings({ ...DEFAULT_SETTINGS, learningLangs: ["es"], explainLang: "en" });
     render(<ExplanationLanguageDialog />);
 
     await user.click(screen.getByRole("button", { name: "Explanation language" }));
@@ -117,7 +118,7 @@ describe("ExplanationLanguageDialog", () => {
   it("言語を変えて保存すると、解説言語だけを更新して LocalStorage にも保存し、ダイアログを閉じる", async () => {
     const user = userEvent.setup();
     hydrateSettingsStore();
-    useSettingsStore.getState().setSettings({ learningLangs: ["en", "fr"], explainLang: "ja" });
+    useSettingsStore.getState().setSettings({ ...DEFAULT_SETTINGS, learningLangs: ["en", "fr"], explainLang: "ja" });
     render(<ExplanationLanguageDialog />);
 
     await user.click(screen.getByRole("button", { name: "Explanation language" }));
@@ -125,8 +126,9 @@ describe("ExplanationLanguageDialog", () => {
     await user.selectOptions(within(dialog).getByRole("combobox", { name: "Explanation language" }), "de");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
-    expect(useSettingsStore.getState().settings).toEqual({ learningLangs: ["en", "fr"], explainLang: "de" });
+    expect(useSettingsStore.getState().settings).toEqual({ ...DEFAULT_SETTINGS, learningLangs: ["en", "fr"], explainLang: "de" });
     expect(JSON.parse(window.localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "null")).toEqual({
+      ...DEFAULT_SETTINGS,
       learningLangs: ["en", "fr"],
       explainLang: "de",
     });
@@ -143,6 +145,6 @@ describe("ExplanationLanguageDialog", () => {
     await user.selectOptions(within(dialog).getByRole("combobox", { name: "Explanation language" }), "en");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
-    expect(useSettingsStore.getState().settings).toEqual({ learningLangs: ["en"], explainLang: "en" });
+    expect(useSettingsStore.getState().settings).toEqual({ ...DEFAULT_SETTINGS, learningLangs: ["en"], explainLang: "en" });
   });
 });

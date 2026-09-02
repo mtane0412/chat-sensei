@@ -322,7 +322,7 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
     deps.getMessages().forEach(handleMessage);
     const unsubscribe = deps.subscribeToChatMessages(handleMessage);
 
-    void ensurePromptApiDiagnosed(deps.diagnose).then((promptApi) => {
+    void ensurePromptApiDiagnosed(deps.diagnose, settings.llmProvider).then((promptApi) => {
       if (controller.signal.aborted) return;
       settleDiagnosis(promptApi);
     });

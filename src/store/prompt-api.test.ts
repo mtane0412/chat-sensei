@@ -10,6 +10,7 @@ import { createDeferred, createDiagnosis, flush } from "./pipeline-test-fixtures
 import {
   ensurePromptApiDiagnosed,
   markPromptApiUnavailable,
+  resetPromptApiDiagnosis,
   resetPromptApiStoreForTests,
   usePromptApiStore,
 } from "./prompt-api";
@@ -82,6 +83,68 @@ describe("ensurePromptApiDiagnosed", () => {
 
     expect(diagnose).toHaveBeenCalledTimes(1);
     expect(status).toEqual({ status: "ready" });
+  });
+});
+
+describe("ensurePromptApiDiagnosed(OpenRouter プロバイダ)", () => {
+  it("Prompt API(LanguageModel)が無い環境でも、Language Detector が使えれば ready になる", async () => {
+    const status = await ensurePromptApiDiagnosed(
+      async () => ({
+        ...createDiagnosis(false),
+        languageDetector: { supported: true, availability: "available" },
+      }),
+      "openrouter",
+    );
+
+    expect(status).toEqual({ status: "ready" });
+    expect(usePromptApiStore.getState().status).toEqual({ status: "ready" });
+  });
+
+  it("Language Detector が使えない場合は、Language Detector を理由にした unavailable になる", async () => {
+    const status = await ensurePromptApiDiagnosed(
+      async () => ({
+        ...createDiagnosis(true),
+        languageDetector: { supported: false, availability: null },
+        overallReady: false,
+      }),
+      "openrouter",
+    );
+
+    expect(status.status).toBe("unavailable");
+    expect(status.status === "unavailable" && status.reason).toMatch(/Language Detector/);
+  });
+});
+
+describe("resetPromptApiDiagnosis", () => {
+  it("確定済みの状態を checking に戻し、次の ensurePromptApiDiagnosed が診断をやり直す(プロバイダ変更時に使う)", async () => {
+    const diagnose = vi.fn(async () => createDiagnosis(false));
+    await ensurePromptApiDiagnosed(diagnose);
+    expect(usePromptApiStore.getState().status.status).toBe("unavailable");
+
+    resetPromptApiDiagnosis();
+
+    expect(usePromptApiStore.getState().status).toEqual({ status: "checking" });
+    const status = await ensurePromptApiDiagnosed(async () => createDiagnosis(true));
+    expect(status).toEqual({ status: "ready" });
+  });
+
+  it("診断の実行中にリセットされた場合、古い診断の結果は捨てて checking のままにする(プロバイダ変更直後の巻き戻り防止)", async () => {
+    const oldDiagnosis = createDeferred<EnvironmentDiagnosis>();
+    const pending = ensurePromptApiDiagnosed(() => oldDiagnosis.promise);
+
+    // 診断の完了前にプロバイダ変更などでリセットされる
+    resetPromptApiDiagnosis();
+
+    // その後に古い診断が確定しても、新しい checking 状態を上書きしない
+    oldDiagnosis.resolve(createDiagnosis(false));
+    await pending;
+    await flush();
+    expect(usePromptApiStore.getState().status).toEqual({ status: "checking" });
+
+    // 次の診断は新しく実行され、正常に確定する
+    const status = await ensurePromptApiDiagnosed(async () => createDiagnosis(true));
+    expect(status).toEqual({ status: "ready" });
+    expect(usePromptApiStore.getState().status).toEqual({ status: "ready" });
   });
 });
 

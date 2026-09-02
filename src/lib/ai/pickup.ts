@@ -13,12 +13,14 @@
  * - `createPickupBaseSessionFactory`: Pick up 専用のシステムプロンプトを持つベースセッションの生成関数を組み立てる。
  *   翻訳用とはプール(ベースセッション)を分ける前提(issue #15 の方針 (a))。直列キューは共有する(issue #23)
  */
+import type { Settings } from "@/lib/settings";
 import type { EmotePosition } from "@/lib/twitch/irc-parser";
+import { createLlmBaseSessionFactory } from "./llm-provider";
 import { filterPickupTerms, preparePickupInput } from "./pickup-filter";
 import { buildPickupSystemPrompt, buildPickupUserPrompt, type SupportedLanguage } from "./prompts";
 import { pickupSchema, type PickupResult } from "./schemas";
 import type { JobPriority, PromptSessionLike, SessionPool } from "./session-pool";
-import { createBaseSessionFactory, runStructuredPrompt } from "./structured-prompt";
+import { runStructuredPrompt } from "./structured-prompt";
 
 export interface PickupOptions {
   /** 抽出は受信した全発言を自動で処理するバックグラウンド生成のため、既定は low */
@@ -62,10 +64,14 @@ export async function pickUpExpressions(
   return { terms };
 }
 
-/** 学ぶ言語・意味を書く言語のペアから、Pick up 専用の `SessionPool` に渡すベースセッション生成関数を組み立てる */
+/**
+ * 設定(LLM プロバイダ)と学ぶ言語・意味を書く言語のペアから、
+ * Pick up 専用の `SessionPool` に渡すベースセッション生成関数を組み立てる
+ */
 export function createPickupBaseSessionFactory(
+  settings: Settings,
   targetLang: SupportedLanguage,
   explainLang: SupportedLanguage,
 ): () => Promise<PromptSessionLike> {
-  return createBaseSessionFactory(buildPickupSystemPrompt, targetLang, explainLang);
+  return createLlmBaseSessionFactory(settings, buildPickupSystemPrompt, targetLang, explainLang);
 }
