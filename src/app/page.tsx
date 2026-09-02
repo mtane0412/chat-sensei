@@ -112,15 +112,18 @@ export default function Home() {
   const [translationBlurred, setTranslationBlurred] = useState(false);
   const [pickupBlurred, setPickupBlurred] = useState(false);
 
-  // 新着発言への追従。オンの間は発言が増えるたびにスクロール領域を最下部へ送る
+  // 新着発言への追従。オンの間は発言が増えるたびにスクロール領域を最下部へ送る。
+  // アバター(issue #60)は発言の表示後に遅れて届いて行の高さを増やすため、
+  // その反映時にも最下部へ送り直す(でないと最新の発言が見切れたまま追従が止まる)
   const [followLatest, setFollowLatest] = useState(true);
+  const avatars = useAvatarStore((state) => state.avatars);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!followLatest) return;
     const viewport = scrollViewportRef.current;
     if (!viewport) return;
     viewport.scrollTop = viewport.scrollHeight;
-  }, [followLatest, messages]);
+  }, [followLatest, messages, avatars]);
   // 利用者が上方向へスクロールして最下部から離れたら、読み返しの邪魔をしないよう追従を自動でオフにする。
   // 追従による最下部へのスクロールもこのイベントを起こすが、その時点では最下部にいるためオフにはならない
   useEffect(() => {

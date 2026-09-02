@@ -97,6 +97,23 @@ describe("fetchUserAvatars", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  it("一部のチャンクだけが失敗した場合は、成功したチャンクぶんの対応表を返す(取得済みを捨てない)", async () => {
+    const ids = Array.from({ length: 150 }, (_, i) => String(i + 1));
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [{ id: "1", profile_image_url: "https://cdn.example/1.png" }] }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Too Many Requests" }), { status: 429 }));
+
+    const avatars = await fetchUserAvatars(ids, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(avatars).toEqual(new Map([["1", "https://cdn.example/1.png"]]));
+  });
+
   it("HTTP エラー(Helix 未設定の 503 など)の場合は null を返す", async () => {
     const fetchFn = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: "Helix API が設定されていません" }), { status: 503 }),

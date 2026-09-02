@@ -8,8 +8,11 @@
  *
  * - `GET /users?id=` は 1 リクエストで最大 100 件まとめて引けるため、
  *   ID を 100 件ずつに分割してバッチで取得する
- * - Helix 未設定(プロキシが 503 を返す)・レート制限・障害・ネットワークエラーは
- *   null を返し、アバターなしの現行表示のまま動作する(意図した仕様)
+ * - すべてのリクエスト(チャンク)が失敗した場合のみ null を返す(Helix 未設定の 503・
+ *   レート制限・障害・ネットワークエラー)。呼び出し側はこれを「Helix 利用不可」として扱い、
+ *   アバターなしの現行表示のまま動作する(意図した仕様)
+ * - 一部のチャンクだけが失敗した場合は、成功したチャンクぶんの対応表を返す
+ *   (取得できたアバターを捨てない)
  */
 
 /** Helix の Get Users API の 1 リクエストで指定できる ID の上限 */
@@ -40,10 +43,10 @@ export function parseUserAvatars(json: unknown): Map<string, string> {
  * Helix プロキシ(`/api/twitch/users`)から、指定した発言者 ID のプロフィール画像 URL を
  * まとめて取得する。重複 ID は 1 件にまとめ、100 件を超える場合はリクエストを分割する。
  *
- * 取得できない場合は null を返す(呼び出し側の `src/store/avatars.ts` が
- * アバターなしとして扱う。意図した仕様):
- * - Helix 未設定(プロキシが 503 を返す)・レート制限・障害などの HTTP エラー
- * - ネットワークエラー
+ * すべてのチャンクが失敗した場合(Helix 未設定の 503・レート制限・障害などの HTTP エラー・
+ * ネットワークエラー)は null を返す(呼び出し側の `src/store/avatars.ts` が
+ * 「Helix 利用不可」として扱う。意図した仕様)。
+ * 一部のチャンクだけが失敗した場合は、成功したチャンクぶんの対応表を返す。
  *
  * レスポンスに含まれない ID(退会済みユーザーなど)は対応表に載らないだけで、エラーではない。
  */
@@ -53,23 +56,26 @@ export async function fetchUserAvatars(
 ): Promise<Map<string, string> | null> {
   const uniqueIds = [...new Set(userIds)];
   const avatars = new Map<string, string>();
+  let anyChunkSucceeded = false;
 
-  try {
-    for (let start = 0; start < uniqueIds.length; start += MAX_IDS_PER_REQUEST) {
-      const chunk = uniqueIds.slice(start, start + MAX_IDS_PER_REQUEST);
-      const query = chunk.map((id) => `id=${encodeURIComponent(id)}`).join("&");
+  for (let start = 0; start < uniqueIds.length; start += MAX_IDS_PER_REQUEST) {
+    const chunk = uniqueIds.slice(start, start + MAX_IDS_PER_REQUEST);
+    const query = chunk.map((id) => `id=${encodeURIComponent(id)}`).join("&");
+    try {
       const response = await fetchFn(`/api/twitch/users?${query}`);
       if (!response.ok) {
         console.warn(`発言者アバターの取得に失敗しました(HTTP ${response.status})。アバターなしで表示します`);
-        return null;
+        // 取得済みのチャンクぶんは捨てない。1 件も取得できていなければ Helix 利用不可(null)
+        return anyChunkSucceeded ? avatars : null;
       }
       for (const [id, url] of parseUserAvatars(await response.json())) {
         avatars.set(id, url);
       }
+      anyChunkSucceeded = true;
+    } catch (error) {
+      console.warn("発言者アバターの取得に失敗しました。アバターなしで表示します", error);
+      return anyChunkSucceeded ? avatars : null;
     }
-    return avatars;
-  } catch (error) {
-    console.warn("発言者アバターの取得に失敗しました。アバターなしで表示します", error);
-    return null;
   }
+  return avatars;
 }
