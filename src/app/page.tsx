@@ -571,7 +571,7 @@ function PickupTermRow({
           size="icon-xs"
           aria-label={`Remove "${term}"`}
           data-pickup-remove
-          className="ml-1 align-middle opacity-0 group-hover/term:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+          className="ml-1 align-middle opacity-0 group-hover/term:opacity-100 focus:opacity-100 pointer-coarse:opacity-100"
           onClick={(event) => handleRemoveClick(event, term, onRemove)}
         >
           <XIcon />
