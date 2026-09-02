@@ -29,6 +29,7 @@ import { mergeCheermotePositions } from "@/lib/twitch/cheermotes";
 import { mergeThirdPartyEmotePositions } from "@/lib/twitch/third-party-emotes";
 import { matchesBotFilter } from "@/lib/bot-filter";
 import { isExcludedByBotFilter, useBotFilterStore } from "./bot-filter";
+import { clearAvatarLoadFailures, requestAvatar } from "./avatars";
 import { clearStreamInfo, loadStreamInfo } from "./stream-info";
 import { clearThirdPartyEmotes, getThirdPartyEmoteMap, loadThirdPartyEmotes } from "./third-party-emotes";
 import { clearCheermotes, getCheermoteSet, loadCheermotes } from "./cheermotes";
@@ -71,6 +72,9 @@ function getClient(): TwitchIrcClient {
         }
         if (event.type !== "privmsg") return;
         if (isExcludedByBotFilter(event.message.username)) return;
+        // 発言者のアバター(プロフィール画像)を Helix からバッチで取得する(issue #60)。
+        // 取得完了までは avatars ストアに URL が無く、アバターなしで表示される
+        requestAvatar(event.message.userId);
         // 本文中の Cheermote(bits 付き発言)とサードパーティ emote 名(BTTV / FFZ / 7TV)を
         // 位置情報として合成してから保持・通知する。下流(描画・翻訳・Pick up)は
         // Twitch 公式 emote と同じ扱いで処理できる
@@ -108,6 +112,8 @@ export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
     clearThirdPartyEmotes();
     clearCheermotes();
     clearStreamInfo();
+    // アバターのキャッシュはユーザー固有のため持ち越すが、取得失敗の記録はクリアして再試行できるようにする
+    clearAvatarLoadFailures();
     const normalized = normalizeChannelName(channel);
     set({ messages: [], channel: normalized });
     // 配信情報(タイトル・カテゴリ。issue #54)はチャンネル名(user_login)だけで取得できるため、

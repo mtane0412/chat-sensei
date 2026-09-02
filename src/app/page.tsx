@@ -44,6 +44,7 @@ import { cn } from "@/lib/utils";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments, type MessageSegment } from "@/lib/twitch/emotes";
+import { useAvatarStore } from "@/store/avatars";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
@@ -111,15 +112,18 @@ export default function Home() {
   const [translationBlurred, setTranslationBlurred] = useState(false);
   const [pickupBlurred, setPickupBlurred] = useState(false);
 
-  // 新着発言への追従。オンの間は発言が増えるたびにスクロール領域を最下部へ送る
+  // 新着発言への追従。オンの間は発言が増えるたびにスクロール領域を最下部へ送る。
+  // アバター(issue #60)は発言の表示後に遅れて届いて行の高さを増やすため、
+  // その反映時にも最下部へ送り直す(でないと最新の発言が見切れたまま追従が止まる)
   const [followLatest, setFollowLatest] = useState(true);
+  const avatars = useAvatarStore((state) => state.avatars);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!followLatest) return;
     const viewport = scrollViewportRef.current;
     if (!viewport) return;
     viewport.scrollTop = viewport.scrollHeight;
-  }, [followLatest, messages]);
+  }, [followLatest, messages, avatars]);
   // 利用者が上方向へスクロールして最下部から離れたら、読み返しの邪魔をしないよう追従を自動でオフにする。
   // 追従による最下部へのスクロールもこのイベントを起こすが、その時点では最下部にいるためオフにはならない
   useEffect(() => {
@@ -521,9 +525,22 @@ function ChatMessageRow({ message }: { message: TwitchChatMessage }) {
     () => splitMessageIntoSegments(message.text, message.emotes),
     [message.text, message.emotes],
   );
+  // 発言者のアバター(issue #60)。未取得・取得失敗(Helix 利用不可を含む)は undefined で、アバターなしの表示になる
+  const avatarUrl = useAvatarStore((state) =>
+    message.userId === null ? undefined : state.avatars[message.userId],
+  );
 
   return (
     <Row message={message} blurred={false}>
+      {avatarUrl !== undefined && (
+        // eslint-disable-next-line @next/next/no-img-element -- Twitch CDNの外部画像のためnext/imageのドメイン許可設定は不要な単純imgで表示する
+        <img
+          src={avatarUrl}
+          // 直後に表示名がテキストで続くため、アバターは装飾画像として扱う
+          alt=""
+          className="mr-1 inline-block size-5 rounded-full align-text-bottom"
+        />
+      )}
       <span className="font-semibold" style={message.color ? { color: message.color } : undefined}>
         {message.displayName}
       </span>

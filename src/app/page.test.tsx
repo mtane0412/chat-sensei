@@ -16,6 +16,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
+import { resetAvatarsForTests, useAvatarStore } from "@/store/avatars";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
@@ -97,6 +98,7 @@ afterEach(() => {
   resetPromptApiStoreForTests();
   resetBotFilterStoreForTests();
   resetSettingsStoreForTests();
+  resetAvatarsForTests();
   window.localStorage.clear();
 });
 
@@ -117,6 +119,28 @@ describe("Home(3カラム構成)", () => {
     const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
     expect(within(rawColumn).getByText("viewer_taro")).toBeInTheDocument();
     expect(within(rawColumn).getByText("gg no re chat")).toBeInTheDocument();
+  });
+
+  it("アバター取得済みの発言者には、生IRC列の発言行にアバター画像を表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    // サンプル発言の発言者(userId: "1234")のアバターだけが取得済みの状態
+    useAvatarStore.setState({ avatars: { "1234": "https://cdn.example/taro.png" } });
+
+    render(<Home />);
+
+    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const avatar = rawColumn.querySelector('img[src="https://cdn.example/taro.png"]');
+    expect(avatar).not.toBeNull();
+  });
+
+  it("アバター未取得の発言者は、アバターなしの現行表示のまま表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+
+    render(<Home />);
+
+    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    expect(within(rawColumn).getByText("viewer_taro")).toBeInTheDocument();
+    expect(rawColumn.querySelector('img[src="https://cdn.example/taro.png"]')).toBeNull();
   });
 
   it("翻訳列とPick up列は初期状態では見えており(ぼかし無し)、トグルでぼかせる", async () => {
