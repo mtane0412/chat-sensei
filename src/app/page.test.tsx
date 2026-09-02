@@ -20,6 +20,7 @@ import { resetAvatarsForTests, useAvatarStore } from "@/store/avatars";
 import { resetBadgesForTests, useBadgeStore } from "@/store/badges";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
+import { resetHiddenPickupStoreForTests } from "@/store/hidden-pickups";
 import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
 import { resetPromptApiStoreForTests, usePromptApiStore } from "@/store/prompt-api";
 import { resetSettingsStoreForTests, useSettingsStore } from "@/store/settings";
@@ -96,6 +97,7 @@ afterEach(() => {
   resetChatConnectionStoreForTests();
   resetTranslationStoreForTests();
   resetPickupStoreForTests();
+  resetHiddenPickupStoreForTests();
   resetPromptApiStoreForTests();
   resetBotFilterStoreForTests();
   resetSettingsStoreForTests();
@@ -488,6 +490,77 @@ describe("Home(Pick up列)", () => {
 
     await user.click(toggle);
     expect(row).not.toHaveClass("blur-sm");
+  });
+
+  it("語句の削除ボタンを押すと、その語句だけが表示から消える", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: {
+        "msg-1": {
+          status: "done",
+          terms: [
+            { term: "gg", meaning: "good game の略、お疲れ" },
+            { term: "no re", meaning: "再戦なし" },
+          ],
+        },
+      },
+    });
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "gg"' }));
+
+    expect(within(pickupColumn).queryByText("gg")).not.toBeInTheDocument();
+    expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
+  });
+
+  it("すべての語句を削除した行は「None」と表示する", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ" }] } },
+    });
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "gg"' }));
+
+    expect(within(pickupColumn).queryByText("gg")).not.toBeInTheDocument();
+    expect(within(pickupColumn).getByText("None")).toBeInTheDocument();
+  });
+
+  it("パイプライン再起動でエントリが再生成されても、削除した語句は表示されない", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    const 抽出結果 = {
+      entries: {
+        "msg-1": {
+          status: "done" as const,
+          terms: [
+            { term: "gg", meaning: "good game の略、お疲れ" },
+            { term: "no re", meaning: "再戦なし" },
+          ],
+        },
+      },
+    };
+    usePickupStore.setState(抽出結果);
+
+    render(<Home />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "gg"' }));
+
+    // 言語設定変更・配信情報変化時の再起動を模す: エントリを破棄してから同じ抽出結果を再生成する
+    act(() => {
+      usePickupStore.setState({ entries: {} });
+      usePickupStore.setState(抽出結果);
+    });
+
+    expect(within(pickupColumn).queryByText("gg")).not.toBeInTheDocument();
+    expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
   });
 });
 

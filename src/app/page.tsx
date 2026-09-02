@@ -34,7 +34,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronsDownIcon, EyeIcon, EyeOffIcon } from "lucide-react";
+import { ChevronsDownIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
 import { ChannelAutocompleteInput } from "@/components/channel-autocomplete";
 import { LanguagePairSelect } from "@/components/language-pair-select";
@@ -51,6 +51,7 @@ import { useBadgeStore } from "@/store/badges";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
+import { hidePickupTerm, useHiddenPickupStore } from "@/store/hidden-pickups";
 import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupDone } from "@/store/pickups";
 import { usePromptApiStore, type PromptApiStatus } from "@/store/prompt-api";
 import { hydrateSettingsStore, useSettingsStore } from "@/store/settings";
@@ -288,7 +289,7 @@ export default function Home() {
                     entry={message.id === null ? undefined : pickupEntries[message.id]}
                     promptApi={promptApi}
                     labels={PICKUP_LABELS}
-                    renderDone={(done) => <PickupTerms terms={done.terms} />}
+                    renderDone={(done) => <PickupTerms messageId={message.id} terms={done.terms} />}
                   />
                 </Row>
               ))}
@@ -475,14 +476,39 @@ function PipelineCellContent<TDone extends object>({
   }
 }
 
-/** Pick up列の完了した結果。該当する表現が無い場合は「None」と控えめに表示する */
-function PickupTerms({ terms }: { terms: PickupDone["terms"] }) {
-  if (terms.length === 0) return <span className="text-muted-foreground">None</span>;
+/**
+ * Pick up列の完了した結果。該当する表現が無い場合は「None」と控えめに表示する。
+ *
+ * ユーザーが削除した語句(hidden-pickups ストア。issue #71)は表示から除外する。
+ * 削除ボタンは語句の hover 時(またはフォーカス時)に表示する × アイコンで、押すと
+ * その発言のその語句を非表示集合へ追加する。非表示集合はパイプライン再起動で破棄されないため、
+ * エントリの再生成後も削除が維持される。
+ */
+function PickupTerms({ messageId, terms }: { messageId: string | null; terms: PickupDone["terms"] }) {
+  const hiddenTerms = useHiddenPickupStore((state) =>
+    messageId === null ? undefined : state.hiddenTerms[messageId],
+  );
+  const visibleTerms = hiddenTerms === undefined ? terms : terms.filter((term) => !hiddenTerms.includes(term.term));
+  if (visibleTerms.length === 0) return <span className="text-muted-foreground">None</span>;
   return (
     <dl className="flex flex-col gap-0.5">
-      {terms.map((term, index) => (
-        <div key={index} className="flex flex-wrap gap-x-2">
-          <dt className="font-semibold">{term.term}</dt>
+      {visibleTerms.map((term) => (
+        <div key={term.term} className="group/term flex flex-wrap items-baseline gap-x-2">
+          <dt className="font-semibold">
+            {term.term}
+            {/* 発言IDが無い行はエントリ自体が作られないため通常到達しないが、型上は null があり得るので削除ボタンを出さない */}
+            {messageId !== null && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Remove "${term.term}"`}
+                className="ml-1 size-4 align-middle opacity-0 group-hover/term:opacity-100 focus-visible:opacity-100"
+                onClick={() => hidePickupTerm(messageId, term.term)}
+              >
+                <XIcon className="size-3" />
+              </Button>
+            )}
+          </dt>
           <dd className="text-muted-foreground">{term.meaning}</dd>
         </div>
       ))}
