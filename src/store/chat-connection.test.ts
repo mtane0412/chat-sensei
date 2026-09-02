@@ -365,3 +365,38 @@ describe("Cheermote 一覧(Helix Cheermotes API)", () => {
     expect(mockClearCheermotes).toHaveBeenCalled();
   });
 });
+
+// 配信情報(タイトル・カテゴリ)の読み込みも実 API(Helix プロキシ)を呼ぶため、ストア連携だけをモックで検証する
+const { mockLoadStreamInfo, mockClearStreamInfo } = vi.hoisted(() => ({
+  mockLoadStreamInfo: vi.fn(),
+  mockClearStreamInfo: vi.fn(),
+}));
+
+vi.mock("./stream-info", () => ({
+  loadStreamInfo: (channelLogin: string) => mockLoadStreamInfo(channelLogin),
+  clearStreamInfo: () => mockClearStreamInfo(),
+}));
+
+describe("配信情報(タイトル・カテゴリ)との連携(issue #54)", () => {
+  // 同ファイルの他の describe のテストも connect() を呼ぶため、呼び出し回数は各テストの直前にリセットする
+  beforeEach(() => {
+    mockLoadStreamInfo.mockClear();
+    mockClearStreamInfo.mockClear();
+  });
+
+  it("connect()を呼ぶと、前チャンネルの配信情報をクリアしてから正規化したチャンネル名で読み込む", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    expect(mockClearStreamInfo).toHaveBeenCalledTimes(1);
+    expect(mockLoadStreamInfo).toHaveBeenCalledWith("zackrawrr");
+  });
+
+  it("disconnect()を呼ぶと、配信情報をクリアする(切断中に古い文脈を残さないため)", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+    mockClearStreamInfo.mockClear();
+
+    useChatConnectionStore.getState().disconnect();
+
+    expect(mockClearStreamInfo).toHaveBeenCalledTimes(1);
+  });
+});

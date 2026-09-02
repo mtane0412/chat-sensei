@@ -10,7 +10,7 @@
  */
 import type { Settings } from "@/lib/settings";
 import { createLlmBaseSessionFactory } from "./llm-provider";
-import { buildTranslateSystemPrompt, buildTranslateUserPrompt, type SupportedLanguage } from "./prompts";
+import { buildTranslateSystemPrompt, buildTranslateUserPrompt, type StreamContext, type SupportedLanguage } from "./prompts";
 import { translationSchema, type TranslationResult } from "./schemas";
 import type { JobPriority, PromptSessionLike, SessionPool } from "./session-pool";
 import { runStructuredPrompt } from "./structured-prompt";
@@ -39,12 +39,20 @@ export async function translateChatMessage(
 
 /**
  * 設定(LLM プロバイダ)と学ぶ言語・訳文の言語のペアから、
- * 翻訳専用の `SessionPool` に渡すベースセッション生成関数を組み立てる
+ * 翻訳専用の `SessionPool` に渡すベースセッション生成関数を組み立てる。
+ * `streamContext`(配信タイトル・カテゴリ)を渡すとシステムプロンプトの末尾に
+ * 配信の文脈として追記される(issue #54)。null / 省略時は文脈なしの現行プロンプト
  */
 export function createTranslateBaseSessionFactory(
   settings: Settings,
   targetLang: SupportedLanguage,
   explainLang: SupportedLanguage,
+  streamContext?: StreamContext | null,
 ): () => Promise<PromptSessionLike> {
-  return createLlmBaseSessionFactory(settings, buildTranslateSystemPrompt, targetLang, explainLang);
+  return createLlmBaseSessionFactory(
+    settings,
+    (target, explain) => buildTranslateSystemPrompt(target, explain, streamContext),
+    targetLang,
+    explainLang,
+  );
 }

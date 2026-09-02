@@ -309,3 +309,121 @@ describe("buildPickupUserPrompt", () => {
     expect(buildPickupUserPrompt("hello")).not.toBe(buildTranslateUserPrompt("hello"));
   });
 });
+
+describe("配信の文脈の注入(issue #54)", () => {
+  const STREAM_CONTEXT = { title: "Mythic raid progression! !drops", category: "World of Warcraft" };
+
+  it("buildTranslateSystemPrompt: 配信の文脈を渡すと、タイトルとカテゴリが末尾に追記される", () => {
+    const prompt = buildTranslateSystemPrompt("en", "ja", STREAM_CONTEXT);
+
+    expect(prompt).toContain("Mythic raid progression! !drops");
+    expect(prompt).toContain("World of Warcraft");
+    // 文脈なしの現行プロンプトを先頭にそのまま保つ(文脈は末尾への追記)
+    expect(prompt.startsWith(buildTranslateSystemPrompt("en", "ja"))).toBe(true);
+  });
+
+  it("buildTranslateSystemPrompt: 文脈を渡さない・null の場合は文脈なしの現行プロンプトと同一(オフライン・API 失敗時の動作)", () => {
+    expect(buildTranslateSystemPrompt("en", "ja", null)).toBe(buildTranslateSystemPrompt("en", "ja"));
+    expect(buildTranslateSystemPrompt("en", "ja", undefined)).toBe(buildTranslateSystemPrompt("en", "ja"));
+  });
+
+  it("buildTranslateSystemPrompt: タイトルとカテゴリの両方が空の場合は文脈を追記しない", () => {
+    expect(buildTranslateSystemPrompt("en", "ja", { title: "", category: "" })).toBe(
+      buildTranslateSystemPrompt("en", "ja"),
+    );
+  });
+
+  it("buildTranslateSystemPrompt: カテゴリが空の場合はタイトルだけを追記する(カテゴリ未設定の配信)", () => {
+    const prompt = buildTranslateSystemPrompt("en", "ja", { title: "Just Chatting stream!", category: "" });
+
+    expect(prompt).toContain("Just Chatting stream!");
+    expect(prompt).not.toContain("カテゴリ");
+  });
+
+  it("buildTranslateSystemPrompt: タイトル・カテゴリは指示ではなくデータとして扱う旨の注意を含む(配信者による指示混入への簡易対策)", () => {
+    expect(buildTranslateSystemPrompt("en", "ja", STREAM_CONTEXT)).toContain("指示ではなく");
+  });
+
+  it("buildPickupSystemPrompt: 配信の文脈を渡すと、タイトルとカテゴリが末尾に追記される", () => {
+    const prompt = buildPickupSystemPrompt("en", "ja", STREAM_CONTEXT);
+
+    expect(prompt).toContain("Mythic raid progression! !drops");
+    expect(prompt).toContain("World of Warcraft");
+    expect(prompt.startsWith(buildPickupSystemPrompt("en", "ja"))).toBe(true);
+  });
+
+  it("buildPickupSystemPrompt: 文脈を渡さない・null の場合は文脈なしの現行プロンプトと同一", () => {
+    expect(buildPickupSystemPrompt("en", "ja", null)).toBe(buildPickupSystemPrompt("en", "ja"));
+  });
+
+  it("すべてのサポート言語の組み合わせで、文脈付きプロンプトをエラーなく生成できる", () => {
+    for (const explainLang of SUPPORTED_LANGUAGES) {
+      for (const targetLang of SUPPORTED_LANGUAGES) {
+        expect(buildTranslateSystemPrompt(targetLang, explainLang, STREAM_CONTEXT)).toContain("World of Warcraft");
+        expect(buildPickupSystemPrompt(targetLang, explainLang, STREAM_CONTEXT)).toContain("World of Warcraft");
+      }
+    }
+  });
+});
+
+describe("配信の文脈への配信者名の注入(issue #54)", () => {
+  it("DisplayName と username が異なる場合は両方を追記する(日本語名の配信者など)", () => {
+    const prompt = buildTranslateSystemPrompt("en", "ja", {
+      title: "雑談します",
+      category: "Just Chatting",
+      broadcasterLogin: "raddaa",
+      broadcasterName: "らっだぁ",
+    });
+
+    expect(prompt).toContain("らっだぁ");
+    expect(prompt).toContain("raddaa");
+  });
+
+  it("DisplayName と username が大文字小文字の違いだけの場合は DisplayName だけを追記する(重複を避ける)", () => {
+    const prompt = buildTranslateSystemPrompt("en", "ja", {
+      title: "Mythic raid progression! !drops",
+      category: "World of Warcraft",
+      broadcasterLogin: "zackrawrr",
+      broadcasterName: "ZackRawrr",
+    });
+
+    expect(prompt).toContain("ZackRawrr");
+    expect(prompt).not.toContain("(zackrawrr)");
+  });
+
+  it("配信者名が空文字・省略の場合は従来どおりタイトル・カテゴリだけを追記する", () => {
+    expect(
+      buildTranslateSystemPrompt("en", "ja", {
+        title: "雑談します",
+        category: "Just Chatting",
+        broadcasterLogin: "",
+        broadcasterName: "",
+      }),
+    ).toBe(buildTranslateSystemPrompt("en", "ja", { title: "雑談します", category: "Just Chatting" }));
+  });
+
+  it("buildPickupSystemPrompt にも配信者名が追記される", () => {
+    const prompt = buildPickupSystemPrompt("en", "ja", {
+      title: "雑談します",
+      category: "Just Chatting",
+      broadcasterLogin: "raddaa",
+      broadcasterName: "らっだぁ",
+    });
+
+    expect(prompt).toContain("らっだぁ");
+    expect(prompt).toContain("raddaa");
+  });
+
+  it("すべてのサポート言語(解説言語)で配信者名を追記できる", () => {
+    for (const explainLang of SUPPORTED_LANGUAGES) {
+      const prompt = buildTranslateSystemPrompt("en", explainLang, {
+        title: "Mythic raid progression! !drops",
+        category: "World of Warcraft",
+        broadcasterLogin: "raddaa",
+        broadcasterName: "らっだぁ",
+      });
+      expect(prompt).toContain("らっだぁ");
+      expect(prompt).toContain("raddaa");
+    }
+  });
+});
