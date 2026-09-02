@@ -15,6 +15,8 @@
  *   (取得できたアバターを捨てない)
  */
 
+import { extractDataArray, fetchHelixJson } from "./helix-proxy";
+
 /** Helix の Get Users API の 1 リクエストで指定できる ID の上限 */
 const MAX_IDS_PER_REQUEST = 100;
 
@@ -25,9 +27,8 @@ const MAX_IDS_PER_REQUEST = 100;
  */
 export function parseUserAvatars(json: unknown): Map<string, string> {
   const avatars = new Map<string, string>();
-  if (typeof json !== "object" || json === null) return avatars;
-  const data = (json as Record<string, unknown>).data;
-  if (!Array.isArray(data)) return avatars;
+  const data = extractDataArray(json);
+  if (data === null) return avatars;
 
   for (const entry of data) {
     if (typeof entry !== "object" || entry === null) continue;
@@ -60,22 +61,22 @@ export async function fetchUserAvatars(
 
   for (let start = 0; start < uniqueIds.length; start += MAX_IDS_PER_REQUEST) {
     const chunk = uniqueIds.slice(start, start + MAX_IDS_PER_REQUEST);
-    const query = chunk.map((id) => `id=${encodeURIComponent(id)}`).join("&");
-    try {
-      const response = await fetchFn(`/api/twitch/users?${query}`);
-      if (!response.ok) {
-        console.warn(`発言者アバターの取得に失敗しました(HTTP ${response.status})。アバターなしで表示します`);
-        // 取得済みのチャンクぶんは捨てない。1 件も取得できていなければ Helix 利用不可(null)
-        return anyChunkSucceeded ? avatars : null;
-      }
-      for (const [id, url] of parseUserAvatars(await response.json())) {
-        avatars.set(id, url);
-      }
-      anyChunkSucceeded = true;
-    } catch (error) {
-      console.warn("発言者アバターの取得に失敗しました。アバターなしで表示します", error);
+    const params = new URLSearchParams();
+    for (const id of chunk) params.append("id", id);
+
+    const json = await fetchHelixJson("users", {
+      params,
+      fetchFn,
+      failureLog: { subject: "発言者アバター", fallback: "アバターなしで表示します" },
+    });
+    if (json === null) {
+      // 取得済みのチャンクぶんは捨てない。1 件も取得できていなければ Helix 利用不可(null)
       return anyChunkSucceeded ? avatars : null;
     }
+    for (const [id, url] of parseUserAvatars(json)) {
+      avatars.set(id, url);
+    }
+    anyChunkSucceeded = true;
   }
   return avatars;
 }

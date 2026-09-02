@@ -14,6 +14,8 @@
  *   文脈なしで動作を続ける(意図したフォールバック)
  */
 
+import { extractDataArray, fetchHelixJson } from "./helix-proxy";
+
 /** 接続中チャンネルのライブ配信の情報。カテゴリ未設定の配信では category が空文字になる */
 export interface StreamInfo {
   /** 配信タイトル(Helix の `title`) */
@@ -33,9 +35,8 @@ export interface StreamInfo {
  * 配信者名(username・DisplayName)は取得できないフィールドだけを空文字として読み飛ばす。
  */
 export function parseStreamInfo(json: unknown): StreamInfo | null {
-  if (typeof json !== "object" || json === null) return null;
-  const data = (json as Record<string, unknown>).data;
-  if (!Array.isArray(data) || data.length === 0) return null;
+  const data = extractDataArray(json);
+  if (data === null || data.length === 0) return null;
 
   const first = data[0];
   if (typeof first !== "object" || first === null) return null;
@@ -63,15 +64,11 @@ export async function fetchStreamInfo(
   userLogin: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<StreamInfo | null> {
-  try {
-    const response = await fetchFn(`/api/twitch/streams?user_login=${encodeURIComponent(userLogin)}`);
-    if (!response.ok) {
-      console.warn(`配信情報の取得に失敗しました(HTTP ${response.status})。文脈なしで動作します`);
-      return null;
-    }
-    return parseStreamInfo(await response.json());
-  } catch (error) {
-    console.warn("配信情報の取得に失敗しました。文脈なしで動作します", error);
-    return null;
-  }
+  const json = await fetchHelixJson("streams", {
+    params: new URLSearchParams({ user_login: userLogin }),
+    fetchFn,
+    failureLog: { subject: "配信情報", fallback: "文脈なしで動作します" },
+  });
+  if (json === null) return null;
+  return parseStreamInfo(json);
 }

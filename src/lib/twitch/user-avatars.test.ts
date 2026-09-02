@@ -56,7 +56,7 @@ describe("fetchUserAvatars", () => {
     const avatars = await fetchUserAvatars(["1234", "5678"], fetchFn);
 
     expect(fetchFn).toHaveBeenCalledTimes(1);
-    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/users?id=1234&id=5678");
+    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/users?id=1234&id=5678", { signal: undefined });
     expect(avatars).toEqual(
       new Map([
         ["1234", "https://cdn.example/taro.png"],
@@ -87,7 +87,7 @@ describe("fetchUserAvatars", () => {
 
     await fetchUserAvatars(["1234", "1234", "5678"], fetchFn);
 
-    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/users?id=1234&id=5678");
+    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/users?id=1234&id=5678", { signal: undefined });
   });
 
   it("ID が空の場合はリクエストせず空の対応表を返す", async () => {

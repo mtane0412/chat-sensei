@@ -244,7 +244,9 @@ describe("fetchCheermoteSet", () => {
 
     const set = await fetchCheermoteSet("552120296", fetchFn);
 
-    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/bits/cheermotes?broadcaster_id=552120296");
+    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/bits/cheermotes?broadcaster_id=552120296", {
+      signal: undefined,
+    });
     expect(set?.get("mycustom")).toEqual([
       { minBits: 100, imageUrl: "https://example.com/mycustom/100/2.gif" },
     ]);

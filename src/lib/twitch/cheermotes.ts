@@ -26,6 +26,7 @@
  * - 位置は Twitch の `emotes` タグと同じくコードポイント単位・end は inclusive
  */
 import type { EmotePosition } from "./irc-parser";
+import { extractDataArray, fetchHelixJson } from "./helix-proxy";
 
 /** Cheermote の 1 ティア(bits 数の閾値と、その段階の画像 URL) */
 export interface CheermoteTier {
@@ -204,9 +205,8 @@ function parseCheermoteTier(value: unknown): CheermoteTier | null {
  */
 export function parseCheermoteSet(json: unknown): CheermoteSet {
   const set = new Map<string, readonly CheermoteTier[]>();
-  if (typeof json !== "object" || json === null) return set;
-  const data = (json as Record<string, unknown>).data;
-  if (!Array.isArray(data)) return set;
+  const data = extractDataArray(json);
+  if (data === null) return set;
 
   for (const entry of data) {
     if (typeof entry !== "object" || entry === null) continue;
@@ -238,22 +238,17 @@ export async function fetchCheermoteSet(
   broadcasterId: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<CheermoteSet | null> {
-  try {
-    const response = await fetchFn(
-      `/api/twitch/bits/cheermotes?broadcaster_id=${encodeURIComponent(broadcasterId)}`,
-    );
-    if (!response.ok) {
-      console.warn(`Cheermote 一覧の取得に失敗しました(HTTP ${response.status})。静的一覧を使います`);
-      return null;
-    }
-    const set = parseCheermoteSet(await response.json());
-    if (set.size === 0) {
-      console.warn("Cheermote 一覧のレスポンスを解析できませんでした。静的一覧を使います");
-      return null;
-    }
-    return set;
-  } catch (error) {
-    console.warn("Cheermote 一覧の取得に失敗しました。静的一覧を使います", error);
+  const json = await fetchHelixJson("bits/cheermotes", {
+    params: new URLSearchParams({ broadcaster_id: broadcasterId }),
+    fetchFn,
+    failureLog: { subject: "Cheermote 一覧", fallback: "静的一覧を使います" },
+  });
+  if (json === null) return null;
+
+  const set = parseCheermoteSet(json);
+  if (set.size === 0) {
+    console.warn("Cheermote 一覧のレスポンスを解析できませんでした。静的一覧を使います");
     return null;
   }
+  return set;
 }

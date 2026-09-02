@@ -16,6 +16,8 @@
  * - 画像は 2 倍サイズ(`image_url_2x`)を使う(高解像度ディスプレイでも約 18px 表示が滲まないように)
  */
 
+import { extractDataArray, fetchHelixJson } from "./helix-proxy";
+
 /** 「set_id/version → 画像 URL」の対応表 */
 export type BadgeImageMap = ReadonlyMap<string, string>;
 
@@ -26,9 +28,8 @@ export type BadgeImageMap = ReadonlyMap<string, string>;
  */
 export function parseBadgeImageMap(json: unknown): Map<string, string> {
   const map = new Map<string, string>();
-  if (typeof json !== "object" || json === null) return map;
-  const data = (json as Record<string, unknown>).data;
-  if (!Array.isArray(data)) return map;
+  const data = extractDataArray(json);
+  if (data === null) return map;
 
   for (const entry of data) {
     if (typeof entry !== "object" || entry === null) continue;
@@ -48,18 +49,18 @@ export function parseBadgeImageMap(json: unknown): Map<string, string> {
 }
 
 /** 1 エンドポイントぶんの対応表を取得する。取得できない場合は null */
-async function fetchSingleBadgeMap(path: string, fetchFn: typeof fetch): Promise<Map<string, string> | null> {
-  try {
-    const response = await fetchFn(path);
-    if (!response.ok) {
-      console.warn(`チャットバッジの取得に失敗しました(HTTP ${response.status})。バッジなしで表示します`);
-      return null;
-    }
-    return parseBadgeImageMap(await response.json());
-  } catch (error) {
-    console.warn("チャットバッジの取得に失敗しました。バッジなしで表示します", error);
-    return null;
-  }
+async function fetchSingleBadgeMap(
+  path: string,
+  params: URLSearchParams | undefined,
+  fetchFn: typeof fetch,
+): Promise<Map<string, string> | null> {
+  const json = await fetchHelixJson(path, {
+    params,
+    fetchFn,
+    failureLog: { subject: "チャットバッジ", fallback: "バッジなしで表示します" },
+  });
+  if (json === null) return null;
+  return parseBadgeImageMap(json);
 }
 
 /**
@@ -75,11 +76,8 @@ export async function fetchBadgeImageMap(
   fetchFn: typeof fetch = fetch,
 ): Promise<BadgeImageMap | null> {
   const [globalMap, channelMap] = await Promise.all([
-    fetchSingleBadgeMap("/api/twitch/chat/badges/global", fetchFn),
-    fetchSingleBadgeMap(
-      `/api/twitch/chat/badges?broadcaster_id=${encodeURIComponent(broadcasterId)}`,
-      fetchFn,
-    ),
+    fetchSingleBadgeMap("chat/badges/global", undefined, fetchFn),
+    fetchSingleBadgeMap("chat/badges", new URLSearchParams({ broadcaster_id: broadcasterId }), fetchFn),
   ]);
   if (globalMap === null && channelMap === null) return null;
 
