@@ -55,6 +55,8 @@ export interface TwitchChatMessage {
   isAction: boolean;
   emotes: EmotePosition[];
   badges: Badge[];
+  /** `bits` タグ(Cheer した bits の合計)。Cheer していない発言は null */
+  bits: number | null;
   /** `tmi-sent-ts` をミリ秒のUNIXタイムスタンプとして解釈した値。無ければ null */
   timestampMs: number | null;
 }
@@ -248,6 +250,7 @@ function parsePrivmsg(parsed: ParsedIrcMessage): TwitchChatEvent {
       isAction,
       emotes: parseEmotesTag(parsed.tags.emotes ?? ""),
       badges: parseBadgesTag(parsed.tags.badges ?? ""),
+      bits: parsed.tags.bits ? Number.parseInt(parsed.tags.bits, 10) : null,
       timestampMs: parsed.tags["tmi-sent-ts"] ? Number.parseInt(parsed.tags["tmi-sent-ts"], 10) : null,
     },
   };

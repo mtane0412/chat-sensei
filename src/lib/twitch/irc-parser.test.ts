@@ -123,6 +123,7 @@ describe("parseTwitchIrcMessage", () => {
           { name: "broadcaster", version: "1" },
           { name: "subscriber", version: "12" },
         ],
+        bits: null,
         timestampMs: 1690000000123,
       },
     });
@@ -238,5 +239,28 @@ describe("parseTwitchIrcMessage", () => {
     const event = parseTwitchIrcMessage(":tmi.twitch.tv 001 justinfan39818 :Welcome, GLHF!");
 
     expect(event).toEqual({ type: "unknown", command: "001" });
+  });
+});
+
+describe("bits タグ(Cheering)", () => {
+  it("bits タグ付きの PRIVMSG は bits を数値として保持する", () => {
+    const line =
+      "@badge-info=;badges=;bits=100;display-name=CheerFan;id=msg-cheer-1;user-id=222 :cheerfan!cheerfan@cheerfan.tmi.twitch.tv PRIVMSG #zackrawrr :Cheer100 great play!";
+
+    const event = parseTwitchIrcMessage(line);
+
+    expect(event.type).toBe("privmsg");
+    if (event.type !== "privmsg") throw new Error("unreachable");
+    expect(event.message.bits).toBe(100);
+  });
+
+  it("bits タグの無い PRIVMSG は bits が null になる", () => {
+    const line = "@badge-info=;badges=;id=msg-3;user-id=111 :lurker42!lurker42@lurker42.tmi.twitch.tv PRIVMSG #zackrawrr :hi";
+
+    const event = parseTwitchIrcMessage(line);
+
+    expect(event.type).toBe("privmsg");
+    if (event.type !== "privmsg") throw new Error("unreachable");
+    expect(event.message.bits).toBeNull();
   });
 });

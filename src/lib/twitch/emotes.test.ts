@@ -269,3 +269,14 @@ describe("isTextlessMessage", () => {
     expect(isTextlessMessage("gg Kappa", [{ id: "25", start: 3, end: 7 }])).toBe(false);
   });
 });
+
+describe("buildEmoteImageUrl(Cheering Emote)", () => {
+  it("cheer: プレフィックス付き ID は Cheermote の静的 CDN URL(ダーク・アニメ・2倍)を組み立てる", () => {
+    expect(buildEmoteImageUrl("cheer:cheer/100")).toBe(
+      "https://d3aqoihi2n8ty8.cloudfront.net/actions/cheer/dark/animated/100/2.gif",
+    );
+    expect(buildEmoteImageUrl("cheer:showlove/1000")).toBe(
+      "https://d3aqoihi2n8ty8.cloudfront.net/actions/showlove/dark/animated/1000/2.gif",
+    );
+  });
+});

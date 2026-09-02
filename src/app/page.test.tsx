@@ -60,6 +60,7 @@ const サンプル発言: TwitchChatMessage = {
   isAction: false,
   emotes: [],
   badges: [],
+  bits: null,
   timestampMs: 1_700_000_000_000,
 };
 

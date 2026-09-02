@@ -25,6 +25,7 @@ import {
   type TwitchIrcClient,
 } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
+import { mergeCheermotePositions } from "@/lib/twitch/cheermotes";
 import { mergeThirdPartyEmotePositions } from "@/lib/twitch/third-party-emotes";
 import { matchesBotFilter } from "@/lib/bot-filter";
 import { isExcludedByBotFilter, useBotFilterStore } from "./bot-filter";
@@ -64,11 +65,17 @@ function getClient(): TwitchIrcClient {
         }
         if (event.type !== "privmsg") return;
         if (isExcludedByBotFilter(event.message.username)) return;
-        // 本文中のサードパーティ emote 名(BTTV / FFZ / 7TV)を位置情報として合成してから
-        // 保持・通知する。下流(描画・翻訳・Pick up)は Twitch 公式 emote と同じ扱いで処理できる
+        // 本文中の Cheermote(bits 付き発言)とサードパーティ emote 名(BTTV / FFZ / 7TV)を
+        // 位置情報として合成してから保持・通知する。下流(描画・翻訳・Pick up)は
+        // Twitch 公式 emote と同じ扱いで処理できる
+        const emotesWithCheermotes = mergeCheermotePositions(
+          event.message.text,
+          event.message.emotes,
+          event.message.bits,
+        );
         const message: TwitchChatMessage = {
           ...event.message,
-          emotes: mergeThirdPartyEmotePositions(event.message.text, event.message.emotes, getThirdPartyEmoteMap()),
+          emotes: mergeThirdPartyEmotePositions(event.message.text, emotesWithCheermotes, getThirdPartyEmoteMap()),
         };
         useChatConnectionStore.setState((prev) => {
           const next = [...prev.messages, message];
