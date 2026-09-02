@@ -127,6 +127,25 @@ describe("resetPromptApiDiagnosis", () => {
     const status = await ensurePromptApiDiagnosed(async () => createDiagnosis(true));
     expect(status).toEqual({ status: "ready" });
   });
+
+  it("診断の実行中にリセットされた場合、古い診断の結果は捨てて checking のままにする(プロバイダ変更直後の巻き戻り防止)", async () => {
+    const oldDiagnosis = createDeferred<EnvironmentDiagnosis>();
+    const pending = ensurePromptApiDiagnosed(() => oldDiagnosis.promise);
+
+    // 診断の完了前にプロバイダ変更などでリセットされる
+    resetPromptApiDiagnosis();
+
+    // その後に古い診断が確定しても、新しい checking 状態を上書きしない
+    oldDiagnosis.resolve(createDiagnosis(false));
+    await pending;
+    await flush();
+    expect(usePromptApiStore.getState().status).toEqual({ status: "checking" });
+
+    // 次の診断は新しく実行され、正常に確定する
+    const status = await ensurePromptApiDiagnosed(async () => createDiagnosis(true));
+    expect(status).toEqual({ status: "ready" });
+    expect(usePromptApiStore.getState().status).toEqual({ status: "ready" });
+  });
 });
 
 describe("markPromptApiUnavailable", () => {

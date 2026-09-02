@@ -37,6 +37,12 @@ export const usePromptApiStore = create<PromptApiState>(() => ({
 let inFlightDiagnosis: Promise<PromptApiStatus> | null = null;
 
 /**
+ * 診断の世代番号。`resetPromptApiDiagnosis` のたびに進め、実行中だった古い診断の完了ハンドラが
+ * リセット後の checking 状態を古い結果で上書きしないようにする(プロバイダ変更直後の巻き戻り防止)。
+ */
+let diagnosisGeneration = 0;
+
+/**
  * 環境診断結果から、利用者に見せる「使えない理由」を取り出す。
  * Prompt API と Language Detector API のうち error になっているものを優先し、
  * どちらも error でなければ(診断の判定と食い違う場合)Prompt API のメッセージを返す。
@@ -73,6 +79,7 @@ export function ensurePromptApiDiagnosed(
   if (current.status !== "checking") return Promise.resolve(current);
   if (inFlightDiagnosis) return inFlightDiagnosis;
 
+  const generation = diagnosisGeneration;
   inFlightDiagnosis = diagnose()
     .then(
       (diagnosis): PromptApiStatus =>
@@ -87,6 +94,8 @@ export function ensurePromptApiDiagnosed(
       }),
     )
     .then((status) => {
+      // 診断中にリセットされていた(世代が進んでいた)場合、この結果は古い設定に基づくため捨てる
+      if (generation !== diagnosisGeneration) return usePromptApiStore.getState().status;
       inFlightDiagnosis = null;
       // 診断中にウォームアップ失敗などで unavailable が確定していた場合はそちらを優先する
       const settled = usePromptApiStore.getState().status;
@@ -107,6 +116,7 @@ export function markPromptApiUnavailable(reason: string): void {
  * LLM プロバイダの設定変更時(`store/settings.ts`)に、新しいプロバイダの条件で判定し直すために使う。
  */
 export function resetPromptApiDiagnosis(): void {
+  diagnosisGeneration += 1;
   inFlightDiagnosis = null;
   usePromptApiStore.setState({ status: { status: "checking" } });
 }
