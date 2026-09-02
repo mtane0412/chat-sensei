@@ -27,7 +27,7 @@ import {
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { mergeCheermotePositions } from "@/lib/twitch/cheermotes";
 import { mergeThirdPartyEmotePositions } from "@/lib/twitch/third-party-emotes";
-import { matchesBotFilter } from "@/lib/bot-filter";
+import { isExcludedFromChat } from "@/lib/bot-filter";
 import { isExcludedByBotFilter, useBotFilterStore } from "./bot-filter";
 import { clearAvatarLoadFailures, requestAvatar } from "./avatars";
 import { clearBadges, loadBadges } from "./badges";
@@ -75,7 +75,7 @@ function getClient(): TwitchIrcClient {
           return;
         }
         if (event.type !== "privmsg") return;
-        if (isExcludedByBotFilter(event.message.username)) return;
+        if (isExcludedByBotFilter(event.message.username, useChatConnectionStore.getState().channel)) return;
         // 発言者のアバター(プロフィール画像)を Helix からバッチで取得する(issue #60)。
         // 取得完了までは avatars ストアに URL が無く、アバターなしで表示される
         requestAvatar(event.message.userId);
@@ -138,11 +138,12 @@ export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
   },
 }));
 
-// 除外パターンの変更を、既に表示中の発言にも遡って適用する
+// 除外設定(パターン・配信者除外)の変更を、既に表示中の発言にも遡って適用する
 useBotFilterStore.subscribe((state, prevState) => {
-  if (state.patterns === prevState.patterns) return;
+  if (state.patterns === prevState.patterns && state.excludeBroadcaster === prevState.excludeBroadcaster) return;
   useChatConnectionStore.setState((prev) => {
-    const messages = prev.messages.filter((message) => !matchesBotFilter(message.username, state.patterns));
+    const config = { patterns: state.patterns, excludeBroadcaster: state.excludeBroadcaster };
+    const messages = prev.messages.filter((message) => !isExcludedFromChat(message.username, prev.channel, config));
     return messages.length === prev.messages.length ? prev : { messages };
   });
 });

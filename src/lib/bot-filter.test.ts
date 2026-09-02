@@ -8,12 +8,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BOT_FILTER_STORAGE_KEY,
+  DEFAULT_BOT_FILTER_CONFIG,
   DEFAULT_BOT_FILTER_PATTERNS,
   formatBotFilterPatterns,
-  loadBotFilterPatterns,
+  isExcludedFromChat,
+  loadBotFilterConfig,
   matchesBotFilter,
   parseBotFilterPatterns,
-  saveBotFilterPatterns,
+  saveBotFilterConfig,
 } from "./bot-filter";
 
 afterEach(() => {
@@ -91,28 +93,68 @@ describe("DEFAULT_BOT_FILTER_PATTERNS", () => {
   });
 });
 
-describe("loadBotFilterPatterns / saveBotFilterPatterns", () => {
-  it("保存されたデータが無い場合はデフォルトのパターンを返す", () => {
-    expect(loadBotFilterPatterns()).toEqual({ patterns: DEFAULT_BOT_FILTER_PATTERNS, wasCorrupted: false });
+describe("loadBotFilterConfig / saveBotFilterConfig", () => {
+  it("保存されたデータが無い場合はデフォルト設定を返す", () => {
+    expect(loadBotFilterConfig()).toEqual({ config: DEFAULT_BOT_FILTER_CONFIG, wasCorrupted: false });
   });
 
-  it("保存したパターンをそのまま復元する(空配列 = すべて除外しない、も保存できる)", () => {
-    saveBotFilterPatterns(["nightbot", "*trans"]);
-    expect(loadBotFilterPatterns()).toEqual({ patterns: ["nightbot", "*trans"], wasCorrupted: false });
+  it("保存した設定をそのまま復元する(空配列 = すべて除外しない、も保存できる)", () => {
+    saveBotFilterConfig({ patterns: ["nightbot", "*trans"], excludeBroadcaster: true });
+    expect(loadBotFilterConfig()).toEqual({
+      config: { patterns: ["nightbot", "*trans"], excludeBroadcaster: true },
+      wasCorrupted: false,
+    });
 
-    saveBotFilterPatterns([]);
-    expect(loadBotFilterPatterns()).toEqual({ patterns: [], wasCorrupted: false });
+    saveBotFilterConfig({ patterns: [], excludeBroadcaster: false });
+    expect(loadBotFilterConfig()).toEqual({
+      config: { patterns: [], excludeBroadcaster: false },
+      wasCorrupted: false,
+    });
+  });
+
+  it("旧形式(文字列配列のみ)の保存データは、配信者除外オフとして復元する", () => {
+    window.localStorage.setItem(BOT_FILTER_STORAGE_KEY, JSON.stringify(["nightbot", "*trans"]));
+
+    expect(loadBotFilterConfig()).toEqual({
+      config: { patterns: ["nightbot", "*trans"], excludeBroadcaster: false },
+      wasCorrupted: false,
+    });
   });
 
   it("JSONとして壊れたデータの場合はデフォルトに戻し、壊れていたことを伝える", () => {
     window.localStorage.setItem(BOT_FILTER_STORAGE_KEY, "{ これはJSONではない");
 
-    expect(loadBotFilterPatterns()).toEqual({ patterns: DEFAULT_BOT_FILTER_PATTERNS, wasCorrupted: true });
+    expect(loadBotFilterConfig()).toEqual({ config: DEFAULT_BOT_FILTER_CONFIG, wasCorrupted: true });
   });
 
-  it("文字列配列以外が保存されている場合はデフォルトに戻し、壊れていたことを伝える", () => {
+  it("スキーマに合わないデータが保存されている場合はデフォルトに戻し、壊れていたことを伝える", () => {
     window.localStorage.setItem(BOT_FILTER_STORAGE_KEY, JSON.stringify({ patterns: "nightbot" }));
 
-    expect(loadBotFilterPatterns()).toEqual({ patterns: DEFAULT_BOT_FILTER_PATTERNS, wasCorrupted: true });
+    expect(loadBotFilterConfig()).toEqual({ config: DEFAULT_BOT_FILTER_CONFIG, wasCorrupted: true });
+  });
+});
+
+describe("isExcludedFromChat", () => {
+  const config = { patterns: ["nightbot"], excludeBroadcaster: true };
+
+  it("配信者除外がオンなら、接続中チャンネル名と同じユーザー名(= 配信者自身)の発言を除外する", () => {
+    expect(isExcludedFromChat("zackrawrr", "zackrawrr", config)).toBe(true);
+  });
+
+  it("配信者の判定でもユーザー名の大文字小文字は区別しない", () => {
+    expect(isExcludedFromChat("ZackRawrr", "zackrawrr", config)).toBe(true);
+  });
+
+  it("配信者除外がオフなら、配信者自身の発言は除外しない", () => {
+    expect(isExcludedFromChat("zackrawrr", "zackrawrr", { patterns: [], excludeBroadcaster: false })).toBe(false);
+  });
+
+  it("未接続(channel が null)の場合は、配信者除外では除外しない", () => {
+    expect(isExcludedFromChat("zackrawrr", null, config)).toBe(false);
+  });
+
+  it("除外パターンに一致するユーザー名は、配信者除外の設定に関わらず除外する", () => {
+    expect(isExcludedFromChat("nightbot", "zackrawrr", config)).toBe(true);
+    expect(isExcludedFromChat("viewer_taro", "zackrawrr", config)).toBe(false);
   });
 });
