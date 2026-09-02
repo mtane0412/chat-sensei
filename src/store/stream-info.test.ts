@@ -24,8 +24,11 @@ afterEach(() => {
 const FAKE_STREAM_INFO: StreamInfo = {
   title: "Mythic raid progression! !drops",
   category: "World of Warcraft",
+  broadcasterId: "552120296",
   broadcasterLogin: "zackrawrr",
   broadcasterName: "ZackRawrr",
+  gameId: "18122",
+  viewerCount: 4321,
 };
 
 describe("loadStreamInfo", () => {
@@ -73,8 +76,11 @@ describe("loadStreamInfo", () => {
     resolveFirst({
       title: "古いチャンネルの配信",
       category: "Old Game",
+      broadcasterId: "999",
       broadcasterLogin: "oldchannel",
       broadcasterName: "OldChannel",
+      gameId: "111",
+      viewerCount: 10,
     });
     await firstLoading;
 

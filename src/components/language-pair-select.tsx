@@ -27,8 +27,12 @@ const languageSchema = z.enum(SUPPORTED_LANGUAGES);
 
 const SELECT_CLASS_NAME = "h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm dark:bg-input/30";
 
-/** 学ぶ言語・解説言語の2つのセレクト。接続フォームと同じ並びに置く想定 */
-export function LanguagePairSelect() {
+/**
+ * 学ぶ言語・解説言語の2つのセレクト。
+ * `compact` を指定するとラベルを視覚的に隠し(sr-only)、ヘッダーなど 高さの限られた場所に置ける
+ * (アクセシブル名としてのラベルは保持する)。
+ */
+export function LanguagePairSelect({ compact = false }: { compact?: boolean } = {}) {
   const settings = useSettingsStore((state) => state.settings);
   const hydrated = useSettingsStore((state) => state.hydrated);
   const setSettings = useSettingsStore((state) => state.setSettings);
@@ -52,7 +56,9 @@ export function LanguagePairSelect() {
   return (
     <div className="flex items-end gap-3">
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor={LEARNING_SELECT_ID}>Learning language</Label>
+        <Label htmlFor={LEARNING_SELECT_ID} className={compact ? "sr-only" : undefined}>
+          Learning language
+        </Label>
         <LanguageSelect
           id={LEARNING_SELECT_ID}
           value={settings.learningLang}
@@ -61,7 +67,9 @@ export function LanguagePairSelect() {
         />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor={EXPLANATION_SELECT_ID}>Explanation language</Label>
+        <Label htmlFor={EXPLANATION_SELECT_ID} className={compact ? "sr-only" : undefined}>
+          Explanation language
+        </Label>
         <LanguageSelect
           id={EXPLANATION_SELECT_ID}
           value={settings.explainLang}

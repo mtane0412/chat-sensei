@@ -103,6 +103,9 @@ beforeEach(() => {
   mockStopPickupPipeline.mockClear();
   mockWarmUpPickupPipeline.mockClear();
   mockAddManualPickup.mockClear();
+  // 多くのテストは接続中(embed + 3カラム)の画面を検証するため、既定で接続済み(open)にする。
+  // 未接続の接続画面を検証するテストは、テスト内で idle / closed に戻す
+  useChatConnectionStore.setState({ connectionState: "open", channel: "example" });
 });
 
 afterEach(() => {
@@ -241,8 +244,8 @@ describe("Home(3カラム構成)", () => {
 
   it("「接続する」クリック(ユーザー操作)の延長で翻訳・Pick upのセッションをウォームアップする(モデルDLにユーザー操作が必要なため)", async () =>  {
     const user = userEvent.setup();
-    // 実際の IRC 接続(WebSocket)は行わない
-    useChatConnectionStore.setState({ connect: vi.fn() });
+    // 未接続の接続画面から操作する。実際の IRC 接続(WebSocket)は行わない
+    useChatConnectionStore.setState({ connectionState: "idle", channel: null, connect: vi.fn() });
     render(<Home />);
 
     await user.type(screen.getByLabelText("Channel"), "example");
@@ -861,16 +864,10 @@ describe("Home(Prompt API の利用可否)", () => {
 });
 
 describe("Home(設定ダイアログ)", () => {
-  it("接続フォームの横にある設定ボタンから設定ダイアログを開ける(言語設定は含まない)", async () => {
-    const user = userEvent.setup();
+  it("設定ダイアログはヘッダー(SiteHeader)へ移したため、ページ内には設定ボタンを置かない", () => {
     render(<Home />);
 
-    await user.click(screen.getByRole("button", { name: "Settings" }));
-
-    const dialog = await screen.findByRole("dialog", { name: "Settings" });
-    // 言語設定(学ぶ言語・解説言語)は接続フォーム横の常時表示セレクトで行うため、ここには置かない
-    expect(within(dialog).queryByLabelText("Learning language")).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText("Explanation language")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
   });
 
   it("マウント時に LocalStorage から言語設定を復元してから、パイプラインを開始する", () => {
@@ -885,21 +882,21 @@ describe("Home(設定ダイアログ)", () => {
 });
 
 describe("Home(言語ペアの設定)", () => {
-  it("接続フォームと同じ並びに、学ぶ言語・解説言語のセレクトを現在の設定値で常時表示する", () => {
-    window.localStorage.setItem("chat-sensei:settings", JSON.stringify({ learningLang: "es", explainLang: "en" }));
+  it("言語ペアのセレクトはヘッダー(SiteHeader)へ移したため、ページ内には置かない", () => {
     render(<Home />);
 
-    // ダイアログを開かなくてもファーストビューで言語ペアが見える
-    expect(screen.getByRole("combobox", { name: "Learning language" })).toHaveValue("es");
-    expect(screen.getByRole("combobox", { name: "Explanation language" })).toHaveValue("en");
+    expect(screen.queryByRole("combobox", { name: "Learning language" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Explanation language" })).not.toBeInTheDocument();
   });
 
-  it("学ぶ言語を変更すると、翻訳・Pick up のパイプラインを停止して新しい設定で開始し直す", async () => {
-    const user = userEvent.setup();
+  it("学ぶ言語を変更すると、翻訳・Pick up のパイプラインを停止して新しい設定で開始し直す", () => {
     render(<Home />);
     expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Learning language" }), "de");
+    // 言語ペアのセレクトはヘッダーへ移したため、設定変更はストア経由で注入する
+    act(() => {
+      useSettingsStore.getState().setSettings({ ...DEFAULT_SETTINGS, learningLang: "de" });
+    });
 
     expect(mockStopPipeline).toHaveBeenCalledTimes(1);
     expect(mockStopPickupPipeline).toHaveBeenCalledTimes(1);
@@ -907,26 +904,17 @@ describe("Home(言語ペアの設定)", () => {
     expect(mockStartPickupPipeline).toHaveBeenCalledTimes(2);
   });
 
-  it("解説言語を変更すると、翻訳・Pick up のパイプラインを停止して新しい設定で開始し直す", async () => {
-    const user = userEvent.setup();
+  it("解説言語を変更すると、翻訳・Pick up のパイプラインを停止して新しい設定で開始し直す", () => {
     render(<Home />);
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Explanation language" }), "fr");
+    act(() => {
+      useSettingsStore.getState().setSettings({ ...DEFAULT_SETTINGS, explainLang: "fr" });
+    });
 
     expect(mockStopPipeline).toHaveBeenCalledTimes(1);
     expect(mockStopPickupPipeline).toHaveBeenCalledTimes(1);
     expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(2);
     expect(mockStartPickupPipeline).toHaveBeenCalledTimes(2);
-  });
-
-  it("学ぶ言語に解説言語と同じ言語を選ぶと両者を入れ替えて保存し、パイプラインを再起動する", async () => {
-    const user = userEvent.setup();
-    render(<Home />);
-
-    await user.selectOptions(screen.getByRole("combobox", { name: "Learning language" }), "ja");
-
-    expect(useSettingsStore.getState().settings).toEqual({ ...DEFAULT_SETTINGS, learningLang: "ja", explainLang: "en" });
-    expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(2);
   });
 
   it("列見出しには言語設定のダイアログを置かない(接続フォーム横のセレクトに一本化)", () => {
@@ -1052,5 +1040,66 @@ describe("Home(手動Pick up。issue #72)", () => {
     await user.click(screen.getByRole("button", { name: "Pick up" }));
 
     expect(mockAddManualPickup).toHaveBeenCalledWith("msg-1", "no re", "gg no re chat");
+  });
+});
+
+describe("Home(未接続の接続画面)", () => {
+  beforeEach(() => {
+    useChatConnectionStore.setState({ connectionState: "idle", channel: null });
+  });
+
+  it("チャンネル入力と Connect ボタンの接続画面を表示し、3カラムと配信embedは表示しない", () => {
+    render(<Home />);
+
+    expect(screen.getByLabelText("Channel")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Raw IRC" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Translation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Pick up" })).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/Twitch player/)).not.toBeInTheDocument();
+  });
+
+  it("接続状態(Status)を表示する", () => {
+    render(<Home />);
+
+    expect(screen.getByText("Status:")).toBeInTheDocument();
+    expect(screen.getByText("Idle")).toBeInTheDocument();
+  });
+
+  it("切断(closed)後も接続画面に戻る", () => {
+    useChatConnectionStore.setState({ connectionState: "closed" });
+
+    render(<Home />);
+
+    expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Raw IRC" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Home(接続中の配信embedと配信者情報)", () => {
+  it("接続中は接続中チャンネルの配信embed(Twitchプレイヤーのiframe)を表示する", () => {
+    render(<Home />);
+
+    expect(screen.getByTitle("Twitch player: example")).toBeInTheDocument();
+  });
+
+  it("接続中は配信者情報パネル(Stream info)を表示し、チャンネル入力・Connect ボタンは表示しない", () => {
+    render(<Home />);
+
+    expect(screen.getByRole("complementary", { name: "Stream info" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Channel")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
+  });
+
+  it("配信者情報パネルの Disconnect ボタンから切断できる", async () => {
+    const user = userEvent.setup();
+    const disconnectMock = vi.fn();
+    useChatConnectionStore.setState({ disconnect: disconnectMock });
+
+    render(<Home />);
+
+    await user.click(screen.getByRole("button", { name: "Disconnect" }));
+
+    expect(disconnectMock).toHaveBeenCalledTimes(1);
   });
 });

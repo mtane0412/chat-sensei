@@ -1,18 +1,26 @@
 /**
  * 全ページ共通のヘッダー。
  *
- * 現時点ではホーム(/)のみが存在するため、アプリ名のリンクだけを表示する。
- * 画面が増えた際にここへナビゲーションを追加する。
+ * 左側にアプリ名のリンク、右側に言語ペアのセレクト(コンパクト表示)と
+ * 設定ダイアログのトリガーを表示する。言語設定・アプリ設定は接続前後の
+ * どちらの画面(接続フォーム / embed + 3カラム)でも変更したくなるため、
+ * 画面の状態に依存しないヘッダーに常時置く。
  */
 import Link from "next/link";
+import { LanguagePairSelect } from "@/components/language-pair-select";
+import { SettingsDialog } from "@/components/settings-dialog";
 
 export function SiteHeader() {
   return (
     <header className="border-b bg-background">
-      <nav className="mx-auto flex w-full items-center justify-between px-6 py-3">
+      <nav className="mx-auto flex w-full items-center justify-between gap-4 px-6 py-2">
         <Link href="/" className="font-heading text-lg font-semibold">
           chat-sensei
         </Link>
+        <div className="flex items-center gap-2">
+          <LanguagePairSelect compact />
+          <SettingsDialog />
+        </div>
       </nav>
     </header>
   );

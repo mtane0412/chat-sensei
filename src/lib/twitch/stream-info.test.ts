@@ -1,8 +1,8 @@
 /**
- * src/lib/twitch/stream-info.ts(配信タイトル・カテゴリの取得)のテスト。
+ * src/lib/twitch/stream-info.ts(配信タイトル・カテゴリなど配信情報の取得)のテスト。
  *
  * Helix の Get Streams API(`GET /streams?user_login=`)のレスポンスを
- * 配信情報(タイトル・カテゴリ)として解析する処理と、
+ * 配信情報(タイトル・カテゴリ・配信者情報・視聴者数)として解析する処理と、
  * Next.js プロキシ(`/api/twitch/streams`)経由の取得を検証する。
  * 実際の API 呼び出しは行わず、フェイクの fetch を注入する。
  */
@@ -14,25 +14,34 @@ function createHelixStreamsJson(overrides: Record<string, unknown> = {}): unknow
   return {
     data: [
       {
+        user_id: "552120296",
         user_login: "zackrawrr",
         user_name: "ZackRawrr",
         type: "live",
         title: "Mythic raid progression! !drops",
+        game_id: "18122",
         game_name: "World of Warcraft",
+        viewer_count: 4321,
         ...overrides,
       },
     ],
   };
 }
 
+/** 全フィールドが取得できたときの期待値 */
+const 期待する配信情報 = {
+  title: "Mythic raid progression! !drops",
+  category: "World of Warcraft",
+  broadcasterId: "552120296",
+  broadcasterLogin: "zackrawrr",
+  broadcasterName: "ZackRawrr",
+  gameId: "18122",
+  viewerCount: 4321,
+};
+
 describe("parseStreamInfo", () => {
-  it("ライブ配信のレスポンスからタイトル・カテゴリ・配信者名(username と DisplayName)を取り出す", () => {
-    expect(parseStreamInfo(createHelixStreamsJson())).toEqual({
-      title: "Mythic raid progression! !drops",
-      category: "World of Warcraft",
-      broadcasterLogin: "zackrawrr",
-      broadcasterName: "ZackRawrr",
-    });
+  it("ライブ配信のレスポンスからタイトル・カテゴリ・配信者情報(ID / username / DisplayName)・ゲームID・視聴者数を取り出す", () => {
+    expect(parseStreamInfo(createHelixStreamsJson())).toEqual(期待する配信情報);
   });
 
   it("data が空(オフライン)の場合は null を返す", () => {
@@ -41,19 +50,33 @@ describe("parseStreamInfo", () => {
 
   it("カテゴリ未設定(game_name が空文字)の場合はカテゴリを空文字として保持する", () => {
     expect(parseStreamInfo(createHelixStreamsJson({ game_name: "" }))).toEqual({
-      title: "Mythic raid progression! !drops",
+      ...期待する配信情報,
       category: "",
-      broadcasterLogin: "zackrawrr",
-      broadcasterName: "ZackRawrr",
     });
   });
 
   it("配信者名のフィールドが無い・型が違う場合は空文字として保持する(タイトル・カテゴリがあれば文脈は成立する)", () => {
-    expect(parseStreamInfo(createHelixStreamsJson({ user_login: undefined, user_name: 123 }))).toEqual({
-      title: "Mythic raid progression! !drops",
-      category: "World of Warcraft",
+    expect(
+      parseStreamInfo(createHelixStreamsJson({ user_id: undefined, user_login: undefined, user_name: 123 })),
+    ).toEqual({
+      ...期待する配信情報,
+      broadcasterId: "",
       broadcasterLogin: "",
       broadcasterName: "",
+    });
+  });
+
+  it("ゲームID が無い・型が違う場合は空文字として保持する(ボックスアートを表示しないだけ)", () => {
+    expect(parseStreamInfo(createHelixStreamsJson({ game_id: 18122 }))).toEqual({
+      ...期待する配信情報,
+      gameId: "",
+    });
+  });
+
+  it("視聴者数が無い・型が違う場合は null として保持する(視聴者数を表示しないだけ)", () => {
+    expect(parseStreamInfo(createHelixStreamsJson({ viewer_count: "many" }))).toEqual({
+      ...期待する配信情報,
+      viewerCount: null,
     });
   });
 
@@ -76,12 +99,7 @@ describe("fetchStreamInfo", () => {
     const info = await fetchStreamInfo("zackrawrr", fetchFn);
 
     expect(fetchFn).toHaveBeenCalledWith("/api/twitch/streams?user_login=zackrawrr", { signal: undefined });
-    expect(info).toEqual({
-      title: "Mythic raid progression! !drops",
-      category: "World of Warcraft",
-      broadcasterLogin: "zackrawrr",
-      broadcasterName: "ZackRawrr",
-    });
+    expect(info).toEqual(期待する配信情報);
   });
 
   it("オフライン(data が空)の場合は null を返す", async () => {

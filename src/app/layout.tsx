@@ -29,9 +29,10 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      {/* 接続中の画面(embed + 3カラム)をビューポート1ページに収めるため、高さを固定して内部スクロールに任せる */}
+      <body className="flex h-dvh flex-col overflow-hidden">
         <SiteHeader />
-        <main className="flex flex-1 flex-col">{children}</main>
+        <main className="flex min-h-0 flex-1 flex-col">{children}</main>
       </body>
     </html>
   );
