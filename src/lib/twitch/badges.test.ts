@@ -87,8 +87,10 @@ describe("fetchBadgeImageMap", () => {
 
     const map = await fetchBadgeImageMap("12345", fetchFn);
 
-    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/chat/badges/global");
-    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/chat/badges?broadcaster_id=12345");
+    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/chat/badges/global", { signal: undefined });
+    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/chat/badges?broadcaster_id=12345", {
+      signal: undefined,
+    });
     expect(map).toEqual(
       new Map([
         ["moderator/1", "https://cdn.example/global/moderator/1/2x.png"],

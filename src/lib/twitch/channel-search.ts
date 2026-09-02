@@ -11,6 +11,8 @@
  *   null を返し、候補なし(現行の手入力だけの動作)にフォールバックする(意図した仕様)
  */
 
+import { extractDataArray, fetchHelixJson } from "./helix-proxy";
+
 /** チャンネル候補 1 件(Helix Search Channels API の 1 項目) */
 export interface ChannelSuggestion {
   /** 接続に使うログイン名(Helix の `broadcaster_login`) */
@@ -29,9 +31,8 @@ const SUGGESTION_LIMIT = 8;
  * 解析してチャンネル候補一覧を作る。API 側の仕様変更などで形式が想定と異なる項目は読み飛ばす。
  */
 export function parseChannelSuggestions(json: unknown): ChannelSuggestion[] {
-  if (typeof json !== "object" || json === null) return [];
-  const data = (json as Record<string, unknown>).data;
-  if (!Array.isArray(data)) return [];
+  const data = extractDataArray(json);
+  if (data === null) return [];
 
   const suggestions: ChannelSuggestion[] = [];
   for (const entry of data) {
@@ -64,15 +65,12 @@ export async function fetchChannelSuggestions(
   options: { signal?: AbortSignal; fetchFn?: typeof fetch } = {},
 ): Promise<ChannelSuggestion[] | null> {
   const { signal, fetchFn = fetch } = options;
-  try {
-    const response = await fetchFn(
-      `/api/twitch/search/channels?query=${encodeURIComponent(query)}&first=${SUGGESTION_LIMIT}`,
-      { signal },
-    );
-    if (!response.ok) return null;
-    return parseChannelSuggestions(await response.json());
-  } catch {
-    // 中断(AbortError)・ネットワークエラーのいずれも候補なしとして扱う
-    return null;
-  }
+  // failureLog を渡さない = 失敗しても console.warn しない(中断・ネットワークエラーを候補なしとして静かに扱う)
+  const json = await fetchHelixJson("search/channels", {
+    params: new URLSearchParams({ query, first: String(SUGGESTION_LIMIT) }),
+    fetchFn,
+    signal,
+  });
+  if (json === null) return null;
+  return parseChannelSuggestions(json);
 }

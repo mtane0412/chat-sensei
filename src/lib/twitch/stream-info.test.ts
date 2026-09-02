@@ -75,7 +75,7 @@ describe("fetchStreamInfo", () => {
 
     const info = await fetchStreamInfo("zackrawrr", fetchFn);
 
-    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/streams?user_login=zackrawrr");
+    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/streams?user_login=zackrawrr", { signal: undefined });
     expect(info).toEqual({
       title: "Mythic raid progression! !drops",
       category: "World of Warcraft",

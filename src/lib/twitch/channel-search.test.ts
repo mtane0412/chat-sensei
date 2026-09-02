@@ -76,7 +76,7 @@ describe("fetchChannelSuggestions", () => {
     const suggestions = await fetchChannelSuggestions("ざっく らー", { fetchFn });
 
     expect(fetchFn).toHaveBeenCalledWith(
-      "/api/twitch/search/channels?query=%E3%81%96%E3%81%A3%E3%81%8F%20%E3%82%89%E3%83%BC&first=8",
+      "/api/twitch/search/channels?query=%E3%81%96%E3%81%A3%E3%81%8F+%E3%82%89%E3%83%BC&first=8",
       { signal: undefined },
     );
     expect(suggestions).toEqual([
