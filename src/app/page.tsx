@@ -58,6 +58,7 @@ import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
 import { hidePickupTerm, isPickupTermHidden, useHiddenPickupStore } from "@/store/hidden-pickups";
+import { announcePickupRemoval, usePickupAnnouncementStore } from "@/store/pickup-announcements";
 import { addManualPickup, removeManualPickup, useManualPickupStore } from "@/store/manual-pickups";
 import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupDone } from "@/store/pickups";
 import { usePromptApiStore, type PromptApiStatus } from "@/store/prompt-api";
@@ -316,6 +317,7 @@ export default function Home() {
         </div>
       </ScrollArea>
       <ManualPickupOverlay onPickup={handleManualPickup} />
+      <PickupRemovalAnnouncement />
     </div>
   );
 }
@@ -435,6 +437,9 @@ function Row({
     <div
       role="listitem"
       data-message-id={message.id ?? undefined}
+      // Pick up列で行内の削除ボタンをすべて消したとき、フォーカスの退避先になる(issue #73)。
+      // tabIndex={-1} は Tab 順序には入れず、プログラムからのフォーカスだけを受け付ける
+      tabIndex={-1}
       // ぼかしは「自力で読む練習」のために中身を隠す機能なので、視覚だけでなくフォーカス・
       // 読み上げの対象からも外す(Pick up列の削除ボタンが不可視のまま操作できたり、
       // スクリーンリーダーで語句が漏れたりしないように)
@@ -565,13 +570,50 @@ function PickupTermRow({
           variant="ghost"
           size="icon-xs"
           aria-label={`Remove "${term}"`}
+          data-pickup-remove
           className="ml-1 align-middle opacity-0 group-hover/term:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
-          onClick={onRemove}
+          onClick={(event) => handleRemoveClick(event, term, onRemove)}
         >
           <XIcon />
         </Button>
       </dt>
       {children}
+    </div>
+  );
+}
+
+/**
+ * Pick up列の削除ボタンが押されたときの共通処理(issue #73)。
+ * 押されたボタン自身は unmount されてフォーカスが body に落ちるため、削除前に同じ発言の行
+ * (`role="listitem"`)内の削除ボタン一覧から次(無ければ前)のボタンを探し、削除後にそこへ
+ * フォーカスを移す。どちらも無ければ行コンテナ(tabIndex={-1})へ退避し、Tab 移動が
+ * ページ先頭からやり直しになるのを防ぐ。あわせてスクリーンリーダーへ削除を通知する。
+ * 移動先のボタン・行コンテナの DOM ノードは削除後も同一のまま残るため、削除前に取得した
+ * 参照へそのままフォーカスしてよい。
+ */
+function handleRemoveClick(event: React.MouseEvent<HTMLButtonElement>, term: string, onRemove: () => void): void {
+  const row = event.currentTarget.closest<HTMLElement>('[role="listitem"]');
+  const buttons = row === null ? [] : Array.from(row.querySelectorAll<HTMLElement>("[data-pickup-remove]"));
+  const index = buttons.indexOf(event.currentTarget);
+  const focusTarget = buttons[index + 1] ?? buttons[index - 1] ?? row;
+  onRemove();
+  announcePickupRemoval(term);
+  focusTarget?.focus();
+}
+
+/**
+ * Pick up語句の削除をスクリーンリーダーへ通知する常設の aria-live リージョン(issue #73)。
+ * `role="status"`(polite)の視覚非表示要素として置き、pickup-announcements ストアの
+ * メッセージを表示する。同じ語句を連続で削除してもテキストの変化として検知されるよう、
+ * 通知番号(seq)の偶奇で不可視のノーブレークスペースを付け替える。
+ */
+function PickupRemovalAnnouncement() {
+  const { message, seq } = usePickupAnnouncementStore();
+  return (
+    // 接続状態の role="status" と区別できるよう、リージョンに名前を付ける
+    <div role="status" aria-label="Pick up updates" className="sr-only">
+      {message}
+      {seq % 2 === 1 ? "\u00A0" : ""}
     </div>
   );
 }
