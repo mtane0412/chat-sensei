@@ -33,6 +33,17 @@ vi.mock("@/lib/twitch/irc-client", () => ({
   normalizeChannelName: (channel: string) => channel.replace(/^#/, "").toLowerCase(),
 }));
 
+// サードパーティ emote の読み込みは実 API を呼ぶため、ストア連携だけをモックで検証する
+const mockLoadThirdPartyEmotes = vi.fn();
+const mockClearThirdPartyEmotes = vi.fn();
+let fakeThirdPartyEmoteMap = new Map<string, string>();
+
+vi.mock("./third-party-emotes", () => ({
+  loadThirdPartyEmotes: (roomId: string) => mockLoadThirdPartyEmotes(roomId),
+  clearThirdPartyEmotes: () => mockClearThirdPartyEmotes(),
+  getThirdPartyEmoteMap: () => fakeThirdPartyEmoteMap,
+}));
+
 import { resetBotFilterStoreForTests, useBotFilterStore } from "./bot-filter";
 import { resetChatConnectionStoreForTests, subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
 
@@ -63,6 +74,9 @@ beforeEach(() => {
 afterEach(() => {
   mockConnect.mockClear();
   mockDisconnect.mockClear();
+  mockLoadThirdPartyEmotes.mockClear();
+  mockClearThirdPartyEmotes.mockClear();
+  fakeThirdPartyEmoteMap = new Map();
   window.localStorage.clear();
 });
 
@@ -169,6 +183,69 @@ describe("subscribeToChatMessages", () => {
     capturedCallbacks?.onEvent({ type: "ping", payload: "PING :tmi.twitch.tv" });
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe("サードパーティ emote(BTTV / FFZ / 7TV)", () => {
+  it("roomstate イベントを受信すると、room-id を使ってサードパーティ emote の読み込みを開始する", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    capturedCallbacks?.onEvent({
+      type: "roomstate",
+      channel: "zackrawrr",
+      state: {
+        emoteOnly: false,
+        followersOnlyMinutes: null,
+        r9k: false,
+        slowSeconds: 0,
+        subsOnly: false,
+        roomId: "552120296",
+      },
+    });
+
+    expect(mockLoadThirdPartyEmotes).toHaveBeenCalledWith("552120296");
+  });
+
+  it("room-id が無い roomstate では読み込みを開始しない", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    capturedCallbacks?.onEvent({
+      type: "roomstate",
+      channel: "zackrawrr",
+      state: {
+        emoteOnly: false,
+        followersOnlyMinutes: null,
+        r9k: false,
+        slowSeconds: 0,
+        subsOnly: false,
+        roomId: null,
+      },
+    });
+
+    expect(mockLoadThirdPartyEmotes).not.toHaveBeenCalled();
+  });
+
+  it("connect() を呼ぶと、前のチャンネルのサードパーティ emote 対応表をクリアする", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    expect(mockClearThirdPartyEmotes).toHaveBeenCalled();
+  });
+
+  it("privmsg 受信時に、本文中のサードパーティ emote 名を emotes に合成してから保持・通知する", () => {
+    fakeThirdPartyEmoteMap = new Map([["catJAM", "bttv:60ae958e229664e8667aea38"]]);
+    useChatConnectionStore.getState().connect("ZackRawrr");
+    const listener = vi.fn();
+    subscribeToChatMessages(listener);
+    const message = createSampleMessage({ text: "catJAM nice" });
+
+    capturedCallbacks?.onEvent({ type: "privmsg", channel: "somechannel", message });
+
+    const expected = {
+      ...message,
+      emotes: [{ id: "bttv:60ae958e229664e8667aea38", start: 0, end: 5 }],
+    };
+    expect(useChatConnectionStore.getState().messages).toEqual([expected]);
+    expect(listener).toHaveBeenCalledWith(expected);
   });
 });
 

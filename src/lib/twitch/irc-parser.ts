@@ -70,6 +70,8 @@ export interface RoomState {
   r9k: boolean;
   slowSeconds: number;
   subsOnly: boolean;
+  /** `room-id` タグ(配信者の Twitch ユーザー ID)。サードパーティ emote の取得に使う。無ければ null */
+  roomId: string | null;
 }
 
 /** parseTwitchIrcMessage が返す、UI層がそのまま扱える構造化イベント */
@@ -263,6 +265,7 @@ function parseRoomState(parsed: ParsedIrcMessage): TwitchChatEvent {
       r9k: parsed.tags.r9k === "1",
       slowSeconds: slowRaw !== undefined ? Number.parseInt(slowRaw, 10) : 0,
       subsOnly: parsed.tags["subs-only"] === "1",
+      roomId: parsed.tags["room-id"] ?? null,
     },
   };
 }

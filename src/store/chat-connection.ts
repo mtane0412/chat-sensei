@@ -25,8 +25,10 @@ import {
   type TwitchIrcClient,
 } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
+import { mergeThirdPartyEmotePositions } from "@/lib/twitch/third-party-emotes";
 import { matchesBotFilter } from "@/lib/bot-filter";
 import { isExcludedByBotFilter, useBotFilterStore } from "./bot-filter";
+import { clearThirdPartyEmotes, getThirdPartyEmoteMap, loadThirdPartyEmotes } from "./third-party-emotes";
 
 /** チャットに表示する発言の最大保持件数(古いものから捨てるリングバッファ) */
 const MAX_DISPLAYED_MESSAGES = 300;
@@ -55,16 +57,27 @@ function getClient(): TwitchIrcClient {
     client = createTwitchIrcClient({
       onStateChange: (state) => useChatConnectionStore.setState({ connectionState: state }),
       onEvent: (event) => {
+        if (event.type === "roomstate") {
+          // room-id(配信者の Twitch ユーザー ID)が判明した時点でサードパーティ emote を読み込む
+          if (event.state.roomId !== null) void loadThirdPartyEmotes(event.state.roomId);
+          return;
+        }
         if (event.type !== "privmsg") return;
         if (isExcludedByBotFilter(event.message.username)) return;
+        // 本文中のサードパーティ emote 名(BTTV / FFZ / 7TV)を位置情報として合成してから
+        // 保持・通知する。下流(描画・翻訳・Pick up)は Twitch 公式 emote と同じ扱いで処理できる
+        const message: TwitchChatMessage = {
+          ...event.message,
+          emotes: mergeThirdPartyEmotePositions(event.message.text, event.message.emotes, getThirdPartyEmoteMap()),
+        };
         useChatConnectionStore.setState((prev) => {
-          const next = [...prev.messages, event.message];
+          const next = [...prev.messages, message];
           return {
             messages:
               next.length > MAX_DISPLAYED_MESSAGES ? next.slice(next.length - MAX_DISPLAYED_MESSAGES) : next,
           };
         });
-        messageListeners.forEach((listener) => listener(event.message));
+        messageListeners.forEach((listener) => listener(message));
       },
     });
   }
@@ -76,6 +89,8 @@ export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
   messages: [],
   channel: null,
   connect: (channel) => {
+    // 前のチャンネルのサードパーティ emote 対応表を持ち越さない(ROOMSTATE 受信後に再読み込みされる)
+    clearThirdPartyEmotes();
     set({ messages: [], channel: normalizeChannelName(channel) });
     getClient().connect(channel);
   },
