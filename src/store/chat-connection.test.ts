@@ -44,6 +44,22 @@ vi.mock("./third-party-emotes", () => ({
   getThirdPartyEmoteMap: () => fakeThirdPartyEmoteMap,
 }));
 
+// Cheermote 一覧の読み込みも実 API(Helix プロキシ)を呼ぶため、ストア連携だけをモックで検証する。
+// getCheermoteSet は静的一覧を返し、既存の Cheermote 合成テストは静的一覧の挙動で検証する
+const mockLoadCheermotes = vi.fn();
+const mockClearCheermotes = vi.fn();
+
+vi.mock("./cheermotes", async () => {
+  const { STATIC_CHEERMOTE_SET } = await vi.importActual<typeof import("@/lib/twitch/cheermotes")>(
+    "@/lib/twitch/cheermotes",
+  );
+  return {
+    loadCheermotes: (roomId: string) => mockLoadCheermotes(roomId),
+    clearCheermotes: () => mockClearCheermotes(),
+    getCheermoteSet: () => STATIC_CHEERMOTE_SET,
+  };
+});
+
 import { resetBotFilterStoreForTests, useBotFilterStore } from "./bot-filter";
 import { resetChatConnectionStoreForTests, subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
 
@@ -77,6 +93,8 @@ afterEach(() => {
   mockDisconnect.mockClear();
   mockLoadThirdPartyEmotes.mockClear();
   mockClearThirdPartyEmotes.mockClear();
+  mockLoadCheermotes.mockClear();
+  mockClearCheermotes.mockClear();
   fakeThirdPartyEmoteMap = new Map();
   window.localStorage.clear();
 });
@@ -299,5 +317,51 @@ describe("Cheering Emote(Cheermote)", () => {
     const expected = [{ id: "cheer:cheer/100", start: 0, end: 4 }];
     expect(useChatConnectionStore.getState().messages[0].emotes).toEqual(expected);
     expect(received[0].emotes).toEqual(expected);
+  });
+});
+
+describe("Cheermote 一覧(Helix Cheermotes API)", () => {
+  it("roomstate イベントを受信すると、room-id を使って Cheermote 一覧の読み込みを開始する", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    capturedCallbacks?.onEvent({
+      type: "roomstate",
+      channel: "zackrawrr",
+      state: {
+        emoteOnly: false,
+        followersOnlyMinutes: null,
+        r9k: false,
+        slowSeconds: 0,
+        subsOnly: false,
+        roomId: "552120296",
+      },
+    });
+
+    expect(mockLoadCheermotes).toHaveBeenCalledWith("552120296");
+  });
+
+  it("room-id が無い roomstate では読み込みを開始しない", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    capturedCallbacks?.onEvent({
+      type: "roomstate",
+      channel: "zackrawrr",
+      state: {
+        emoteOnly: false,
+        followersOnlyMinutes: null,
+        r9k: false,
+        slowSeconds: 0,
+        subsOnly: false,
+        roomId: null,
+      },
+    });
+
+    expect(mockLoadCheermotes).not.toHaveBeenCalled();
+  });
+
+  it("connect() を呼ぶと、前のチャンネルの Cheermote 一覧をクリアする", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    expect(mockClearCheermotes).toHaveBeenCalled();
   });
 });
