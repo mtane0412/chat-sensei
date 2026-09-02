@@ -8,6 +8,7 @@
  * をここで検証する。翻訳・Pick up 固有の振る舞いは `translations.test.ts` / `pickups.test.ts` が担当する。
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { DEFAULT_SETTINGS } from "@/lib/settings";
 import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
 import { LowPriorityQueueOverflowError } from "@/lib/ai/session-pool";
 import { createAutoPipeline, MAX_WAITING_FOR_DIAGNOSIS } from "./auto-pipeline";
@@ -237,7 +238,7 @@ describe("createAutoPipeline().start", () => {
   it("学ぶ言語が複数のとき、判定した言語ごとに別のセッションプールを使う", async () => {
     const { deps, emit, detect } = createDeps({
       promptResults: [Promise.resolve("英語の結果"), Promise.resolve("スペイン語の結果")],
-      settings: { learningLangs: ["en", "es"], explainLang: "ja" },
+      settings: { ...DEFAULT_SETTINGS, learningLangs: ["en", "es"], explainLang: "ja" },
     });
     detect
       .mockResolvedValueOnce([{ detectedLanguage: "en", confidence: 0.9 }])
@@ -273,7 +274,7 @@ describe("createAutoPipeline().start", () => {
   it("解説言語と同じ言語と判定した発言は、モデルを呼ばず same-language として保持する", async () => {
     const { deps, emit, enqueue } = createDeps({
       detectedLanguage: "ja",
-      settings: { learningLangs: ["en", "ja"], explainLang: "ja" },
+      settings: { ...DEFAULT_SETTINGS, learningLangs: ["en", "ja"], explainLang: "ja" },
     });
 
     const stop = start(deps);
@@ -434,7 +435,7 @@ describe("createAutoPipeline().warmUp", () => {
   it("診断が ready のとき、ユーザー操作の延長で Language Detector と学ぶ言語ごとのセッションプールを生成しウォームアップする", async () => {
     const { deps, warmUp, createDetector } = createDeps({
       ready: true,
-      settings: { learningLangs: ["en", "es"], explainLang: "ja" },
+      settings: { ...DEFAULT_SETTINGS, learningLangs: ["en", "es"], explainLang: "ja" },
     });
 
     const stop = start(deps);
@@ -453,7 +454,7 @@ describe("createAutoPipeline().warmUp", () => {
   it("学ぶ言語に解説言語が含まれていても、解説言語のセッションプールはウォームアップしない(その言語の発言は処理しないため)", async () => {
     const { deps, warmUp } = createDeps({
       ready: true,
-      settings: { learningLangs: ["en", "ja"], explainLang: "ja" },
+      settings: { ...DEFAULT_SETTINGS, learningLangs: ["en", "ja"], explainLang: "ja" },
     });
 
     const stop = start(deps);

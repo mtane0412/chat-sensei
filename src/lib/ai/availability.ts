@@ -89,8 +89,11 @@ export function isChromeVersionSupported(version: number | null): boolean {
   return version >= MINIMUM_CHROME_VERSION;
 }
 
-/** `availability` の結果を「すぐ使える、または利用者操作でDL開始できる」かどうかに変換する */
-function isUsableAvailability(availability: ApiAvailability | null): boolean {
+/**
+ * `availability` の結果を「すぐ使える、または利用者操作でDL開始できる」かどうかに変換する。
+ * OpenRouter プロバイダ選択時に Language Detector 単体の可否を判定する用途(`store/prompt-api.ts`)でも使う
+ */
+export function isUsableApiAvailability(availability: ApiAvailability | null): boolean {
   return availability === "available" || availability === "downloadable";
 }
 
@@ -136,6 +139,6 @@ export async function diagnoseEnvironment(deps: DiagnosisDeps): Promise<Environm
     languageDetector,
     storageEstimate,
     overallReady:
-      isUsableAvailability(languageModel.availability) && isUsableAvailability(languageDetector.availability),
+      isUsableApiAvailability(languageModel.availability) && isUsableApiAvailability(languageDetector.availability),
   };
 }

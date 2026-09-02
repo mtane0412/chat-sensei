@@ -24,6 +24,7 @@ import {
   type MessageSegment,
 } from "@/lib/twitch/emotes";
 import { createAutoPipeline, type AutoPipelineDeps, type PipelineEntry } from "./auto-pipeline";
+import { useSettingsStore } from "./settings";
 
 /** 翻訳の完了時に保持する結果。訳文はページがそのまま描画できるテキスト/emote セグメント列で持つ */
 export interface TranslationDone {
@@ -37,7 +38,10 @@ export type TranslationEntry = PipelineEntry<TranslationDone>;
 export type TranslationPipelineDeps = AutoPipelineDeps;
 
 const pipeline = createAutoPipeline<TranslationDone>({
-  createBaseSession: (targetLang, explainLang) => createTranslateBaseSessionFactory(targetLang, explainLang),
+  // ベースセッションは設定(LLM プロバイダ)に依存する。設定変更時はホーム画面がパイプラインを再起動し、
+  // プールも作り直されるため、生成時点のストアの設定を読めばよい
+  createBaseSession: (targetLang, explainLang) =>
+    createTranslateBaseSessionFactory(useSettingsStore.getState().settings, targetLang, explainLang),
   resolveWithoutModel: (message) =>
     isTextlessMessage(message.text, message.emotes) || isChatCommandMessage(message.text)
       ? { segments: splitMessageIntoSegments(message.text, message.emotes) }

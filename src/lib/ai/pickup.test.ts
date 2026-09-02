@@ -9,6 +9,7 @@
  * (`LanguageModel` はブラウザ組み込みAPIのため `vi.stubGlobal` でモックする)。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { createPickupBaseSessionFactory, pickUpExpressions } from "./pickup";
 import { buildExplainSystemPrompt, buildTranslateSystemPrompt } from "./prompts";
 import type { SessionPool } from "./session-pool";
@@ -236,7 +237,7 @@ describe("createPickupBaseSessionFactory", () => {
     const create = vi.fn<(options: CapturedCreateOptions) => Promise<typeof created>>(async () => created);
     vi.stubGlobal("LanguageModel", { create, availability: vi.fn() });
 
-    const factory = createPickupBaseSessionFactory("en", "ja");
+    const factory = createPickupBaseSessionFactory(DEFAULT_SETTINGS, "en", "ja");
     const session = await factory();
 
     expect(session).toBe(created);

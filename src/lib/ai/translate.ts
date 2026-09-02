@@ -8,10 +8,12 @@
  * - `createTranslateBaseSessionFactory`: 翻訳専用のシステムプロンプトを持つベースセッションの生成関数を組み立てる。
  *   Pick up 用とはプール(ベースセッション)を分ける前提(issue #15 の方針 (a))。直列キューは共有する(issue #23)
  */
+import type { Settings } from "@/lib/settings";
+import { createLlmBaseSessionFactory } from "./llm-provider";
 import { buildTranslateSystemPrompt, buildTranslateUserPrompt, type SupportedLanguage } from "./prompts";
 import { translationSchema, type TranslationResult } from "./schemas";
 import type { JobPriority, PromptSessionLike, SessionPool } from "./session-pool";
-import { createBaseSessionFactory, runStructuredPrompt } from "./structured-prompt";
+import { runStructuredPrompt } from "./structured-prompt";
 
 export interface TranslateOptions {
   /** 翻訳は受信した全発言を自動で処理するバックグラウンド生成のため、既定は low */
@@ -35,10 +37,14 @@ export async function translateChatMessage(
   });
 }
 
-/** 学ぶ言語・訳文の言語のペアから、翻訳専用の `SessionPool` に渡すベースセッション生成関数を組み立てる */
+/**
+ * 設定(LLM プロバイダ)と学ぶ言語・訳文の言語のペアから、
+ * 翻訳専用の `SessionPool` に渡すベースセッション生成関数を組み立てる
+ */
 export function createTranslateBaseSessionFactory(
+  settings: Settings,
   targetLang: SupportedLanguage,
   explainLang: SupportedLanguage,
 ): () => Promise<PromptSessionLike> {
-  return createBaseSessionFactory(buildTranslateSystemPrompt, targetLang, explainLang);
+  return createLlmBaseSessionFactory(settings, buildTranslateSystemPrompt, targetLang, explainLang);
 }

@@ -13,6 +13,16 @@
  */
 import { create } from "zustand";
 import { clearSettings, DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from "@/lib/settings";
+import { resetPromptApiDiagnosis } from "./prompt-api";
+
+/** LLM プロバイダに関わる設定が変わったか(変わったら環境診断をやり直す必要がある) */
+function isLlmConfigChanged(prev: Settings, next: Settings): boolean {
+  return (
+    prev.llmProvider !== next.llmProvider ||
+    prev.openRouterApiKey !== next.openRouterApiKey ||
+    prev.openRouterModel !== next.openRouterModel
+  );
+}
 
 interface SettingsState {
   settings: Settings;
@@ -32,10 +42,13 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   hydrated: false,
   wasCorrupted: false,
   setSettings: (settings) => {
+    const prev = useSettingsStore.getState().settings;
     saveSettings(settings);
     // 保存に成功した時点で LocalStorage は正常な値になっているため、壊れていた印は下ろす。
     // ストアが正本の値を持った状態になるので、復元済み扱いにする
     set({ settings, wasCorrupted: false, hydrated: true });
+    // LLM プロバイダの設定が変わったら、確定済みの診断状態を破棄して新しいプロバイダの条件で診断し直す
+    if (isLlmConfigChanged(prev, settings)) resetPromptApiDiagnosis();
   },
 }));
 

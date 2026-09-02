@@ -21,22 +21,31 @@ describe("loadSettings", () => {
     const result = loadSettings();
 
     expect(result).toEqual({ settings: DEFAULT_SETTINGS, wasCorrupted: false });
-    expect(DEFAULT_SETTINGS).toEqual({ learningLangs: ["en"], explainLang: "ja" });
+    expect(DEFAULT_SETTINGS).toEqual({
+      learningLangs: ["en"],
+      explainLang: "ja",
+      llmProvider: "gemini-nano",
+      openRouterApiKey: "",
+      openRouterModel: "",
+    });
   });
 
   it("保存された正常な設定(学ぶ言語が複数)を復元する", () => {
-    saveSettings({ learningLangs: ["es", "en"], explainLang: "ja" });
+    saveSettings({ ...DEFAULT_SETTINGS, learningLangs: ["es", "en"] });
 
     const result = loadSettings();
 
-    expect(result).toEqual({ settings: { learningLangs: ["es", "en"], explainLang: "ja" }, wasCorrupted: false });
+    expect(result).toEqual({
+      settings: { ...DEFAULT_SETTINGS, learningLangs: ["es", "en"] },
+      wasCorrupted: false,
+    });
   });
 
   it("学ぶ言語に解説言語と同じ言語が含まれていても、そのまま復元する(同じ言語の発言はパイプライン側でスキップする)", () => {
-    saveSettings({ learningLangs: ["en", "ja"], explainLang: "ja" });
+    saveSettings({ ...DEFAULT_SETTINGS, learningLangs: ["en", "ja"], explainLang: "ja" });
 
     expect(loadSettings()).toEqual({
-      settings: { learningLangs: ["en", "ja"], explainLang: "ja" },
+      settings: { ...DEFAULT_SETTINGS, learningLangs: ["en", "ja"], explainLang: "ja" },
       wasCorrupted: false,
     });
   });
@@ -78,14 +87,72 @@ describe("loadSettings", () => {
 
 describe("saveSettings", () => {
   it("学ぶ言語が空の設定は例外を投げて保存しない", () => {
-    expect(() => saveSettings({ learningLangs: [], explainLang: "ja" })).toThrow();
+    expect(() => saveSettings({ ...DEFAULT_SETTINGS, learningLangs: [] })).toThrow();
     expect(window.localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
+  });
+});
+
+describe("LLMプロバイダ設定", () => {
+  it("旧形式(llmProvider 無し)の保存データは Gemini Nano・空の OpenRouter 設定として復元する(壊れた扱いにしない)", () => {
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ learningLangs: ["en"], explainLang: "ja" }));
+
+    expect(loadSettings()).toEqual({
+      settings: {
+        learningLangs: ["en"],
+        explainLang: "ja",
+        llmProvider: "gemini-nano",
+        openRouterApiKey: "",
+        openRouterModel: "",
+      },
+      wasCorrupted: false,
+    });
+  });
+
+  it("OpenRouter プロバイダの設定(APIキー・モデル)を保存・復元できる", () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      llmProvider: "openrouter" as const,
+      openRouterApiKey: "sk-or-v1-テスト用キー",
+      openRouterModel: "anthropic/claude-sonnet-5",
+    };
+    saveSettings(settings);
+
+    expect(loadSettings()).toEqual({ settings, wasCorrupted: false });
+  });
+
+  it("OpenRouter プロバイダなのに API キーが空の設定は例外を投げて保存しない", () => {
+    expect(() =>
+      saveSettings({ ...DEFAULT_SETTINGS, llmProvider: "openrouter", openRouterModel: "anthropic/claude-sonnet-5" }),
+    ).toThrow();
+    expect(window.localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
+  });
+
+  it("OpenRouter プロバイダなのにモデルが空の設定は例外を投げて保存しない", () => {
+    expect(() =>
+      saveSettings({ ...DEFAULT_SETTINGS, llmProvider: "openrouter", openRouterApiKey: "sk-or-v1-テスト用キー" }),
+    ).toThrow();
+    expect(window.localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
+  });
+
+  it("Gemini Nano プロバイダでは API キー・モデルが空でも保存できる", () => {
+    saveSettings({ ...DEFAULT_SETTINGS, llmProvider: "gemini-nano" });
+
+    expect(loadSettings().wasCorrupted).toBe(false);
+  });
+
+  it("未知のプロバイダ名が保存されている場合はデフォルトに戻す", () => {
+    window.localStorage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({ learningLangs: ["en"], explainLang: "ja", llmProvider: "unknown-provider" }),
+    );
+
+    expect(loadSettings()).toEqual({ settings: DEFAULT_SETTINGS, wasCorrupted: true });
   });
 });
 
 describe("clearSettings", () => {
   it("保存されていた設定をLocalStorageから削除し、以後はデフォルト設定が読み込まれる", () => {
-    saveSettings({ learningLangs: ["es"], explainLang: "ja" });
+    saveSettings({ ...DEFAULT_SETTINGS, learningLangs: ["es"] });
 
     clearSettings();
 

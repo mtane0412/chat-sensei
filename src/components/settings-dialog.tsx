@@ -7,6 +7,8 @@
  * - 開くたびに環境診断(`runBrowserDiagnosis` → `describeDiagnosis`)を実行し、Prompt API / Language Detector が
  *   使えない環境ではその理由を表示する(chat-sensei は暗黙にクラウド API へ切り替えないため、理由を利用者にそのまま伝える)
  * - 保存されている設定を LocalStorage から削除してデフォルトに戻す
+ * - 翻訳・Pick up に使う LLM プロバイダを切り替える(Gemini Nano / OpenRouter)。OpenRouter を選ぶ場合は
+ *   API キーと、モデル一覧 API から取得した選択肢の中のモデルを保存する(キーはこのブラウザの LocalStorage にのみ保存する)
  *
  * 言語設定(学ぶ言語 / 解説言語)は配信ごとに変わるため、ここではなく各列の見出しのダイアログ
  * (`language-dialogs.tsx`)から設定する。
@@ -28,8 +30,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { describeDiagnosis, type DiagnosisMessage } from "@/lib/ai/describeDiagnosis";
+import { fetchOpenRouterModels, type OpenRouterModel } from "@/lib/ai/openrouter";
 import { runBrowserDiagnosis } from "@/lib/ai/runBrowserDiagnosis";
+import { LLM_PROVIDER_DISPLAY_NAMES, LLM_PROVIDERS, settingsSchema, type LlmProvider } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { clearSettingsStore, useSettingsStore } from "@/store/settings";
 
@@ -75,6 +81,9 @@ export function SettingsDialog() {
           </p>
         )}
 
+        {/* key で開くたびに作り直し、下書きをストアの現在値から初期化する(前回の未保存の編集を持ち越さない) */}
+        <LlmProviderSection key={open ? "open" : "closed"} open={open} onSaved={() => setOpen(false)} />
+
         <DiagnosisSection open={open} />
 
         <DialogFooter className="sm:justify-between">
@@ -85,6 +94,145 @@ export function SettingsDialog() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+const PROVIDER_SELECT_ID = "llm-provider-select";
+const OPENROUTER_API_KEY_INPUT_ID = "openrouter-api-key-input";
+const OPENROUTER_MODEL_SELECT_ID = "openrouter-model-select";
+
+/**
+ * OpenRouter のモデル一覧の取得状態。"idle" は未取得(取得中)を表し、画面には Loading と表示する。
+ * 失敗は暗黙に空の選択肢へフォールバックせず理由を表示する
+ */
+type ModelsState =
+  | { status: "idle" }
+  | { status: "loaded"; models: OpenRouterModel[] }
+  | { status: "error"; errorMessage: string };
+
+/**
+ * 翻訳・Pick up に使う LLM プロバイダの設定。
+ * ダイアログを開くたびにストアの現在値から下書きを作り直し、保存時に `settingsSchema` で検証してから
+ * ストア(→ LocalStorage)へ反映する。OpenRouter を選んでいる間だけ API キーとモデルの入力欄を表示し、
+ * モデルの選択肢はモデル一覧 API から取得する。
+ */
+function LlmProviderSection({ open, onSaved }: { open: boolean; onSaved: () => void }) {
+  const settings = useSettingsStore((state) => state.settings);
+  const setSettings = useSettingsStore((state) => state.setSettings);
+
+  const [draftProvider, setDraftProvider] = useState<LlmProvider>(settings.llmProvider);
+  const [draftApiKey, setDraftApiKey] = useState(settings.openRouterApiKey);
+  const [draftModel, setDraftModel] = useState(settings.openRouterModel);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelsState>({ status: "idle" });
+
+  // OpenRouter を選んでいる間だけモデル一覧を取得する(取得済み・失敗確定後は再取得しない)
+  useEffect(() => {
+    if (!open || draftProvider !== "openrouter" || models.status !== "idle") return;
+    let cancelled = false;
+    fetchOpenRouterModels()
+      .then((fetched) => {
+        if (!cancelled) setModels({ status: "loaded", models: fetched });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setModels({ status: "error", errorMessage: error instanceof Error ? error.message : String(error) });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, draftProvider, models.status]);
+
+  const handleSave = () => {
+    const validation = settingsSchema.safeParse({
+      ...settings,
+      llmProvider: draftProvider,
+      openRouterApiKey: draftApiKey,
+      openRouterModel: draftModel,
+    });
+    if (!validation.success) {
+      setSaveError(validation.error.issues[0]?.message ?? "Invalid settings");
+      return;
+    }
+    setSettings(validation.data);
+    onSaved();
+  };
+
+  return (
+    <section aria-label="LLM provider settings" className="flex flex-col gap-3 rounded-lg border p-3">
+      <h3 className="text-sm font-semibold">LLM provider</h3>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={PROVIDER_SELECT_ID}>LLM provider</Label>
+        <select
+          id={PROVIDER_SELECT_ID}
+          className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm dark:bg-input/30"
+          value={draftProvider}
+          onChange={(e) => setDraftProvider(e.target.value as LlmProvider)}
+        >
+          {LLM_PROVIDERS.map((provider) => (
+            <option key={provider} value={provider}>
+              {LLM_PROVIDER_DISPLAY_NAMES[provider]}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {draftProvider === "openrouter" && (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={OPENROUTER_API_KEY_INPUT_ID}>OpenRouter API key</Label>
+            <Input
+              id={OPENROUTER_API_KEY_INPUT_ID}
+              type="password"
+              autoComplete="off"
+              placeholder="sk-or-v1-..."
+              value={draftApiKey}
+              onChange={(e) => setDraftApiKey(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Stored only in this browser (LocalStorage) and sent directly to OpenRouter.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={OPENROUTER_MODEL_SELECT_ID}>OpenRouter model</Label>
+            <select
+              id={OPENROUTER_MODEL_SELECT_ID}
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm dark:bg-input/30"
+              value={draftModel}
+              onChange={(e) => setDraftModel(e.target.value)}
+            >
+              <option value="">{models.status === "idle" ? "Loading models..." : "Select a model"}</option>
+              {/* 一覧の取得が終わるまでは、保存済みのモデルを選択状態のまま保てるよう単独の選択肢として出す */}
+              {models.status !== "loaded" && draftModel !== "" && <option value={draftModel}>{draftModel}</option>}
+              {models.status === "loaded" &&
+                models.models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name}
+                  </option>
+                ))}
+            </select>
+            {models.status === "error" && (
+              <p className="text-xs text-destructive" role="alert">
+                Could not load the model list: {models.errorMessage}
+              </p>
+            )}
+          </div>
+        </>
+      )}
+
+      {saveError && (
+        <p className="text-xs text-destructive" role="alert">
+          {saveError}
+        </p>
+      )}
+
+      <div>
+        <Button onClick={handleSave}>Save</Button>
+      </div>
+    </section>
   );
 }
 

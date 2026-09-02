@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
+import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
@@ -594,7 +595,9 @@ describe("Home(設定ダイアログ)", () => {
     await user.click(screen.getByRole("button", { name: "Settings" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Settings" });
-    expect(within(dialog).queryByRole("combobox")).not.toBeInTheDocument();
+    // 言語設定(学ぶ言語・解説言語)は各列の見出しのダイアログから設定するため、ここには置かない
+    expect(within(dialog).queryByLabelText("Learning languages")).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Explanation language")).not.toBeInTheDocument();
   });
 
   it("マウント時に LocalStorage から言語設定を復元してから、パイプラインを開始する", () => {
@@ -602,7 +605,7 @@ describe("Home(設定ダイアログ)", () => {
 
     render(<Home />);
 
-    expect(useSettingsStore.getState().settings).toEqual({ learningLangs: ["fr"], explainLang: "ja" });
+    expect(useSettingsStore.getState().settings).toEqual({ ...DEFAULT_SETTINGS, learningLangs: ["fr"], explainLang: "ja" });
     expect(mockStartTranslationPipeline).toHaveBeenCalledTimes(1);
     expect(mockStartPickupPipeline).toHaveBeenCalledTimes(1);
   });

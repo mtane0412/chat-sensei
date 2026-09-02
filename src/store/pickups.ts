@@ -21,6 +21,7 @@ import type { PickupTerm } from "@/lib/ai/schemas";
 import { isChatCommandMessage } from "@/lib/twitch/chat-command";
 import { isTextlessMessage } from "@/lib/twitch/emotes";
 import { createAutoPipeline, type AutoPipelineDeps, type PipelineEntry } from "./auto-pipeline";
+import { useSettingsStore } from "./settings";
 
 /** 抽出の完了時に保持する結果。該当する表現が無い場合は `terms` が空配列 */
 export interface PickupDone {
@@ -34,7 +35,10 @@ export type PickupEntry = PipelineEntry<PickupDone>;
 export type PickupPipelineDeps = AutoPipelineDeps;
 
 const pipeline = createAutoPipeline<PickupDone>({
-  createBaseSession: (targetLang, explainLang) => createPickupBaseSessionFactory(targetLang, explainLang),
+  // ベースセッションは設定(LLM プロバイダ)に依存する。設定変更時はホーム画面がパイプラインを再起動し、
+  // プールも作り直されるため、生成時点のストアの設定を読めばよい
+  createBaseSession: (targetLang, explainLang) =>
+    createPickupBaseSessionFactory(useSettingsStore.getState().settings, targetLang, explainLang),
   resolveWithoutModel: (message) =>
     isTextlessMessage(message.text, message.emotes) || isChatCommandMessage(message.text) ? { terms: [] } : null,
   runJob: (pool, message, { signal, getMessages }) =>

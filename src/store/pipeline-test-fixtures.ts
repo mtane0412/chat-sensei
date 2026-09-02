@@ -8,7 +8,7 @@ import { vi } from "vitest";
 import type { ApiDiagnosis, EnvironmentDiagnosis } from "@/lib/ai/availability";
 import type { DetectedLanguageCandidate, LanguageDetectorLike } from "@/lib/ai/detect-language";
 import type { SessionPool } from "@/lib/ai/session-pool";
-import type { Settings } from "@/lib/settings";
+import { DEFAULT_SETTINGS, type Settings } from "@/lib/settings";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import type { AutoPipelineDeps } from "./auto-pipeline";
 
@@ -75,7 +75,7 @@ export function createDeps(
   const listeners = new Set<(message: TwitchChatMessage) => void>();
   let messages: TwitchChatMessage[] = [];
   const promptResults = [...(options.promptResults ?? [])];
-  const settings: Settings = options.settings ?? { learningLangs: ["en"], explainLang: "ja" };
+  const settings: Settings = options.settings ?? { ...DEFAULT_SETTINGS, learningLangs: ["en"], explainLang: "ja" };
 
   /** フェイクセッションの prompt。LLM に渡された本文(ユーザープロンプト)を検証するために公開する */
   const prompt = vi.fn((): Promise<string> => {

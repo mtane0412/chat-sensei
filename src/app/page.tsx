@@ -143,9 +143,16 @@ export default function Home() {
 
   const settingsHydrated = useSettingsStore((state) => state.hydrated);
   const settings = useSettingsStore((state) => state.settings);
-  // 言語設定の内容が変わったときだけパイプラインを再起動するため、値を文字列にして依存に使う
-  // (`setSettings` は同じ内容でも新しいオブジェクトを作るため、参照比較では再起動してしまう)
-  const settingsKey = `${settings.learningLangs.join(",")}|${settings.explainLang}`;
+  // 言語設定・LLM プロバイダ設定の内容が変わったときだけパイプラインを再起動するため、値を文字列にして依存に使う
+  // (`setSettings` は同じ内容でも新しいオブジェクトを作るため、参照比較では再起動してしまう)。
+  // LLM 設定はセッションプールの生成(どのプロバイダ・モデル・キーで作るか)に影響するため含める
+  const settingsKey = [
+    settings.learningLangs.join(","),
+    settings.explainLang,
+    settings.llmProvider,
+    settings.openRouterApiKey,
+    settings.openRouterModel,
+  ].join("|");
 
   // 受信した発言を自動で翻訳・抽出ジョブに流す。言語設定の復元後に開始し、言語設定が変わるたびに
   // 停止 → 開始し直す(セッションプールのシステムプロンプトに言語ペアを含むため)。

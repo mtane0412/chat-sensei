@@ -12,11 +12,12 @@
  * 「先頭の学ぶ言語で扱う」ような判定器の結果に基づかないフォールバックは行わない。
  */
 import { describe, expect, it } from "vitest";
+import { DEFAULT_SETTINGS } from "@/lib/settings";
 import type { Settings } from "@/lib/settings";
 import { classifyDetectedLanguage, MIN_FALLBACK_CONFIDENCE, SHORT_LATIN_TEXT_MAX_LENGTH } from "./detect-language";
 
-const 英語を学ぶ日本語話者の設定: Settings = { learningLangs: ["en"], explainLang: "ja" };
-const 日英混在チャットの設定: Settings = { learningLangs: ["en", "ja"], explainLang: "ja" };
+const 英語を学ぶ日本語話者の設定: Settings = { ...DEFAULT_SETTINGS, learningLangs: ["en"], explainLang: "ja" };
+const 日英混在チャットの設定: Settings = { ...DEFAULT_SETTINGS, learningLangs: ["en", "ja"], explainLang: "ja" };
 
 describe("classifyDetectedLanguage(かな規則)", () => {
   // Language Detector は「龍が如く感」を zh-Hant 0.939 / ja 0.058、「ｱｲﾑﾚﾃﾞｨ」を zh-Hans 0.871 / ja 0.052 と判定する(実測)。
@@ -25,7 +26,7 @@ describe("classifyDetectedLanguage(かな規則)", () => {
     const result = classifyDetectedLanguage(
       "龍が如く感",
       [{ detectedLanguage: "zh-Hant", confidence: 0.939 }, { detectedLanguage: "ja", confidence: 0.058 }],
-      { learningLangs: ["ja"], explainLang: "en" },
+      { ...DEFAULT_SETTINGS, learningLangs: ["ja"], explainLang: "en" },
     );
 
     expect(result).toEqual({ kind: "learning", lang: "ja" });
@@ -55,7 +56,7 @@ describe("classifyDetectedLanguage(かな規則)", () => {
     const result = classifyDetectedLanguage(
       "それな",
       [{ detectedLanguage: "ja", confidence: 0.999 }],
-      { learningLangs: ["en"], explainLang: "es" },
+      { ...DEFAULT_SETTINGS, learningLangs: ["en"], explainLang: "es" },
     );
 
     expect(result).toEqual({ kind: "other", detectedLanguage: "ja" });
@@ -79,7 +80,7 @@ describe("classifyDetectedLanguage(漢字規則)", () => {
     const result = classifyDetectedLanguage(
       "太陽神",
       [{ detectedLanguage: "zh-Hans", confidence: 0.9 }, { detectedLanguage: "ja", confidence: 0.03 }],
-      { learningLangs: ["ja"], explainLang: "en" },
+      { ...DEFAULT_SETTINGS, learningLangs: ["ja"], explainLang: "en" },
     );
 
     expect(result).toEqual({ kind: "learning", lang: "ja" });
@@ -99,7 +100,7 @@ describe("classifyDetectedLanguage(漢字規則)", () => {
     const result = classifyDetectedLanguage(
       "太陽神",
       [{ detectedLanguage: "zh-Hans", confidence: 0.9 }],
-      { learningLangs: ["en"], explainLang: "es" },
+      { ...DEFAULT_SETTINGS, learningLangs: ["en"], explainLang: "es" },
     );
 
     expect(result).toEqual({ kind: "other", detectedLanguage: "zh" });
@@ -136,7 +137,7 @@ describe("classifyDetectedLanguage(短い Latin 文字列の規則)", () => {
     const result = classifyDetectedLanguage(
       "sheesh",
       [{ detectedLanguage: "so", confidence: 0.6 }],
-      { learningLangs: ["ja", "es", "en"], explainLang: "de" },
+      { ...DEFAULT_SETTINGS, learningLangs: ["ja", "es", "en"], explainLang: "de" },
     );
 
     expect(result).toEqual({ kind: "learning", lang: "es" });
@@ -146,7 +147,7 @@ describe("classifyDetectedLanguage(短い Latin 文字列の規則)", () => {
     const result = classifyDetectedLanguage(
       "KEKW",
       [{ detectedLanguage: "ku", confidence: 0.136 }],
-      { learningLangs: ["ja"], explainLang: "en" },
+      { ...DEFAULT_SETTINGS, learningLangs: ["ja"], explainLang: "en" },
     );
 
     expect(result).toEqual({ kind: "same-as-explanation" });
@@ -179,7 +180,7 @@ describe("classifyDetectedLanguage(短い Latin 文字列の規則)", () => {
     const result = classifyDetectedLanguage(
       "W",
       [{ detectedLanguage: "ar-Latn", confidence: 0.553 }, { detectedLanguage: "en", confidence: 0.259 }],
-      { learningLangs: ["es", "en"], explainLang: "ja" },
+      { ...DEFAULT_SETTINGS, learningLangs: ["es", "en"], explainLang: "ja" },
     );
 
     expect(result).toEqual({ kind: "learning", lang: "en" });
@@ -250,7 +251,7 @@ describe("classifyDetectedLanguage", () => {
         { detectedLanguage: "es", confidence: 0.3 },
         { detectedLanguage: "en", confidence: 0.15 },
       ],
-      { learningLangs: ["en", "es"], explainLang: "ja" },
+      { ...DEFAULT_SETTINGS, learningLangs: ["en", "es"], explainLang: "ja" },
     );
 
     expect(result).toEqual({ kind: "learning", lang: "es" });
