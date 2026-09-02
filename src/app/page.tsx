@@ -34,10 +34,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronsDownIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
+import { ChannelAutocompleteInput } from "@/components/channel-autocomplete";
 import { ExplanationLanguageDialog, LearningLanguagesDialog } from "@/components/language-dialogs";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -197,11 +197,11 @@ export default function Home() {
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="channel-input">Channel</Label>
           <div className="flex items-center gap-2">
-            <Input
+            <ChannelAutocompleteInput
               id="channel-input"
               placeholder="e.g. zackrawrr"
               value={channelInput}
-              onChange={(e) => setChannelInput(e.target.value)}
+              onValueChange={setChannelInput}
               disabled={connected}
             />
             {connected ? (

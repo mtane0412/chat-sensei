@@ -47,6 +47,13 @@ vi.mock("@/lib/ai/runBrowserDiagnosis", () => ({
   runBrowserDiagnosis: () => new Promise(() => {}),
 }));
 
+// チャンネル名のオートコンプリート(issue #59)の候補取得はネットワークに触れるためモックする。
+// null = Helix 利用不可(候補なし)として、ここでは手入力だけの動作を検証する
+vi.mock("@/lib/twitch/channel-search", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/twitch/channel-search")>()),
+  fetchChannelSuggestions: () => Promise.resolve(null),
+}));
+
 import Home from "./page";
 
 const サンプル発言: TwitchChatMessage = {

@@ -75,6 +75,16 @@ describe("GET /api/twitch/[...path]", () => {
     expect(headers.get("Client-Id")).toBe("test-client-id");
   });
 
+  it("チャンネル検索(search/channels)も中継できる", async () => {
+    fetchMock.mockResolvedValueOnce(helixResponse({ data: [] }));
+
+    const response = await callGet(["search", "channels"], "?query=zack");
+
+    expect(response.status).toBe(200);
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe("https://api.twitch.tv/helix/search/channels?query=zack");
+  });
+
   it("複数セグメントのエンドポイント(bits/cheermotes)も中継できる", async () => {
     fetchMock.mockResolvedValueOnce(helixResponse({ data: [] }));
 
