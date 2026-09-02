@@ -90,6 +90,20 @@ describe("GET /api/twitch/[...path]", () => {
     );
   });
 
+  it("チャットバッジ(chat/badges・chat/badges/global)も中継できる", async () => {
+    fetchMock.mockResolvedValue(helixResponse({ data: [] }));
+
+    const channelResponse = await callGet(["chat", "badges"], "?broadcaster_id=12345");
+    const globalResponse = await callGet(["chat", "badges", "global"]);
+
+    expect(channelResponse.status).toBe(200);
+    expect(globalResponse.status).toBe(200);
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "https://api.twitch.tv/helix/chat/badges?broadcaster_id=12345",
+      "https://api.twitch.tv/helix/chat/badges/global",
+    ]);
+  });
+
   it("許可リストにないエンドポイントは 404 を返し、Helix へ中継しない", async () => {
     const response = await callGet(["moderation", "banned"]);
 

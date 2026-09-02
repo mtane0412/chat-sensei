@@ -16,6 +16,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
+import { resetBadgesForTests, useBadgeStore } from "@/store/badges";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
@@ -90,6 +91,7 @@ afterEach(() => {
   resetPromptApiStoreForTests();
   resetBotFilterStoreForTests();
   resetSettingsStoreForTests();
+  resetBadgesForTests();
   window.localStorage.clear();
 });
 
@@ -110,6 +112,46 @@ describe("Home(3カラム構成)", () => {
     const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
     expect(within(rawColumn).getByText("viewer_taro")).toBeInTheDocument();
     expect(within(rawColumn).getByText("gg no re chat")).toBeInTheDocument();
+  });
+
+  it("対応表にあるバッジを、生IRC列の発言行の表示名の前に画像で表示する", () => {
+    // モデレーターかつサブスク3ヶ月の発言者。サブスクバッジはチャンネル固有画像
+    useChatConnectionStore.setState({
+      messages: [
+        {
+          ...サンプル発言,
+          badges: [
+            { name: "moderator", version: "1" },
+            { name: "subscriber", version: "3" },
+          ],
+        },
+      ],
+    });
+    useBadgeStore.setState({
+      badgeImages: {
+        "moderator/1": "https://cdn.example/moderator/1/2x.png",
+        "subscriber/3": "https://cdn.example/channel/subscriber/3/2x.png",
+      },
+    });
+
+    render(<Home />);
+
+    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    expect(rawColumn.querySelector('img[src="https://cdn.example/moderator/1/2x.png"]')).not.toBeNull();
+    expect(rawColumn.querySelector('img[src="https://cdn.example/channel/subscriber/3/2x.png"]')).not.toBeNull();
+  });
+
+  it("対応表に無いバッジ・対応表が未読み込み(Helix 利用不可)の場合は、バッジを表示せず現行どおり動作する", () => {
+    useChatConnectionStore.setState({
+      messages: [{ ...サンプル発言, badges: [{ name: "moderator", version: "1" }] }],
+    });
+    // 対応表は空(未読み込み・Helix 利用不可)
+
+    render(<Home />);
+
+    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    expect(within(rawColumn).getByText("viewer_taro")).toBeInTheDocument();
+    expect(rawColumn.querySelector('img[alt="moderator"]')).toBeNull();
   });
 
   it("翻訳列とPick up列は初期状態では見えており(ぼかし無し)、トグルでぼかせる", async () => {

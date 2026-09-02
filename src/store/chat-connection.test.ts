@@ -60,6 +60,15 @@ vi.mock("./cheermotes", async () => {
   };
 });
 
+// チャットバッジ対応表の読み込みも実 API(Helix プロキシ)を呼ぶため、ストア連携だけをモックで検証する
+const mockLoadBadges = vi.fn();
+const mockClearBadges = vi.fn();
+
+vi.mock("./badges", () => ({
+  loadBadges: (roomId: string) => mockLoadBadges(roomId),
+  clearBadges: () => mockClearBadges(),
+}));
+
 import { resetBotFilterStoreForTests, useBotFilterStore } from "./bot-filter";
 import { resetChatConnectionStoreForTests, subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
 
@@ -95,6 +104,8 @@ afterEach(() => {
   mockClearThirdPartyEmotes.mockClear();
   mockLoadCheermotes.mockClear();
   mockClearCheermotes.mockClear();
+  mockLoadBadges.mockClear();
+  mockClearBadges.mockClear();
   fakeThirdPartyEmoteMap = new Map();
   window.localStorage.clear();
 });
@@ -363,6 +374,52 @@ describe("Cheermote 一覧(Helix Cheermotes API)", () => {
     useChatConnectionStore.getState().connect("ZackRawrr");
 
     expect(mockClearCheermotes).toHaveBeenCalled();
+  });
+});
+
+describe("チャットバッジ(Helix Chat Badges API)", () => {
+  it("roomstate イベントを受信すると、room-id を使ってバッジ対応表の読み込みを開始する", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    capturedCallbacks?.onEvent({
+      type: "roomstate",
+      channel: "zackrawrr",
+      state: {
+        emoteOnly: false,
+        followersOnlyMinutes: null,
+        r9k: false,
+        slowSeconds: 0,
+        subsOnly: false,
+        roomId: "552120296",
+      },
+    });
+
+    expect(mockLoadBadges).toHaveBeenCalledWith("552120296");
+  });
+
+  it("room-id が無い roomstate では読み込みを開始しない", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    capturedCallbacks?.onEvent({
+      type: "roomstate",
+      channel: "zackrawrr",
+      state: {
+        emoteOnly: false,
+        followersOnlyMinutes: null,
+        r9k: false,
+        slowSeconds: 0,
+        subsOnly: false,
+        roomId: null,
+      },
+    });
+
+    expect(mockLoadBadges).not.toHaveBeenCalled();
+  });
+
+  it("connect() を呼ぶと、前のチャンネルのバッジ対応表をクリアする", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    expect(mockClearBadges).toHaveBeenCalled();
   });
 });
 
