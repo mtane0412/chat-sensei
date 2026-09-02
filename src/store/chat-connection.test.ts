@@ -79,6 +79,7 @@ vi.mock("./badges", () => ({
 }));
 
 import { resetBotFilterStoreForTests, useBotFilterStore } from "./bot-filter";
+import { hidePickupTerm, resetHiddenPickupStoreForTests, useHiddenPickupStore } from "./hidden-pickups";
 import { resetChatConnectionStoreForTests, subscribeToChatMessages, useChatConnectionStore } from "./chat-connection";
 
 /** テスト用のサンプル発言(実況チャットにありそうな「ナイスプレー」の一言) */
@@ -104,6 +105,7 @@ beforeEach(() => {
   // モジュールスコープのストアはテスト間で共有されるため、各テストの前に初期状態へ戻す
   resetChatConnectionStoreForTests();
   resetBotFilterStoreForTests();
+  resetHiddenPickupStoreForTests();
 });
 
 afterEach(() => {
@@ -126,6 +128,15 @@ describe("useChatConnectionStore", () => {
     useChatConnectionStore.getState().connect("ZackRawrr");
 
     expect(mockConnect).toHaveBeenCalledWith("ZackRawrr");
+  });
+
+  it("connect()を呼ぶと、Pick up列で削除した語句の非表示集合がクリアされる", () => {
+    // 前のチャンネルの発言IDは新しいチャンネルでは二度と参照されないため、持ち越すとメモリを浪費するだけになる
+    hidePickupTerm("msg-1", "gg");
+
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    expect(useHiddenPickupStore.getState().hiddenTerms).toEqual({});
   });
 
   it("connect()を呼ぶと、直前までの発言一覧がクリアされる", () => {

@@ -7,7 +7,13 @@
  * ホーム画面のテスト(page.test.tsx)で検証する。
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { hidePickupTerm, resetHiddenPickupStoreForTests, useHiddenPickupStore } from "./hidden-pickups";
+import {
+  clearHiddenPickupTerms,
+  hidePickupTerm,
+  isPickupTermHidden,
+  resetHiddenPickupStoreForTests,
+  useHiddenPickupStore,
+} from "./hidden-pickups";
 
 afterEach(() => {
   resetHiddenPickupStoreForTests();
@@ -34,6 +40,28 @@ describe("hidden-pickups ストア", () => {
     hidePickupTerm("msg-1", "gg");
 
     expect(useHiddenPickupStore.getState().hiddenTerms).toEqual({ "msg-1": ["gg"] });
+  });
+
+  it("語句を正準形(trim + 小文字化。pickup-filter と同じ基準)に揃えて保持する", () => {
+    hidePickupTerm("msg-1", " GG ");
+    hidePickupTerm("msg-1", "gg");
+
+    expect(useHiddenPickupStore.getState().hiddenTerms).toEqual({ "msg-1": ["gg"] });
+  });
+
+  it("isPickupTermHidden は綴り(大文字小文字・前後空白)が違っても同じ語句なら true を返す", () => {
+    hidePickupTerm("msg-1", "gg");
+
+    expect(isPickupTermHidden(["gg"], "GG ")).toBe(true);
+    expect(isPickupTermHidden(["gg"], "no re")).toBe(false);
+  });
+
+  it("clearHiddenPickupTerms で非表示集合をすべて破棄する(チャンネル切り替え時に呼ぶ)", () => {
+    hidePickupTerm("msg-1", "gg");
+
+    clearHiddenPickupTerms();
+
+    expect(useHiddenPickupStore.getState().hiddenTerms).toEqual({});
   });
 
   it("resetHiddenPickupStoreForTests で初期状態に戻る", () => {

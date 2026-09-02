@@ -23,17 +23,19 @@
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
  * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
- * 各パイプラインはこの画面のマウント時に開始する。Prompt API の利用可否は両列で共通の
+ * 各パイプラインはこの画面のマウント時に開始する。Pick up列の各語句はユーザーが削除でき、
+ * 削除した語句は hidden-pickups ストアが保持して表示時に除外する(issue #71)。Prompt API の利用可否は両列で共通の
  * prompt-api ストアを参照し、利用不可の理由は翻訳列・Pick up列それぞれの見出し下に表示する。
  * 接続フォームの横には設定ダイアログ(SettingsDialog。環境診断と設定の初期化)を開くアイコンを置く。
  * 言語設定は settings ストアが LocalStorage から復元し、パイプラインは復元後に開始する。言語設定が変わると
- * 両パイプラインを停止して新しい設定で開始し直す(生成済みの翻訳・Pick up は破棄され、表示中の発言は再生成される)。
+ * 両パイプラインを停止して新しい設定で開始し直す(生成済みの翻訳・Pick up は破棄され、表示中の発言は再生成される。
+ * ただし削除した語句の非表示集合は破棄されないため、再生成後も削除は維持される)。
  * 解説言語と同じ言語の発言は逆方向(学ぶ言語への翻訳 + その訳文からの Pick up)で処理されるため、
  * 発言ごとの言語判定で処理しなかった行(学ぶ言語でも解説言語でもない)だけ、その旨を各列に表示する。
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronsDownIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
 import { ChannelAutocompleteInput } from "@/components/channel-autocomplete";
@@ -51,7 +53,7 @@ import { useBadgeStore } from "@/store/badges";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
-import { hidePickupTerm, useHiddenPickupStore } from "@/store/hidden-pickups";
+import { hidePickupTerm, isPickupTermHidden, useHiddenPickupStore } from "@/store/hidden-pickups";
 import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupDone } from "@/store/pickups";
 import { usePromptApiStore, type PromptApiStatus } from "@/store/prompt-api";
 import { hydrateSettingsStore, useSettingsStore } from "@/store/settings";
@@ -289,7 +291,7 @@ export default function Home() {
                     entry={message.id === null ? undefined : pickupEntries[message.id]}
                     promptApi={promptApi}
                     labels={PICKUP_LABELS}
-                    renderDone={(done) => <PickupTerms messageId={message.id} terms={done.terms} />}
+                    renderDone={(done, messageId) => <PickupTerms messageId={messageId} terms={done.terms} />}
                   />
                 </Row>
               ))}
@@ -412,6 +414,10 @@ function Row({
     <div
       role="listitem"
       data-message-id={message.id ?? undefined}
+      // ぼかしは「自力で読む練習」のために中身を隠す機能なので、視覚だけでなくフォーカス・
+      // 読み上げの対象からも外す(Pick up列の削除ボタンが不可視のまま操作できたり、
+      // スクリーンリーダーで語句が漏れたりしないように)
+      inert={blurred || undefined}
       className={cn(
         "px-4 py-1 text-sm leading-relaxed break-words transition-[filter]",
         blurred && "blur-sm select-none",
@@ -445,8 +451,8 @@ function PipelineCellContent<TDone extends object>({
   promptApi: PromptApiStatus;
   /** 状態表示の文言一式(翻訳列なら `TRANSLATION_LABELS`) */
   labels: PipelineCellLabels;
-  /** 完了した結果の描画 */
-  renderDone: (done: TDone) => React.ReactNode;
+  /** 完了した結果の描画。messageId は null を除外済み(ID の無い発言はエントリ自体が作られない) */
+  renderDone: (done: TDone, messageId: string) => React.ReactNode;
 }) {
   if (message.id === null) {
     return <span className="text-muted-foreground">{labels.notYet} (no message ID)</span>;
@@ -460,7 +466,7 @@ function PipelineCellContent<TDone extends object>({
     case "pending":
       return <span className="text-muted-foreground">{labels.pending}</span>;
     case "done":
-      return renderDone(entry);
+      return renderDone(entry, message.id);
     case "failed":
       return (
         <span className="text-destructive">
@@ -481,14 +487,23 @@ function PipelineCellContent<TDone extends object>({
  *
  * ユーザーが削除した語句(hidden-pickups ストア。issue #71)は表示から除外する。
  * 削除ボタンは語句の hover 時(またはフォーカス時)に表示する × アイコンで、押すと
- * その発言のその語句を非表示集合へ追加する。非表示集合はパイプライン再起動で破棄されないため、
- * エントリの再生成後も削除が維持される。
+ * その発言のその語句を非表示集合へ追加する。hover が無いタッチ端末では常に表示する
+ * (不可視のままクリック可能領域だけが残り、誤タップで気付かず削除されるのを防ぐ)。
+ * 非表示集合はパイプライン再起動で破棄されないため、エントリの再生成後も削除が維持される。
+ *
+ * 発言のたびに全行が再レンダーされるため memo 化する(props の messageId・terms は
+ * エントリが変わらない限り同一参照で、非表示集合の変化はストア購読で拾う)。
  */
-function PickupTerms({ messageId, terms }: { messageId: string | null; terms: PickupDone["terms"] }) {
-  const hiddenTerms = useHiddenPickupStore((state) =>
-    messageId === null ? undefined : state.hiddenTerms[messageId],
-  );
-  const visibleTerms = hiddenTerms === undefined ? terms : terms.filter((term) => !hiddenTerms.includes(term.term));
+const PickupTerms = memo(function PickupTerms({
+  messageId,
+  terms,
+}: {
+  messageId: string;
+  terms: PickupDone["terms"];
+}) {
+  const hiddenTerms = useHiddenPickupStore((state) => state.hiddenTerms[messageId]);
+  const visibleTerms =
+    hiddenTerms === undefined ? terms : terms.filter((term) => !isPickupTermHidden(hiddenTerms, term.term));
   if (visibleTerms.length === 0) return <span className="text-muted-foreground">None</span>;
   return (
     <dl className="flex flex-col gap-0.5">
@@ -496,25 +511,22 @@ function PickupTerms({ messageId, terms }: { messageId: string | null; terms: Pi
         <div key={term.term} className="group/term flex flex-wrap items-baseline gap-x-2">
           <dt className="font-semibold">
             {term.term}
-            {/* 発言IDが無い行はエントリ自体が作られないため通常到達しないが、型上は null があり得るので削除ボタンを出さない */}
-            {messageId !== null && (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Remove "${term.term}"`}
-                className="ml-1 size-4 align-middle opacity-0 group-hover/term:opacity-100 focus-visible:opacity-100"
-                onClick={() => hidePickupTerm(messageId, term.term)}
-              >
-                <XIcon className="size-3" />
-              </Button>
-            )}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`Remove "${term.term}"`}
+              className="ml-1 align-middle opacity-0 group-hover/term:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+              onClick={() => hidePickupTerm(messageId, term.term)}
+            >
+              <XIcon />
+            </Button>
           </dt>
           <dd className="text-muted-foreground">{term.meaning}</dd>
         </div>
       ))}
     </dl>
   );
-}
+});
 
 /**
  * 翻訳文の中身。翻訳パイプライン(`translations.ts`)が emote をプレースホルダ経由で
