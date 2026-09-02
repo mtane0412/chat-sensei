@@ -17,7 +17,7 @@ import type { Settings } from "@/lib/settings";
 import type { EmotePosition } from "@/lib/twitch/irc-parser";
 import { createLlmBaseSessionFactory } from "./llm-provider";
 import { filterPickupTerms, preparePickupInput } from "./pickup-filter";
-import { buildPickupSystemPrompt, buildPickupUserPrompt, type SupportedLanguage } from "./prompts";
+import { buildPickupSystemPrompt, buildPickupUserPrompt, type StreamContext, type SupportedLanguage } from "./prompts";
 import { pickupSchema, type PickupResult } from "./schemas";
 import type { JobPriority, PromptSessionLike, SessionPool } from "./session-pool";
 import { runStructuredPrompt } from "./structured-prompt";
@@ -66,12 +66,20 @@ export async function pickUpExpressions(
 
 /**
  * 設定(LLM プロバイダ)と学ぶ言語・意味を書く言語のペアから、
- * Pick up 専用の `SessionPool` に渡すベースセッション生成関数を組み立てる
+ * Pick up 専用の `SessionPool` に渡すベースセッション生成関数を組み立てる。
+ * `streamContext`(配信タイトル・カテゴリ)を渡すとシステムプロンプトの末尾に
+ * 配信の文脈として追記される(issue #54)。null / 省略時は文脈なしの現行プロンプト
  */
 export function createPickupBaseSessionFactory(
   settings: Settings,
   targetLang: SupportedLanguage,
   explainLang: SupportedLanguage,
+  streamContext?: StreamContext | null,
 ): () => Promise<PromptSessionLike> {
-  return createLlmBaseSessionFactory(settings, buildPickupSystemPrompt, targetLang, explainLang);
+  return createLlmBaseSessionFactory(
+    settings,
+    (target, explain) => buildPickupSystemPrompt(target, explain, streamContext),
+    targetLang,
+    explainLang,
+  );
 }

@@ -9,7 +9,7 @@
  * (`LanguageModel` はブラウザ組み込みAPIのため `vi.stubGlobal` でモックする)。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildExplainSystemPrompt } from "./prompts";
+import { buildExplainSystemPrompt, buildTranslateSystemPrompt } from "./prompts";
 import type { SessionPool } from "./session-pool";
 import { STRUCTURED_PROMPT_MAX_ATTEMPTS } from "./structured-prompt";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
@@ -163,5 +163,46 @@ describe("createTranslateBaseSessionFactory", () => {
     expect(options.initialPrompts[0].content).not.toBe(buildExplainSystemPrompt("en", "ja"));
     expect(options.expectedInputs).toEqual([{ type: "text", languages: ["en", "ja"] }]);
     expect(options.expectedOutputs).toEqual([{ type: "text", languages: ["ja"] }]);
+  });
+});
+
+describe("createTranslateBaseSessionFactory と配信の文脈(issue #54)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** LanguageModel.create() に渡されるオプションのうち、このテストで検証したい部分だけの形 */
+  interface CapturedCreateOptions {
+    initialPrompts: Array<{ role: string; content: string }>;
+  }
+
+  function stubLanguageModel() {
+    const created = { prompt: vi.fn(), clone: vi.fn(), destroy: vi.fn() };
+    const create = vi.fn<(options: CapturedCreateOptions) => Promise<typeof created>>(async () => created);
+    vi.stubGlobal("LanguageModel", { create, availability: vi.fn() });
+    return create;
+  }
+
+  it("配信情報を渡すと、システムプロンプトに配信タイトル・カテゴリが含まれる", async () => {
+    const create = stubLanguageModel();
+
+    const factory = createTranslateBaseSessionFactory(DEFAULT_SETTINGS, "en", "ja", {
+      title: "Mythic raid progression! !drops",
+      category: "World of Warcraft",
+    });
+    await factory();
+
+    const content = create.mock.calls[0][0].initialPrompts[0].content;
+    expect(content).toContain("Mythic raid progression! !drops");
+    expect(content).toContain("World of Warcraft");
+  });
+
+  it("配信情報が null の場合(オフライン・API 失敗)は文脈なしの現行プロンプトになる", async () => {
+    const create = stubLanguageModel();
+
+    const factory = createTranslateBaseSessionFactory(DEFAULT_SETTINGS, "en", "ja", null);
+    await factory();
+
+    expect(create.mock.calls[0][0].initialPrompts[0].content).toBe(buildTranslateSystemPrompt("en", "ja"));
   });
 });

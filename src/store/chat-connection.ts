@@ -29,6 +29,7 @@ import { mergeCheermotePositions } from "@/lib/twitch/cheermotes";
 import { mergeThirdPartyEmotePositions } from "@/lib/twitch/third-party-emotes";
 import { matchesBotFilter } from "@/lib/bot-filter";
 import { isExcludedByBotFilter, useBotFilterStore } from "./bot-filter";
+import { clearStreamInfo, loadStreamInfo } from "./stream-info";
 import { clearThirdPartyEmotes, getThirdPartyEmoteMap, loadThirdPartyEmotes } from "./third-party-emotes";
 import { clearCheermotes, getCheermoteSet, loadCheermotes } from "./cheermotes";
 
@@ -102,15 +103,22 @@ export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
   messages: [],
   channel: null,
   connect: (channel) => {
-    // 前のチャンネルのサードパーティ emote 対応表・Cheermote 一覧を持ち越さない
-    // (ROOMSTATE 受信後に再読み込みされる)
+    // 前のチャンネルのサードパーティ emote 対応表・Cheermote 一覧・配信情報を持ち越さない
+    // (emote と Cheermote は ROOMSTATE 受信後に再読み込みされる)
     clearThirdPartyEmotes();
     clearCheermotes();
-    set({ messages: [], channel: normalizeChannelName(channel) });
+    clearStreamInfo();
+    const normalized = normalizeChannelName(channel);
+    set({ messages: [], channel: normalized });
+    // 配信情報(タイトル・カテゴリ。issue #54)はチャンネル名(user_login)だけで取得できるため、
+    // ROOMSTATE を待たず接続開始と同時に読み込む
+    void loadStreamInfo(normalized);
     getClient().connect(channel);
   },
   disconnect: () => {
     set({ channel: null });
+    // 切断中に古い配信の文脈を残さない
+    clearStreamInfo();
     getClient().disconnect();
   },
 }));

@@ -22,6 +22,7 @@ import { isChatCommandMessage } from "@/lib/twitch/chat-command";
 import { isTextlessMessage } from "@/lib/twitch/emotes";
 import { createAutoPipeline, type AutoPipelineDeps, type PipelineEntry } from "./auto-pipeline";
 import { useSettingsStore } from "./settings";
+import { getStreamInfo } from "./stream-info";
 
 /** 抽出の完了時に保持する結果。該当する表現が無い場合は `terms` が空配列 */
 export interface PickupDone {
@@ -35,10 +36,11 @@ export type PickupEntry = PipelineEntry<PickupDone>;
 export type PickupPipelineDeps = AutoPipelineDeps;
 
 const pipeline = createAutoPipeline<PickupDone>({
-  // ベースセッションは設定(LLM プロバイダ)に依存する。設定変更時はホーム画面がパイプラインを再起動し、
-  // プールも作り直されるため、生成時点のストアの設定を読めばよい
+  // ベースセッションは設定(LLM プロバイダ)と配信の文脈(タイトル・カテゴリ。issue #54)に依存する。
+  // 設定変更時・配信情報の変化時はホーム画面がパイプラインを再起動し、プールも作り直されるため、
+  // 生成時点のストアの値を読めばよい
   createBaseSession: (targetLang, explainLang) =>
-    createPickupBaseSessionFactory(useSettingsStore.getState().settings, targetLang, explainLang),
+    createPickupBaseSessionFactory(useSettingsStore.getState().settings, targetLang, explainLang, getStreamInfo()),
   resolveWithoutModel: (message) =>
     isTextlessMessage(message.text, message.emotes) || isChatCommandMessage(message.text) ? { terms: [] } : null,
   runJob: (pool, message, { signal, getMessages }) =>

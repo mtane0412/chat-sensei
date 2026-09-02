@@ -253,3 +253,29 @@ describe("createPickupBaseSessionFactory", () => {
     expect(options.expectedOutputs).toEqual([{ type: "text", languages: ["ja"] }]);
   });
 });
+
+describe("createPickupBaseSessionFactory と配信の文脈(issue #54)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("配信情報を渡すと、システムプロンプトに配信タイトル・カテゴリが含まれる", async () => {
+    /** LanguageModel.create() に渡されるオプションのうち、このテストで検証したい部分だけの形 */
+    interface CapturedCreateOptions {
+      initialPrompts: Array<{ role: string; content: string }>;
+    }
+    const created = { prompt: vi.fn(), clone: vi.fn(), destroy: vi.fn() };
+    const create = vi.fn<(options: CapturedCreateOptions) => Promise<typeof created>>(async () => created);
+    vi.stubGlobal("LanguageModel", { create, availability: vi.fn() });
+
+    const factory = createPickupBaseSessionFactory(DEFAULT_SETTINGS, "en", "ja", {
+      title: "Mythic raid progression! !drops",
+      category: "World of Warcraft",
+    });
+    await factory();
+
+    const content = create.mock.calls[0][0].initialPrompts[0].content;
+    expect(content).toContain("Mythic raid progression! !drops");
+    expect(content).toContain("World of Warcraft");
+  });
+});
