@@ -16,6 +16,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
+import { resetAvatarsForTests, useAvatarStore } from "@/store/avatars";
 import { resetBadgesForTests, useBadgeStore } from "@/store/badges";
 import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filter";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
@@ -46,6 +47,13 @@ vi.mock("@/store/pickups", async (importOriginal) => ({
 
 vi.mock("@/lib/ai/runBrowserDiagnosis", () => ({
   runBrowserDiagnosis: () => new Promise(() => {}),
+}));
+
+// チャンネル名のオートコンプリート(issue #59)の候補取得はネットワークに触れるためモックする。
+// null = Helix 利用不可(候補なし)として、ここでは手入力だけの動作を検証する
+vi.mock("@/lib/twitch/channel-search", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/twitch/channel-search")>()),
+  fetchChannelSuggestions: () => Promise.resolve(null),
 }));
 
 import Home from "./page";
@@ -91,6 +99,7 @@ afterEach(() => {
   resetPromptApiStoreForTests();
   resetBotFilterStoreForTests();
   resetSettingsStoreForTests();
+  resetAvatarsForTests();
   resetBadgesForTests();
   window.localStorage.clear();
 });
@@ -112,6 +121,28 @@ describe("Home(3カラム構成)", () => {
     const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
     expect(within(rawColumn).getByText("viewer_taro")).toBeInTheDocument();
     expect(within(rawColumn).getByText("gg no re chat")).toBeInTheDocument();
+  });
+
+  it("アバター取得済みの発言者には、生IRC列の発言行にアバター画像を表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    // サンプル発言の発言者(userId: "1234")のアバターだけが取得済みの状態
+    useAvatarStore.setState({ avatars: { "1234": "https://cdn.example/taro.png" } });
+
+    render(<Home />);
+
+    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const avatar = rawColumn.querySelector('img[src="https://cdn.example/taro.png"]');
+    expect(avatar).not.toBeNull();
+  });
+
+  it("アバター未取得の発言者は、アバターなしの現行表示のまま表示する", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+
+    render(<Home />);
+
+    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    expect(within(rawColumn).getByText("viewer_taro")).toBeInTheDocument();
+    expect(rawColumn.querySelector('img[src="https://cdn.example/taro.png"]')).toBeNull();
   });
 
   it("対応表にあるバッジを、生IRC列の発言行の表示名の前に画像で表示する", () => {

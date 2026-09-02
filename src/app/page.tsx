@@ -34,16 +34,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronsDownIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
+import { ChannelAutocompleteInput } from "@/components/channel-autocomplete";
 import { ExplanationLanguageDialog, LearningLanguagesDialog } from "@/components/language-dialogs";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments, type MessageSegment } from "@/lib/twitch/emotes";
+import { useAvatarStore } from "@/store/avatars";
 import { useBadgeStore } from "@/store/badges";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { useChatConnectionStore } from "@/store/chat-connection";
@@ -112,15 +113,18 @@ export default function Home() {
   const [translationBlurred, setTranslationBlurred] = useState(false);
   const [pickupBlurred, setPickupBlurred] = useState(false);
 
-  // 新着発言への追従。オンの間は発言が増えるたびにスクロール領域を最下部へ送る
+  // 新着発言への追従。オンの間は発言が増えるたびにスクロール領域を最下部へ送る。
+  // アバター(issue #60)は発言の表示後に遅れて届いて行の高さを増やすため、
+  // その反映時にも最下部へ送り直す(でないと最新の発言が見切れたまま追従が止まる)
   const [followLatest, setFollowLatest] = useState(true);
+  const avatars = useAvatarStore((state) => state.avatars);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!followLatest) return;
     const viewport = scrollViewportRef.current;
     if (!viewport) return;
     viewport.scrollTop = viewport.scrollHeight;
-  }, [followLatest, messages]);
+  }, [followLatest, messages, avatars]);
   // 利用者が上方向へスクロールして最下部から離れたら、読み返しの邪魔をしないよう追従を自動でオフにする。
   // 追従による最下部へのスクロールもこのイベントを起こすが、その時点では最下部にいるためオフにはならない
   useEffect(() => {
@@ -198,11 +202,11 @@ export default function Home() {
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="channel-input">Channel</Label>
           <div className="flex items-center gap-2">
-            <Input
+            <ChannelAutocompleteInput
               id="channel-input"
               placeholder="e.g. zackrawrr"
               value={channelInput}
-              onChange={(e) => setChannelInput(e.target.value)}
+              onValueChange={setChannelInput}
               disabled={connected}
             />
             {connected ? (
@@ -522,11 +526,24 @@ function ChatMessageRow({ message }: { message: TwitchChatMessage }) {
     () => splitMessageIntoSegments(message.text, message.emotes),
     [message.text, message.emotes],
   );
+  // 発言者のアバター(issue #60)。未取得・取得失敗(Helix 利用不可を含む)は undefined で、アバターなしの表示になる
+  const avatarUrl = useAvatarStore((state) =>
+    message.userId === null ? undefined : state.avatars[message.userId],
+  );
   // バッジ対応表(issue #61)。未読み込み・Helix 利用不可時は空で、バッジ非表示の現行表示になる
   const badgeImages = useBadgeStore((state) => state.badgeImages);
 
   return (
     <Row message={message} blurred={false}>
+      {avatarUrl !== undefined && (
+        // eslint-disable-next-line @next/next/no-img-element -- Twitch CDNの外部画像のためnext/imageのドメイン許可設定は不要な単純imgで表示する
+        <img
+          src={avatarUrl}
+          // 直後に表示名がテキストで続くため、アバターは装飾画像として扱う
+          alt=""
+          className="mr-1 inline-block size-5 rounded-full align-text-bottom"
+        />
+      )}
       {message.badges.map((badge) => {
         const badgeImageUrl = badgeImages[`${badge.name}/${badge.version}`];
         // 対応表に無いバッジ(未知の set_id など)は非表示のまま現行どおり動作する
