@@ -39,26 +39,32 @@ export interface EmoteSegment {
 export type MessageSegment = TextSegment | EmoteSegment;
 
 /**
- * サードパーティ emote(`third-party-emotes.ts`)のプレフィックス付き ID から、
- * 各サービスの CDN URL を組み立てる関数の表。theme / scale の指定には対応していないため、
- * ライブチャット表示に適した2倍サイズ相当の URL を固定で返す。
+ * プレフィックス付き ID(サードパーティ emote: `third-party-emotes.ts`、
+ * Cheering Emote: `cheermotes.ts`)から各サービスの CDN URL を組み立てる関数の表。
+ * theme / scale の指定には対応していないため、ライブチャット表示に適した
+ * 2倍サイズ相当の URL を固定で返す。
  */
-const THIRD_PARTY_EMOTE_URL_BUILDERS: Record<string, (id: string) => string> = {
+const PREFIXED_EMOTE_URL_BUILDERS: Record<string, (id: string) => string> = {
   bttv: (id) => `https://cdn.betterttv.net/emote/${id}/2x`,
   ffz: (id) => `https://cdn.frankerfacez.com/emote/${id}/2`,
   "7tv": (id) => `https://cdn.7tv.app/emote/${id}/2x.webp`,
+  // Cheering Emote(cheermotes.ts): `cheer:{プレフィックス}/{ティア}` 形式の ID から静的 CDN URL を組み立てる
+  cheer: (id) => {
+    const [name, tier] = id.split("/");
+    return `https://d3aqoihi2n8ty8.cloudfront.net/actions/${name}/dark/animated/${tier}/2.gif`;
+  },
 };
 
 /**
  * emote ID から emote 画像CDN URLを組み立てる。
- * `bttv:` / `ffz:` / `7tv:` プレフィックス付き ID は各サードパーティの CDN URL、
+ * `bttv:` / `ffz:` / `7tv:` / `cheer:` プレフィックス付き ID は各サービスの CDN URL、
  * それ以外は Twitch の CDN URL(デフォルトはダークテーマ・2倍サイズ)を返す。
  */
 export function buildEmoteImageUrl(emoteId: string, options: EmoteImageOptions = {}): string {
   const colonIndex = emoteId.indexOf(":");
   if (colonIndex !== -1) {
-    const buildThirdPartyUrl = THIRD_PARTY_EMOTE_URL_BUILDERS[emoteId.slice(0, colonIndex)];
-    if (buildThirdPartyUrl) return buildThirdPartyUrl(emoteId.slice(colonIndex + 1));
+    const buildPrefixedUrl = PREFIXED_EMOTE_URL_BUILDERS[emoteId.slice(0, colonIndex)];
+    if (buildPrefixedUrl) return buildPrefixedUrl(emoteId.slice(colonIndex + 1));
   }
   const theme = options.theme ?? "dark";
   const scale = options.scale ?? "2.0";

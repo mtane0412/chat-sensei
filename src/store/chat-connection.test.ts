@@ -60,6 +60,7 @@ function createSampleMessage(overrides: Partial<TwitchChatMessage> = {}): Twitch
     isAction: false,
     emotes: [],
     badges: [],
+    bits: null,
     timestampMs: 1690000000000,
     ...overrides,
   };
@@ -283,5 +284,20 @@ describe("bot除外", () => {
     useBotFilterStore.getState().setPatterns(["streamelements"]);
 
     expect(useChatConnectionStore.getState().messages).toEqual([humanMessage]);
+  });
+});
+
+describe("Cheering Emote(Cheermote)", () => {
+  it("bits 付きの privmsg 受信時に、本文中の Cheermote を emotes に合成してから保持・通知する", () => {
+    const received: TwitchChatMessage[] = [];
+    subscribeToChatMessages((message) => received.push(message));
+    useChatConnectionStore.getState().connect("somechannel");
+    const message = createSampleMessage({ text: "Cheer100 nice play", bits: 100 });
+
+    capturedCallbacks?.onEvent({ type: "privmsg", channel: "somechannel", message });
+
+    const expected = [{ id: "cheer:cheer/100", start: 0, end: 4 }];
+    expect(useChatConnectionStore.getState().messages[0].emotes).toEqual(expected);
+    expect(received[0].emotes).toEqual(expected);
   });
 });
