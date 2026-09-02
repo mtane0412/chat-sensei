@@ -64,8 +64,41 @@ describe("loadSettings", () => {
     expect(result).toEqual({ settings: DEFAULT_SETTINGS, wasCorrupted: true });
   });
 
-  it("旧形式(learningLangs の配列)の保存データは暗黙に変換せず、デフォルトに戻して壊れていたことを伝える", () => {
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ learningLangs: ["en"], explainLang: "ja" }));
+  it("旧形式(learningLangs の配列)の保存データは、先頭の学ぶ言語を learningLang として移行する(LLM プロバイダ設定を巻き添えで消さない)", () => {
+    window.localStorage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        learningLangs: ["fr"],
+        explainLang: "en",
+        llmProvider: "openrouter",
+        openRouterApiKey: "sk-or-v1-テスト用キー",
+        openRouterModel: "anthropic/claude-sonnet-5",
+      }),
+    );
+
+    expect(loadSettings()).toEqual({
+      settings: {
+        learningLang: "fr",
+        explainLang: "en",
+        llmProvider: "openrouter",
+        openRouterApiKey: "sk-or-v1-テスト用キー",
+        openRouterModel: "anthropic/claude-sonnet-5",
+      },
+      wasCorrupted: false,
+    });
+  });
+
+  it("旧形式の学ぶ言語に解説言語が含まれる場合は、解説言語と異なる最初の言語を採用する(同じペアはスキーマで禁止のため)", () => {
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ learningLangs: ["ja", "en"], explainLang: "ja" }));
+
+    expect(loadSettings()).toEqual({
+      settings: { ...DEFAULT_SETTINGS, learningLang: "en", explainLang: "ja" },
+      wasCorrupted: false,
+    });
+  });
+
+  it("旧形式の学ぶ言語が解説言語だけの場合は移行できないため、デフォルトに戻して壊れていたことを伝える", () => {
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ learningLangs: ["ja"], explainLang: "ja" }));
 
     expect(loadSettings()).toEqual({ settings: DEFAULT_SETTINGS, wasCorrupted: true });
   });

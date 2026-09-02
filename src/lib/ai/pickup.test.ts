@@ -326,12 +326,21 @@ describe("pickUpFromReverseTranslation(解説言語の発言を学ぶ言語へ�
     expect(result.terms).toEqual([{ term: "fr", meaning: "for real の略" }]);
   });
 
-  it("訳文に登場しない語句が含まれる場合はエラーを投げる(モデルの捏造語句を表示しない)", async () => {
+  it("訳文に登場しない語句は結果から落とし、残りの語句を返す(生成物同士の照合のため、1語の揺れで発言全体を失敗させない)", async () => {
+    // 順方向(原文への決定的な照合)とは異なり、逆方向は訳文・語句とも生成物なので不一致は throw せずその語句だけ落とす
     const pool = createFakeSessionPool(
-      JSON.stringify({ translation: "that's true", terms: [{ term: "no cap", meaning: "嘘じゃない" }] }),
+      JSON.stringify({
+        translation: "that's true, no kidding",
+        terms: [
+          { term: "no cap", meaning: "嘘じゃない" },
+          { term: "no kidding", meaning: "マジで、冗談抜きで" },
+        ],
+      }),
     );
 
-    await expect(pickUpFromReverseTranslation(pool, "それな")).rejects.toThrow(/does not appear in the translation/);
+    const result = await pickUpFromReverseTranslation(pool, "それな、マジで");
+
+    expect(result.terms).toEqual([{ term: "no kidding", meaning: "マジで、冗談抜きで" }]);
   });
 
   it("大文字小文字の違いは許容する(訳文が「W」でも「w」として返した語句を有効とみなす)", async () => {
@@ -418,7 +427,8 @@ describe("createReversePickupBaseSessionFactory", () => {
     // 順方向の Pick up プロンプトではなく、逆方向(訳文からの抽出)のプロンプトであること
     expect(options.initialPrompts[0].content).toBe(buildReversePickupSystemPrompt("en", "ja"));
     expect(options.expectedInputs).toEqual([{ type: "text", languages: ["en", "ja"] }]);
-    expect(options.expectedOutputs).toEqual([{ type: "text", languages: ["ja"] }]);
+    // 応答には学ぶ言語の訳文(translation)と解説言語の意味(meaning)が混在するため、両言語を出力として宣言する
+    expect(options.expectedOutputs).toEqual([{ type: "text", languages: ["en", "ja"] }]);
   });
 
   it("配信情報を渡すと、システムプロンプトに配信タイトル・カテゴリが含まれる(issue #54 と同じ機構)", async () => {

@@ -14,10 +14,8 @@
  *   `auto-pipeline.ts` が行う。ベースセッションは「学ぶ言語 1 つ × 解説言語」のペアごとに組み立てる
  * - Prompt API の利用可否は `prompt-api.ts` の共有ストアを参照する(Pick up 列と共通)
  */
-import type { SessionPool } from "@/lib/ai/session-pool";
 import { createTranslateBaseSessionFactory, translateChatMessage } from "@/lib/ai/translate";
 import { isChatCommandMessage } from "@/lib/twitch/chat-command";
-import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import {
   isTextlessMessage,
   maskEmotesWithPlaceholders,
@@ -40,25 +38,6 @@ export type TranslationEntry = PipelineEntry<TranslationDone>;
 /** パイプラインが依存する外部処理。テストではすべてフェイクを注入する */
 export type TranslationPipelineDeps = AutoPipelineDeps;
 
-/**
- * 翻訳ジョブの本体。emote をプレースホルダに置き換えて翻訳し、訳文中のプレースホルダを
- * emote セグメントに戻す(issue #44)。順方向(学ぶ言語→解説言語)と逆方向(解説言語→学ぶ言語)は
- * セッションプール(システムプロンプトの言語ペア)だけが異なり、処理の流れは同一のため共有する。
- */
-async function runTranslateJob(
-  pool: SessionPool,
-  message: TwitchChatMessage,
-  signal: AbortSignal,
-): Promise<TranslationDone> {
-  const { maskedText, placeholders } = maskEmotesWithPlaceholders(message.text, message.emotes);
-  const { translation } = await translateChatMessage(pool, maskedText, {
-    priority: "low",
-    signal,
-    placeholderTokens: placeholders.map((placeholder) => placeholder.token),
-  });
-  return { segments: restoreEmotesFromPlaceholders(translation, placeholders) };
-}
-
 const pipeline = createAutoPipeline<TranslationDone>({
   // ベースセッションは設定(LLM プロバイダ)と配信の文脈(タイトル・カテゴリ。issue #54)に依存する。
   // 設定変更時・配信情報の変化時はホーム画面がパイプラインを再起動し、プールも作り直されるため、
@@ -66,15 +45,23 @@ const pipeline = createAutoPipeline<TranslationDone>({
   createBaseSession: (targetLang, explainLang) =>
     createTranslateBaseSessionFactory(useSettingsStore.getState().settings, targetLang, explainLang, getStreamInfo()),
   // 逆方向は翻訳元・訳文の言語を入れ替えるだけでよいため、順方向のファクトリを引数の入れ替えで流用する
-  // (システムプロンプトは学ぶ言語で書かれ、解説言語→学ぶ言語の翻訳を指示する)
+  // (システムプロンプトは学ぶ言語で書かれ、解説言語→学ぶ言語の翻訳を指示する)。
+  // ジョブの処理は順方向と同一のため runReverseJob は定義せず、共通ファクトリのフォールバック(runJob)に任せる
   createReverseBaseSession: (learningLang, explainLang) =>
     createTranslateBaseSessionFactory(useSettingsStore.getState().settings, explainLang, learningLang, getStreamInfo()),
   resolveWithoutModel: (message) =>
     isTextlessMessage(message.text, message.emotes) || isChatCommandMessage(message.text)
       ? { segments: splitMessageIntoSegments(message.text, message.emotes) }
       : null,
-  runJob: (pool, message, { signal }) => runTranslateJob(pool, message, signal),
-  runReverseJob: (pool, message, { signal }) => runTranslateJob(pool, message, signal),
+  runJob: async (pool, message, { signal }) => {
+    const { maskedText, placeholders } = maskEmotesWithPlaceholders(message.text, message.emotes);
+    const { translation } = await translateChatMessage(pool, maskedText, {
+      priority: "low",
+      signal,
+      placeholderTokens: placeholders.map((placeholder) => placeholder.token),
+    });
+    return { segments: restoreEmotesFromPlaceholders(translation, placeholders) };
+  },
 });
 
 export const useTranslationStore = pipeline.useStore;

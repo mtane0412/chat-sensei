@@ -3,7 +3,7 @@
  *
  * ホーム画面の接続フォーム横のアイコンから開き、保存データが壊れていた場合の通知、
  * Prompt API / Language Detector の環境診断結果の表示、設定の初期化ができることを検証する。
- * 言語設定(学ぶ言語 / 解説言語)は各列の見出しのダイアログ(`language-dialogs.tsx`)に移したため、ここでは扱わない。
+ * 言語設定(学ぶ言語 / 解説言語)は接続フォーム横の常時表示セレクト(`language-pair-select.tsx`)に移したため、ここでは扱わない。
  * 環境診断(`runBrowserDiagnosis`)はブラウザ API に触れるためモックする。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -65,7 +65,7 @@ describe("SettingsDialog(設定の初期化・通知)", () => {
     expect(screen.getByRole("button", { name: "Settings" })).toBeDisabled();
   });
 
-  it("言語設定のセレクトは置かない(学ぶ言語・解説言語は各列の見出しから設定する)", async () => {
+  it("言語設定のセレクトは置かない(学ぶ言語・解説言語は接続フォーム横のセレクトから設定する)", async () => {
     const user = userEvent.setup();
     hydrateSettingsStore();
     render(<SettingsDialog />);

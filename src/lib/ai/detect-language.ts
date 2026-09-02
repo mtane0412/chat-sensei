@@ -17,7 +17,7 @@
  * - `createBrowserLanguageDetector`: 実ブラウザの `LanguageDetector.create()` を呼ぶ生成関数
  */
 import type { Settings } from "@/lib/settings";
-import { SUPPORTED_LANGUAGES, type SupportedLanguage } from "./prompts";
+import type { SupportedLanguage } from "./prompts";
 
 /** Language Detector の 1 候補。`@types/dom-chromium-ai` の `LanguageDetectionResult` と同じ形 */
 export interface DetectedLanguageCandidate {
@@ -64,12 +64,12 @@ const LATIN_ONLY_PATTERN = /^[\p{Script=Latin}\p{N}\p{P}\p{S}\s]+$/u;
 /** Prompt API 対応言語のうち Latin 文字で書く言語 */
 const LATIN_SCRIPT_LANGUAGES: readonly SupportedLanguage[] = ["en", "es", "de", "fr"];
 
-/** 短い Latin 文字列の規則で採用する言語。学ぶ言語が Latin 文字ならその言語、そうでなく解説言語が Latin 文字なら「同じ言語」 */
+/** 短い Latin 文字列の規則で採用する言語。学ぶ言語が Latin 文字ならその言語、そうでなければ「同じ言語」 */
 function resolveShortLatinText(text: string, settings: Settings): LanguageClassification | null {
   if (text.length > SHORT_LATIN_TEXT_MAX_LENGTH || !LATIN_ONLY_PATTERN.test(text)) return null;
-  if (LATIN_SCRIPT_LANGUAGES.includes(settings.learningLang)) return { kind: "learning" };
-  if (LATIN_SCRIPT_LANGUAGES.includes(settings.explainLang)) return { kind: "same-as-explanation" };
-  return null;
+  // 対応 5 言語のうち Latin 文字でないのは ja のみで、学ぶ言語と解説言語は必ず異なる(スキーマ保証)ため、
+  // 学ぶ言語が Latin 文字でない(= ja)なら解説言語は必ず Latin 文字になる
+  return LATIN_SCRIPT_LANGUAGES.includes(settings.learningLang) ? { kind: "learning" } : { kind: "same-as-explanation" };
 }
 
 /** 日本語が学ぶ言語か解説言語に設定されているか */
@@ -101,15 +101,6 @@ function primaryLanguageSubtag(tag: string): string {
   return tag.split("-")[0].toLowerCase();
 }
 
-function isSupportedLanguage(value: string): value is SupportedLanguage {
-  return (SUPPORTED_LANGUAGES as readonly string[]).includes(value);
-}
-
-/** 学ぶ言語と一致するか(学ぶ言語と解説言語が同じペアはスキーマで禁止されている) */
-function isLearningLanguage(lang: string, settings: Settings): lang is SupportedLanguage {
-  return isSupportedLanguage(lang) && lang === settings.learningLang;
-}
-
 /**
  * 本文・Language Detector の判定結果(信頼度順)・言語設定から、発言の扱いを決める。
  * 本文はかな規則・漢字規則にだけ使い、それ以外は判定器の候補列で決める。
@@ -124,7 +115,7 @@ export function classifyDetectedLanguage(
   const detected = resolveDetectedLanguage(text, candidates[0]?.detectedLanguage, settings);
 
   if (detected === settings.explainLang) return { kind: "same-as-explanation" };
-  if (isLearningLanguage(detected, settings)) return { kind: "learning" };
+  if (detected === settings.learningLang) return { kind: "learning" };
 
   // 短い感嘆詞・漢字だけの発言などで最上位候補が無関係な言語になった場合の救済。
   // 候補は信頼度順なので、学ぶ言語・解説言語のうち先に見つかったものを採用する
@@ -132,7 +123,7 @@ export function classifyDetectedLanguage(
     if (candidate.detectedLanguage === undefined || (candidate.confidence ?? 0) < MIN_FALLBACK_CONFIDENCE) continue;
     const lang = primaryLanguageSubtag(candidate.detectedLanguage);
     if (lang === settings.explainLang) return { kind: "same-as-explanation" };
-    if (isLearningLanguage(lang, settings)) return { kind: "learning" };
+    if (lang === settings.learningLang) return { kind: "learning" };
   }
   return resolveShortLatinText(text, settings) ?? { kind: "other", detectedLanguage: detected };
 }

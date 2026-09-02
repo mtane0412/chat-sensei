@@ -314,6 +314,34 @@ describe("createAutoPipeline().start", () => {
     stop();
   });
 
+  it("runReverseJob を省略した用途では、解説言語の発言も runJob を逆方向のセッションプールで実行する(翻訳のように処理が同一の用途向け)", async () => {
+    const sameJobPipeline = createAutoPipeline<EchoResult>({
+      createBaseSession: () => async () => {
+        throw new Error("テストでは createPool を注入するため呼ばれない");
+      },
+      createReverseBaseSession: () => async () => {
+        throw new Error("テストでは createReversePool を注入するため呼ばれない");
+      },
+      runJob: async (pool, message, { signal }) => ({
+        result: await pool.enqueue("low", (session) => session.prompt(message.text), signal),
+      }),
+    });
+    const { deps, emit, reverseEnqueue } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [Promise.resolve("nice play")],
+    });
+
+    const stop = sameJobPipeline.start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "ナイスプレー" }));
+    await flush();
+
+    expect(reverseEnqueue).toHaveBeenCalledTimes(1);
+    expect(sameJobPipeline.useStore.getState().entries["msg-1"]).toEqual({ status: "done", result: "nice play" });
+    stop();
+    sameJobPipeline.resetForTests();
+  });
+
   it("逆方向ジョブが失敗した場合は理由付きで failed として保持する(暗黙のフォールバックはしない)", async () => {
     const { deps, emit } = createDeps({
       detectedLanguage: "ja",

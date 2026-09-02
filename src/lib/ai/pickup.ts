@@ -13,10 +13,11 @@
  * - `createPickupBaseSessionFactory`: Pick up 専用のシステムプロンプトを持つベースセッションの生成関数を組み立てる。
  *   翻訳用とはプール(ベースセッション)を分ける前提(issue #15 の方針 (a))。直列キューは共有する(issue #23)
  */
+import type { z } from "zod";
 import type { Settings } from "@/lib/settings";
 import type { EmotePosition } from "@/lib/twitch/irc-parser";
 import { createLlmBaseSessionFactory } from "./llm-provider";
-import { filterPickupTerms, preparePickupInput } from "./pickup-filter";
+import { filterPickupTerms, preparePickupInput, type PreparedPickupInput } from "./pickup-filter";
 import {
   buildPickupSystemPrompt,
   buildPickupUserPrompt,
@@ -25,7 +26,7 @@ import {
   type StreamContext,
   type SupportedLanguage,
 } from "./prompts";
-import { pickupSchema, reversePickupSchema, type PickupResult } from "./schemas";
+import { pickupSchema, reversePickupSchema, type PickupResult, type PickupTerm } from "./schemas";
 import type { JobPriority, PromptSessionLike, SessionPool } from "./session-pool";
 import { runStructuredPrompt } from "./structured-prompt";
 
@@ -39,69 +40,90 @@ export interface PickupOptions {
   excludedNames?: string[];
 }
 
+/** 順方向・逆方向で共通の「足切り → 構造化生成 → 決定的フィルタ → 照合」の指定。両公開関数の差分だけを持つ */
+interface PickupExtractionSpec<TResult extends PickupResult> {
+  /** LLM に渡すユーザープロンプトの組み立て */
+  buildUserPrompt: (text: string) => string;
+  /** 応答の検証スキーマ(`terms` を含むこと) */
+  schema: z.ZodType<TResult>;
+  /** 語句の照合対象。順方向は原文(prepared.text)、逆方向は応答内の訳文 */
+  getMatchTarget: (prepared: PreparedPickupInput, result: TResult) => { text: string; label: string };
+  /**
+   * 照合に失敗した語句の扱い。順方向は決定的な原文への照合なので応答全体を失敗(throw)にするが、
+   * 逆方向は訳文・語句とも生成物で表記が揺れやすいため、その語句だけを落とす(drop)
+   */
+  onMismatch: "throw" | "drop";
+}
+
+/** 順方向・逆方向の Pick up の共通処理。照合は大文字小文字を区別せず、語句の前後の空白は無視する */
+async function extractPickupTerms<TResult extends PickupResult>(
+  sessionPool: SessionPool,
+  chatMessageText: string,
+  options: PickupOptions,
+  spec: PickupExtractionSpec<TResult>,
+): Promise<PickupResult> {
+  const prepared = preparePickupInput(chatMessageText, options.emotes ?? []);
+  if (prepared.text === "") {
+    return { terms: [] };
+  }
+
+  const result = await runStructuredPrompt(sessionPool, {
+    userPrompt: spec.buildUserPrompt(prepared.text),
+    schema: spec.schema,
+    priority: options.priority ?? "low",
+    signal: options.signal,
+  });
+
+  const terms = filterPickupTerms(result.terms, prepared, options.excludedNames ?? []);
+  const matchTarget = spec.getMatchTarget(prepared, result);
+  const normalizedTarget = matchTarget.text.toLowerCase();
+  const appearsInTarget = (term: PickupTerm) => normalizedTarget.includes(term.term.trim().toLowerCase());
+
+  if (spec.onMismatch === "drop") {
+    return { terms: terms.filter(appearsInTarget) };
+  }
+  const unknownTerm = terms.find((term) => !appearsInTarget(term));
+  if (unknownTerm) {
+    throw new Error(`The Prompt API returned a term that does not appear in the ${matchTarget.label}: ${unknownTerm.term}`);
+  }
+  return { terms };
+}
+
 /**
- * チャット本文から注目の表現を抽出する。
- * `runStructuredPrompt` でスキーマ検証済みの結果を得たあと、決定的な後段フィルタ → 本文との照合の順で処理し、
- * 照合に失敗した場合はエラーを投げる。照合は大文字小文字を区別しない
- * (「W」を「w」として返す程度の揺れは原文の語句とみなす)。
+ * チャット本文から注目の表現を抽出する(順方向)。
+ * `runStructuredPrompt` でスキーマ検証済みの結果を得たあと、決定的な後段フィルタ → 原文との照合の順で処理し、
+ * 照合に失敗した場合はエラーを投げる(モデルが解説言語の語や言い換えを「原文の語句」として返した応答を表示しない)。
  */
 export async function pickUpExpressions(
   sessionPool: SessionPool,
   chatMessageText: string,
   options: PickupOptions = {},
 ): Promise<PickupResult> {
-  const prepared = preparePickupInput(chatMessageText, options.emotes ?? []);
-  if (prepared.text === "") {
-    return { terms: [] };
-  }
-
-  const result = await runStructuredPrompt(sessionPool, {
-    userPrompt: buildPickupUserPrompt(prepared.text),
+  return extractPickupTerms(sessionPool, chatMessageText, options, {
+    buildUserPrompt: buildPickupUserPrompt,
     schema: pickupSchema,
-    priority: options.priority ?? "low",
-    signal: options.signal,
+    getMatchTarget: (prepared) => ({ text: prepared.text, label: "message" }),
+    onMismatch: "throw",
   });
-
-  const terms = filterPickupTerms(result.terms, prepared, options.excludedNames ?? []);
-  const normalizedText = prepared.text.toLowerCase();
-  const unknownTerm = terms.find((term) => !normalizedText.includes(term.term.toLowerCase()));
-  if (unknownTerm) {
-    throw new Error(`The Prompt API returned a term that does not appear in the message: ${unknownTerm.term}`);
-  }
-  return { terms };
 }
 
 /**
  * 解説言語のチャット本文を学ぶ言語へ翻訳させ、その訳文から注目の表現を抽出する(逆方向 Pick up)。
  * 翻訳と抽出を 1 回の構造化生成(`reversePickupSchema`)で行い、訳文(`translation`)は
  * 語句の照合にのみ使って結果には含めない(翻訳列の表示は翻訳パイプラインが別途生成する)。
- * 語句は原文ではなく訳文に登場する文字列であることを照合し、失敗した場合はエラーを投げる
- * (照合は `pickUpExpressions` と同じく大文字小文字を区別しない)。
+ * 訳文・語句とも生成物で表記が揺れやすいため、訳文に登場しない語句はその語句だけを落とす。
  */
 export async function pickUpFromReverseTranslation(
   sessionPool: SessionPool,
   chatMessageText: string,
   options: PickupOptions = {},
 ): Promise<PickupResult> {
-  const prepared = preparePickupInput(chatMessageText, options.emotes ?? []);
-  if (prepared.text === "") {
-    return { terms: [] };
-  }
-
-  const result = await runStructuredPrompt(sessionPool, {
-    userPrompt: buildReversePickupUserPrompt(prepared.text),
+  return extractPickupTerms(sessionPool, chatMessageText, options, {
+    buildUserPrompt: buildReversePickupUserPrompt,
     schema: reversePickupSchema,
-    priority: options.priority ?? "low",
-    signal: options.signal,
+    getMatchTarget: (_prepared, result) => ({ text: result.translation, label: "translation" }),
+    onMismatch: "drop",
   });
-
-  const terms = filterPickupTerms(result.terms, prepared, options.excludedNames ?? []);
-  const normalizedTranslation = result.translation.toLowerCase();
-  const unknownTerm = terms.find((term) => !normalizedTranslation.includes(term.term.toLowerCase()));
-  if (unknownTerm) {
-    throw new Error(`The Prompt API returned a term that does not appear in the translation: ${unknownTerm.term}`);
-  }
-  return { terms };
 }
 
 /**
@@ -127,8 +149,8 @@ export function createPickupBaseSessionFactory(
 /**
  * 設定(LLM プロバイダ)と学ぶ言語・解説言語のペアから、逆方向 Pick up 専用の
  * `SessionPool` に渡すベースセッション生成関数を組み立てる。入力は解説言語の発言、
- * 出力は学ぶ言語の訳文と解説言語の意味の混在になるため、`expectedInputs` に両言語を渡し、
- * `expectedOutputs` は意味の言語(解説言語)を渡す(順方向と同じ引数順のまま流用する)。
+ * 出力は学ぶ言語の訳文(translation)と解説言語の意味(meaning)の混在になるため、
+ * `expectedInputs`・`expectedOutputs` とも両言語を宣言する。
  * `streamContext` の扱いは順方向(issue #54)と同じ。
  */
 export function createReversePickupBaseSessionFactory(
@@ -142,5 +164,6 @@ export function createReversePickupBaseSessionFactory(
     (target, explain) => buildReversePickupSystemPrompt(target, explain, streamContext),
     learningLang,
     explainLang,
+    [learningLang, explainLang],
   );
 }

@@ -105,8 +105,11 @@ export interface AutoPipelineConfig<TDone extends object> {
   resolveWithoutModel?: (message: TwitchChatMessage) => TDone | null;
   /** 学ぶ言語の発言 1 件を処理して結果を返す。低優先度キューの溢れは `LowPriorityQueueOverflowError` で通知される */
   runJob: (pool: SessionPool, message: TwitchChatMessage, context: AutoPipelineJobContext) => Promise<TDone>;
-  /** 解説言語の発言 1 件を逆方向(学ぶ言語への翻訳ベース)で処理して結果を返す。`pool` は逆方向のセッションプール */
-  runReverseJob: (pool: SessionPool, message: TwitchChatMessage, context: AutoPipelineJobContext) => Promise<TDone>;
+  /**
+   * 解説言語の発言 1 件を逆方向(学ぶ言語への翻訳ベース)で処理して結果を返す。`pool` は逆方向のセッションプール。
+   * 省略した場合は `runJob` を逆方向のセッションプールで実行する(翻訳のように順方向と処理が同一の用途向け)
+   */
+  runReverseJob?: (pool: SessionPool, message: TwitchChatMessage, context: AutoPipelineJobContext) => Promise<TDone>;
 }
 
 export interface AutoPipeline<TDone extends object> {
@@ -240,9 +243,10 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
 
     /** 解説言語と判定した発言を、逆方向(解説言語→学ぶ言語)のセッションプールで処理する */
     function runReverseJob(message: TwitchChatMessage, id: string): Promise<void> {
-      return config
-        .runReverseJob(getReversePool(), message, { signal: controller.signal, getMessages: deps.getMessages })
-        .then((result) => setEntry(id, { status: "done", ...result }));
+      const run = config.runReverseJob ?? config.runJob;
+      return run(getReversePool(), message, { signal: controller.signal, getMessages: deps.getMessages }).then(
+        (result) => setEntry(id, { status: "done", ...result }),
+      );
     }
 
     /** 発言の言語を判定し、学ぶ言語なら順方向・解説言語なら逆方向のジョブを投入、どちらでもなければモデルを呼ばずに確定する */

@@ -90,6 +90,23 @@ function ensureBrowserEnvironment(): void {
   }
 }
 
+/**
+ * 旧形式(learningLangs: 配列)の保存データを現行の 1:1 形式へ明示的に移行する。
+ * 解説言語と異なる最初の学ぶ言語を learningLang に採用し、LLM プロバイダ設定(API キー等)の
+ * 他項目は巻き添えで消さずに保持する。移行できない場合(learningLangs が解説言語だけ等)は
+ * そのまま返し、後段のスキーマ検証で壊れた扱い(デフォルトへ戻す)にする。
+ */
+function migrateLegacySettings(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const record = raw as Record<string, unknown>;
+  if ("learningLang" in record || !Array.isArray(record.learningLangs)) return raw;
+  const learningLang: unknown = record.learningLangs.find((lang) => lang !== record.explainLang);
+  if (learningLang === undefined) return raw;
+  const migrated: Record<string, unknown> = { ...record, learningLang };
+  delete migrated.learningLangs;
+  return migrated;
+}
+
 /** LocalStorage から設定を読み込む。無い場合・壊れている場合はデフォルト設定を返す */
 export function loadSettings(): LoadSettingsResult {
   ensureBrowserEnvironment();
@@ -100,7 +117,7 @@ export function loadSettings(): LoadSettingsResult {
   }
 
   try {
-    const settings = settingsSchema.parse(JSON.parse(raw));
+    const settings = settingsSchema.parse(migrateLegacySettings(JSON.parse(raw)));
     return { settings, wasCorrupted: false };
   } catch {
     return { settings: DEFAULT_SETTINGS, wasCorrupted: true };

@@ -17,7 +17,7 @@
 import { z } from "zod";
 import { Label } from "@/components/ui/label";
 import { SUPPORTED_LANGUAGES } from "@/lib/ai/prompts";
-import { LANGUAGE_DISPLAY_NAMES, settingsSchema } from "@/lib/settings";
+import { LANGUAGE_DISPLAY_NAMES, type Settings } from "@/lib/settings";
 import { useSettingsStore } from "@/store/settings";
 
 const LEARNING_SELECT_ID = "learning-language-select";
@@ -33,15 +33,20 @@ export function LanguagePairSelect() {
   const hydrated = useSettingsStore((state) => state.hydrated);
   const setSettings = useSettingsStore((state) => state.setSettings);
 
-  /** 片方のセレクトの変更を設定に反映する。もう一方と同じ言語を選んだ場合は両者を入れ替える */
+  /**
+   * 片方のセレクトの変更を設定に反映する。もう一方と同じ言語を選んだ場合は両者を入れ替える。
+   * スキーマ検証は `setSettings`(→ `saveSettings`)が必ず行うため、ここでは重複して検証しない
+   */
   const handleChange = (field: "learningLang" | "explainLang") => (event: React.ChangeEvent<HTMLSelectElement>) => {
     const value = languageSchema.parse(event.target.value);
     const other = field === "learningLang" ? settings.explainLang : settings.learningLang;
-    const next =
+    const next: Settings =
       value === other
         ? { ...settings, learningLang: settings.explainLang, explainLang: settings.learningLang }
-        : { ...settings, [field]: value };
-    setSettings(settingsSchema.parse(next));
+        : field === "learningLang"
+          ? { ...settings, learningLang: value }
+          : { ...settings, explainLang: value };
+    setSettings(next);
   };
 
   return (

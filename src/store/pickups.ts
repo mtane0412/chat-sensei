@@ -25,7 +25,13 @@ import {
 import type { PickupTerm } from "@/lib/ai/schemas";
 import { isChatCommandMessage } from "@/lib/twitch/chat-command";
 import { isTextlessMessage } from "@/lib/twitch/emotes";
-import { createAutoPipeline, type AutoPipelineDeps, type PipelineEntry } from "./auto-pipeline";
+import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
+import {
+  createAutoPipeline,
+  type AutoPipelineDeps,
+  type AutoPipelineJobContext,
+  type PipelineEntry,
+} from "./auto-pipeline";
 import { useSettingsStore } from "./settings";
 import { getStreamInfo } from "./stream-info";
 
@@ -51,21 +57,23 @@ const pipeline = createAutoPipeline<PickupDone>({
     createReversePickupBaseSessionFactory(useSettingsStore.getState().settings, learningLang, explainLang, getStreamInfo()),
   resolveWithoutModel: (message) =>
     isTextlessMessage(message.text, message.emotes) || isChatCommandMessage(message.text) ? { terms: [] } : null,
-  runJob: (pool, message, { signal, getMessages }) =>
-    pickUpExpressions(pool, message.text, {
-      priority: "low",
-      signal,
-      emotes: message.emotes,
-      excludedNames: getMessages().flatMap((item) => [item.username, item.displayName]),
-    }),
-  runReverseJob: (pool, message, { signal, getMessages }) =>
-    pickUpFromReverseTranslation(pool, message.text, {
-      priority: "low",
-      signal,
-      emotes: message.emotes,
-      excludedNames: getMessages().flatMap((item) => [item.username, item.displayName]),
-    }),
+  runJob: (pool, message, context) => pickUpExpressions(pool, message.text, buildPickupJobOptions(message, context)),
+  runReverseJob: (pool, message, context) =>
+    pickUpFromReverseTranslation(pool, message.text, buildPickupJobOptions(message, context)),
 });
+
+/**
+ * 順方向・逆方向で共通のジョブオプション。表示中の発言者名(username / displayName)を
+ * 除外名として渡す(issue #26。@ 無しで本文に書かれたユーザー名を抽出結果から落とすため)
+ */
+function buildPickupJobOptions(message: TwitchChatMessage, { signal, getMessages }: AutoPipelineJobContext) {
+  return {
+    priority: "low" as const,
+    signal,
+    emotes: message.emotes,
+    excludedNames: getMessages().flatMap((item) => [item.username, item.displayName]),
+  };
+}
 
 export const usePickupStore = pipeline.useStore;
 
