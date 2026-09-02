@@ -10,6 +10,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import type { EnvironmentDiagnosis } from "@/lib/ai/availability";
+import type { LanguageDetectorLike } from "@/lib/ai/detect-language";
 import { LowPriorityQueueOverflowError } from "@/lib/ai/session-pool";
 import { createAutoPipeline, MAX_WAITING_FOR_DIAGNOSIS } from "./auto-pipeline";
 import { createDeferred, createDeps, createDiagnosis, createMessage, flush } from "./pipeline-test-fixtures";
@@ -647,5 +648,84 @@ describe("createAutoPipeline: 停止時のセッションプール破棄(issue #
     expect(deps.createReversePool).not.toHaveBeenCalled();
     expect(dispose).not.toHaveBeenCalled();
     expect(reverseDispose).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * issue #78: パイプライン停止時に、生成済み(生成中を含む)の Language Detector の
+ * ネイティブセッションを destroy し、再起動のたびにリークさせないこと。
+ */
+describe("createAutoPipeline: 停止時の Language Detector 破棄(issue #78)", () => {
+  it("停止関数は発言処理で生成した Language Detector を destroy する", async () => {
+    const { deps, emit, detectorDestroy } = createDeps({ promptResults: [Promise.resolve("訳文")] });
+
+    const stop = start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "gg chat" }));
+    await flush();
+
+    expect(detectorDestroy).not.toHaveBeenCalled();
+    stop();
+    await flush();
+
+    expect(detectorDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("停止関数はウォームアップで生成した Language Detector を destroy する", async () => {
+    const { deps, detectorDestroy } = createDeps();
+
+    const stop = start(deps);
+    await flush();
+    warmUpPipeline();
+    await flush();
+    stop();
+    await flush();
+
+    expect(detectorDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("Language Detector の生成中に停止した場合、生成完了を待ってから destroy する", async () => {
+    const { deps, detectorDestroy, createDetector } = createDeps();
+    const deferred = createDeferred<LanguageDetectorLike>();
+    createDetector.mockReturnValueOnce(deferred.promise);
+
+    const stop = start(deps);
+    await flush();
+    // ウォームアップで Detector の生成を開始し、生成が完了しないうちに停止する
+    warmUpPipeline();
+    stop();
+    await flush();
+    expect(detectorDestroy).not.toHaveBeenCalled();
+
+    deferred.resolve({ detect: async () => [], destroy: detectorDestroy });
+    await flush();
+
+    expect(detectorDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("Language Detector を生成しないまま停止した場合、destroy のために新しく生成しない", async () => {
+    const { deps, detectorDestroy, createDetector } = createDeps();
+
+    const stop = start(deps);
+    await flush();
+    stop();
+    await flush();
+
+    expect(createDetector).not.toHaveBeenCalled();
+    expect(detectorDestroy).not.toHaveBeenCalled();
+  });
+
+  it("Language Detector の生成が失敗していた場合、destroy を呼ばず停止だけを完了する", async () => {
+    const { deps, detectorDestroy, createDetector } = createDeps();
+    createDetector.mockRejectedValueOnce(new Error("NotAllowedError: user activation is required"));
+
+    const stop = start(deps);
+    await flush();
+    warmUpPipeline();
+    await flush();
+    stop();
+    await flush();
+
+    expect(detectorDestroy).not.toHaveBeenCalled();
   });
 });

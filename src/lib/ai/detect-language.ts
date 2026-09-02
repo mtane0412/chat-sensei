@@ -28,6 +28,8 @@ export interface DetectedLanguageCandidate {
 /** Language Detector のセッションが最低限備えるべきインターフェース */
 export interface LanguageDetectorLike {
   detect(input: string): Promise<DetectedLanguageCandidate[]>;
+  /** ネイティブセッションを解放する。パイプライン停止時に呼び、再起動のたびのリークを防ぐ(issue #78) */
+  destroy(): void;
 }
 
 /** 言語が判定できなかったときの BCP 47 タグ(Language Detector も同じ値を返す) */

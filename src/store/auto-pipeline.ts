@@ -370,6 +370,21 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
       // 破棄済みプールへの遅延ジョブは拒否されるが、controller.abort() 済みのため結果には反映されない
       forwardPool?.dispose();
       reversePool?.dispose();
+      // 生成済み(生成中を含む)の Language Detector のネイティブセッションを解放する(issue #78)。
+      // 生成中の場合は完了を待ってから destroy する(SessionPool.dispose() と同じ方針)。
+      // 生成失敗は getDetector が detectorPromise を捨てて呼び出し元へ通知済みのため、破棄対象が無く何もしない
+      detectorPromise?.then(
+        (detector) => {
+          try {
+            detector.destroy();
+          } catch (error) {
+            // destroy の失敗はネイティブセッションのリーク残存を意味するが、停止処理の呼び出し元
+            // (ホーム画面のアンマウント・再起動)には対処手段が無いため、警告として記録するに留める
+            console.warn("auto-pipeline: Language Detector の destroy に失敗しました", error);
+          }
+        },
+        () => {},
+      );
       if (activePipeline === handle) activePipeline = null;
     };
   }
