@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   BOT_FILTER_STORAGE_KEY,
   DEFAULT_BOT_FILTER_PATTERNS,
-  loadBotFilterPatterns,
+  loadBotFilterConfig,
 } from "@/lib/bot-filter";
 import {
   hydrateBotFilterStore,
@@ -34,8 +34,21 @@ describe("hydrateBotFilterStore", () => {
     hydrateBotFilterStore();
 
     expect(useBotFilterStore.getState().patterns).toEqual(["*trans"]);
+    expect(useBotFilterStore.getState().excludeBroadcaster).toBe(false);
     expect(useBotFilterStore.getState().hydrated).toBe(true);
     expect(useBotFilterStore.getState().wasCorrupted).toBe(false);
+  });
+
+  it("新形式(配信者除外オン)の保存データも復元する", () => {
+    window.localStorage.setItem(
+      BOT_FILTER_STORAGE_KEY,
+      JSON.stringify({ patterns: ["*trans"], excludeBroadcaster: true }),
+    );
+
+    hydrateBotFilterStore();
+
+    expect(useBotFilterStore.getState().patterns).toEqual(["*trans"]);
+    expect(useBotFilterStore.getState().excludeBroadcaster).toBe(true);
   });
 
   it("保存データが無ければデフォルトのパターンになる", () => {
@@ -64,14 +77,36 @@ describe("hydrateBotFilterStore", () => {
   });
 });
 
+describe("setBotFilter", () => {
+  it("パターンと配信者除外の両方を更新し、LocalStorage にも保存する", () => {
+    hydrateBotFilterStore();
+
+    useBotFilterStore.getState().setBotFilter({ patterns: ["nightbot"], excludeBroadcaster: true });
+
+    expect(useBotFilterStore.getState().patterns).toEqual(["nightbot"]);
+    expect(useBotFilterStore.getState().excludeBroadcaster).toBe(true);
+    expect(loadBotFilterConfig().config).toEqual({ patterns: ["nightbot"], excludeBroadcaster: true });
+  });
+});
+
 describe("setPatterns", () => {
+  it("配信者除外の設定は変えずに、パターンだけを更新する", () => {
+    hydrateBotFilterStore();
+    useBotFilterStore.getState().setBotFilter({ patterns: [], excludeBroadcaster: true });
+
+    useBotFilterStore.getState().setPatterns(["nightbot"]);
+
+    expect(useBotFilterStore.getState().patterns).toEqual(["nightbot"]);
+    expect(useBotFilterStore.getState().excludeBroadcaster).toBe(true);
+  });
+
   it("ストアを更新し、LocalStorage にも保存する", () => {
     hydrateBotFilterStore();
 
     useBotFilterStore.getState().setPatterns(["nightbot", "*trans"]);
 
     expect(useBotFilterStore.getState().patterns).toEqual(["nightbot", "*trans"]);
-    expect(loadBotFilterPatterns().patterns).toEqual(["nightbot", "*trans"]);
+    expect(loadBotFilterConfig().config.patterns).toEqual(["nightbot", "*trans"]);
   });
 
   it("保存に成功したら wasCorrupted を false に戻す(壊れていたデータは正常な値で上書きされたため)", () => {
@@ -88,8 +123,15 @@ describe("isExcludedByBotFilter", () => {
   it("未復元なら先に LocalStorage から復元してから判定する", () => {
     window.localStorage.setItem(BOT_FILTER_STORAGE_KEY, JSON.stringify(["*trans"]));
 
-    expect(isExcludedByBotFilter("yuki_trans")).toBe(true);
-    expect(isExcludedByBotFilter("viewer_taro")).toBe(false);
+    expect(isExcludedByBotFilter("yuki_trans", null)).toBe(true);
+    expect(isExcludedByBotFilter("viewer_taro", null)).toBe(false);
     expect(useBotFilterStore.getState().hydrated).toBe(true);
+  });
+
+  it("配信者除外がオンなら、チャンネル名と同じユーザー名を除外する", () => {
+    window.localStorage.setItem(BOT_FILTER_STORAGE_KEY, JSON.stringify({ patterns: [], excludeBroadcaster: true }));
+
+    expect(isExcludedByBotFilter("zackrawrr", "zackrawrr")).toBe(true);
+    expect(isExcludedByBotFilter("viewer_taro", "zackrawrr")).toBe(false);
   });
 });

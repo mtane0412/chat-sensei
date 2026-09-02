@@ -789,10 +789,27 @@ describe("Home(bot除外設定)", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
     expect(useBotFilterStore.getState().patterns).toEqual(["streamelements", "*bot"]);
-    expect(JSON.parse(window.localStorage.getItem("chat-sensei:bot-filter") ?? "null")).toEqual([
-      "streamelements",
-      "*bot",
-    ]);
+    expect(JSON.parse(window.localStorage.getItem("chat-sensei:bot-filter") ?? "null")).toEqual({
+      patterns: ["streamelements", "*bot"],
+      excludeBroadcaster: false,
+    });
+  });
+
+  it("配信者自身の発言を隠すトグルを切り替えて保存すると、ストアと LocalStorage に反映される", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await user.click(screen.getByRole("button", { name: "Bot filter" }));
+    const dialog = await screen.findByRole("dialog", { name: "Bot filter" });
+    const toggle = within(dialog).getByRole("switch", { name: "Hide the streamer's own messages" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await user.click(toggle);
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(useBotFilterStore.getState().excludeBroadcaster).toBe(true);
+    expect(JSON.parse(window.localStorage.getItem("chat-sensei:bot-filter") ?? "null")).toMatchObject({
+      excludeBroadcaster: true,
+    });
   });
 
   it("マウント時に LocalStorage から除外パターンを復元する", () => {

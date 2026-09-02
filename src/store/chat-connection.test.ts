@@ -349,6 +349,37 @@ describe("bot除外", () => {
 
     expect(useChatConnectionStore.getState().messages).toEqual([humanMessage]);
   });
+
+  it("配信者除外がオンなら、接続中チャンネルの配信者自身の発言は流れない", () => {
+    useBotFilterStore.getState().setBotFilter({ patterns: [], excludeBroadcaster: true });
+    useChatConnectionStore.getState().connect("ZackRawrr");
+    const listener = vi.fn();
+    subscribeToChatMessages(listener);
+
+    capturedCallbacks?.onEvent({
+      type: "privmsg",
+      channel: "zackrawrr",
+      message: createSampleMessage({ id: "streamer-1", username: "zackrawrr", displayName: "ZackRawrr" }),
+    });
+    const humanMessage = createSampleMessage({ id: "human-1", username: "viewer_taro" });
+    capturedCallbacks?.onEvent({ type: "privmsg", channel: "zackrawrr", message: humanMessage });
+
+    expect(useChatConnectionStore.getState().messages).toEqual([humanMessage]);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(humanMessage);
+  });
+
+  it("配信者除外をオンに変更すると、表示中の配信者自身の発言も取り除かれる", () => {
+    useBotFilterStore.getState().setBotFilter({ patterns: [], excludeBroadcaster: false });
+    useChatConnectionStore.getState().connect("ZackRawrr");
+    const streamerMessage = createSampleMessage({ id: "streamer-1", username: "zackrawrr" });
+    const humanMessage = createSampleMessage({ id: "human-1", username: "viewer_taro" });
+    useChatConnectionStore.setState({ messages: [streamerMessage, humanMessage] });
+
+    useBotFilterStore.getState().setBotFilter({ patterns: [], excludeBroadcaster: true });
+
+    expect(useChatConnectionStore.getState().messages).toEqual([humanMessage]);
+  });
 });
 
 describe("Cheering Emote(Cheermote)", () => {

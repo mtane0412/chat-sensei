@@ -4,8 +4,12 @@
  * - パターンは Twitch のログイン名(小文字)に対して照合する。`*` は任意の文字列に一致する
  *   ワイルドカードで、配信者ごとに個別のアカウントで運用される翻訳bot(`*trans`)や
  *   `*bot` のような命名の bot を一括で除外できる。`*` を含まないパターンは完全一致
- * - 設定は LocalStorage に文字列配列としてのみ永続化する(chat-sensei はサーバー不要の
- *   クライアントサイド専用アプリ)。保存データが壊れている場合は暗黙に補正せず、
+ * - パターンに加えて、配信者(broadcaster)自身の発言を除外するトグル(`excludeBroadcaster`)を持つ。
+ *   配信者アカウントで bot 的なコメント(定型文・アラート等)を流す配信者が多いため、
+ *   接続中チャンネル名(= 配信者のログイン名)との一致で除外できるようにする
+ * - 設定は LocalStorage に `{ patterns, excludeBroadcaster }` のオブジェクトとして永続化する
+ *   (chat-sensei はサーバー不要のクライアントサイド専用アプリ)。旧形式(文字列配列のみ)の
+ *   保存データは配信者除外オフとして復元する。保存データが壊れている場合は暗黙に補正せず、
  *   デフォルトへ戻したうえで `wasCorrupted: true` を返して呼び出し元が利用者に伝えられるようにする
  *   (CLAUDE.md の Fail-Fast 方針。`settings.ts` と同じ規約)
  */
@@ -36,11 +40,30 @@ export const DEFAULT_BOT_FILTER_PATTERNS: readonly string[] = [
   "commanderroot",
 ];
 
-const botFilterPatternsSchema = z.array(z.string());
+/** 旧形式の保存データ(パターンの文字列配列のみ。excludeBroadcaster 追加前) */
+const legacyBotFilterPatternsSchema = z.array(z.string());
 
-export interface LoadBotFilterPatternsResult {
+const botFilterConfigSchema = z.object({
+  patterns: z.array(z.string()),
+  excludeBroadcaster: z.boolean(),
+});
+
+/** bot除外設定の全体(除外パターン + 配信者自身を除外するか) */
+export interface BotFilterConfig {
+  /** 除外するユーザー名パターン(`*` ワイルドカード可、小文字) */
   patterns: readonly string[];
-  /** 保存されていた値が壊れていた(JSON不正・文字列配列でない)ため、デフォルトに戻した場合 true */
+  /** 接続中チャンネルの配信者自身の発言も除外するか */
+  excludeBroadcaster: boolean;
+}
+
+export const DEFAULT_BOT_FILTER_CONFIG: BotFilterConfig = {
+  patterns: DEFAULT_BOT_FILTER_PATTERNS,
+  excludeBroadcaster: false,
+};
+
+export interface LoadBotFilterConfigResult {
+  config: BotFilterConfig;
+  /** 保存されていた値が壊れていた(JSON不正・スキーマ不一致)ため、デフォルトに戻した場合 true */
   wasCorrupted: boolean;
 }
 
@@ -77,31 +100,50 @@ export function matchesBotFilter(username: string, patterns: readonly string[]):
   return patterns.some((pattern) => patternToRegExp(pattern).test(username));
 }
 
+/**
+ * 発言をチャット欄から除外すべきか。除外パターンとの一致に加え、配信者除外がオンの場合は
+ * 接続中チャンネル名(= 配信者のログイン名。小文字)との一致でも除外する。
+ * 未接続(channel が null)の間は配信者除外では除外しない。
+ */
+export function isExcludedFromChat(username: string, channel: string | null, config: BotFilterConfig): boolean {
+  if (config.excludeBroadcaster && channel !== null && username.toLowerCase() === channel.toLowerCase()) {
+    return true;
+  }
+  return matchesBotFilter(username, config.patterns);
+}
+
 function ensureBrowserEnvironment(): void {
   if (typeof window === "undefined") {
     throw new Error("bot-filter.ts の保存・復元関数はブラウザ環境でのみ呼び出せます(SSR中に呼び出さないでください)");
   }
 }
 
-/** LocalStorage から除外パターンを読み込む。無い場合はデフォルト、壊れている場合はデフォルト + wasCorrupted を返す */
-export function loadBotFilterPatterns(): LoadBotFilterPatternsResult {
+/** LocalStorage からbot除外設定を読み込む。無い場合はデフォルト、壊れている場合はデフォルト + wasCorrupted を返す */
+export function loadBotFilterConfig(): LoadBotFilterConfigResult {
   ensureBrowserEnvironment();
 
   const raw = window.localStorage.getItem(BOT_FILTER_STORAGE_KEY);
   if (raw === null) {
-    return { patterns: DEFAULT_BOT_FILTER_PATTERNS, wasCorrupted: false };
+    return { config: DEFAULT_BOT_FILTER_CONFIG, wasCorrupted: false };
   }
 
   try {
-    const patterns = botFilterPatternsSchema.parse(JSON.parse(raw));
-    return { patterns, wasCorrupted: false };
+    const parsed: unknown = JSON.parse(raw);
+    // 旧形式(パターンの文字列配列のみ)は、配信者除外オフとして新形式へ移行する
+    if (Array.isArray(parsed)) {
+      return {
+        config: { patterns: legacyBotFilterPatternsSchema.parse(parsed), excludeBroadcaster: false },
+        wasCorrupted: false,
+      };
+    }
+    return { config: botFilterConfigSchema.parse(parsed), wasCorrupted: false };
   } catch {
-    return { patterns: DEFAULT_BOT_FILTER_PATTERNS, wasCorrupted: true };
+    return { config: DEFAULT_BOT_FILTER_CONFIG, wasCorrupted: true };
   }
 }
 
-/** 除外パターンを LocalStorage に保存する。空配列(すべて除外しない)も保存できる */
-export function saveBotFilterPatterns(patterns: readonly string[]): void {
+/** bot除外設定を LocalStorage に保存する。空のパターン配列(すべて除外しない)も保存できる */
+export function saveBotFilterConfig(config: BotFilterConfig): void {
   ensureBrowserEnvironment();
-  window.localStorage.setItem(BOT_FILTER_STORAGE_KEY, JSON.stringify(botFilterPatternsSchema.parse(patterns)));
+  window.localStorage.setItem(BOT_FILTER_STORAGE_KEY, JSON.stringify(botFilterConfigSchema.parse(config)));
 }
