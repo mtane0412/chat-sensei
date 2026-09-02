@@ -16,7 +16,7 @@ import { fetchThirdPartyEmoteMap } from "@/lib/twitch/third-party-emotes";
 let emoteMap: ReadonlyMap<string, string> = new Map();
 /** 読み込み済み(または読み込み中)の Twitch ユーザー ID。未読み込みなら null */
 let loadedRoomId: string | null = null;
-/** クリアのたびに進める世代番号。読み込み完了時に世代が変わっていたら結果を破棄する */
+/** クリア・読み込み開始のたびに進める世代番号。読み込み完了時に世代が変わっていたら結果を破棄する */
 let generation = 0;
 
 /** 現在の対応表を返す。未読み込み・クリア直後は空の Map */
@@ -34,7 +34,9 @@ export async function loadThirdPartyEmotes(
 ): Promise<void> {
   if (loadedRoomId === roomId) return;
   loadedRoomId = roomId;
-  const requestGeneration = generation;
+  // 世代番号を進めてから控える。別チャンネルの読み込みを新しく開始した時点で
+  // 進行中の古い読み込みを無効化し、遅れて届いた結果による上書きを防ぐ
+  const requestGeneration = ++generation;
 
   const map = await fetchEmoteMap(roomId);
 
