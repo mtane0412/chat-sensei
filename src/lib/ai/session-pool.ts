@@ -70,6 +70,14 @@ export interface SessionPool {
    * ベースセッションを先に作っておく用途に使う。生成に失敗した場合は例外をそのまま投げる。
    */
   warmUp(): Promise<void>;
+  /**
+   * 生成済み(生成中を含む)のベースセッションを `destroy()` し、Gemini Nano のネイティブセッションを
+   * 解放する。プールの差し替え・パイプラインの停止時に呼ぶこと(issue #75)。
+   * - 冪等であり、2回以上呼んでも安全
+   * - 呼び出し後の `enqueue` / `warmUp` はベースセッションを再生成せず拒否する(Fail-Fast)。
+   *   実行中のジョブはクローンセッションで動作しているため影響を受けない
+   */
+  dispose(): void;
 }
 
 const DEFAULT_MAX_LOW_PRIORITY_QUEUE_LENGTH = 20;
@@ -187,8 +195,14 @@ export function createPromptJobQueue(options: PromptJobQueueOptions = {}): Promp
 
 export function createSessionPool(deps: SessionPoolDeps): SessionPool {
   let baseSessionPromise: Promise<PromptSessionLike> | null = null;
+  /** dispose() 済みか。破棄後にベースセッションを再生成して再リークさせないためのフラグ */
+  let disposed = false;
 
   function getBaseSession(): Promise<PromptSessionLike> {
+    if (disposed) {
+      // このメッセージは failed の理由として画面に表示され得るため、UIの言語(英語)で書く
+      return Promise.reject(new Error("This session pool has already been disposed"));
+    }
     if (!baseSessionPromise) {
       baseSessionPromise = deps.createBaseSession().catch((error: unknown) => {
         // 生成に失敗したら次回 enqueue 時に再試行できるようキャッシュを捨てる
@@ -202,6 +216,17 @@ export function createSessionPool(deps: SessionPoolDeps): SessionPool {
   return {
     async warmUp() {
       await getBaseSession();
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      const promise = baseSessionPromise;
+      baseSessionPromise = null;
+      // 生成中でも、完了を待ってから destroy する(生成そのものは中断できないため)。
+      // 生成失敗時は破棄する対象が無いので何もしない
+      if (promise) {
+        promise.then((session) => session.destroy()).catch(() => {});
+      }
     },
     enqueue<T>(priority: JobPriority, run: (session: PromptSessionLike) => Promise<T>, signal?: AbortSignal): Promise<T> {
       // ベースセッションの生成・クローンもキューの中で行い、`LanguageModel.create()` を含めて直列にする

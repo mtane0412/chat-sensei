@@ -371,3 +371,100 @@ describe("createSessionPool: 複数プールでのキュー共有(issue #23)", (
     expect(await pTranslate2).toBe("translate2");
   });
 });
+
+/**
+ * issue #75: プール差し替え・パイプライン停止時に、ウォームアップ済みのベースセッション
+ * (Gemini Nano のネイティブセッション)がページの寿命までリークしないよう破棄する API。
+ */
+describe("createSessionPool: dispose(issue #75)", () => {
+  it("dispose() は生成済みのベースセッションを destroy する", async () => {
+    const log: string[] = [];
+    const baseSession = createFakeSession(log, "base");
+    const pool = createPool(async () => baseSession);
+    await pool.warmUp();
+
+    pool.dispose();
+    await flushMicrotasks();
+
+    expect(baseSession.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose() は冪等で、2回呼んでも destroy は1回しか呼ばれない", async () => {
+    const log: string[] = [];
+    const baseSession = createFakeSession(log, "base");
+    const pool = createPool(async () => baseSession);
+    await pool.warmUp();
+
+    pool.dispose();
+    pool.dispose();
+    await flushMicrotasks();
+
+    expect(baseSession.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("ベースセッションが未生成のまま dispose() しても、生成を試みない", async () => {
+    const createBaseSession = vi.fn(async () => createFakeSession([], "base"));
+    const pool = createPool(createBaseSession);
+
+    pool.dispose();
+    await flushMicrotasks();
+
+    expect(createBaseSession).not.toHaveBeenCalled();
+  });
+
+  it("ベースセッションの生成中に dispose() した場合、生成完了後に destroy する", async () => {
+    const log: string[] = [];
+    const baseSession = createFakeSession(log, "base");
+    const deferred = createDeferred<PromptSessionLike>();
+    const pool = createPool(() => deferred.promise);
+
+    const warmUpPromise = pool.warmUp();
+    pool.dispose();
+    deferred.resolve(baseSession);
+    await warmUpPromise;
+    await flushMicrotasks();
+
+    expect(baseSession.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose() 後の enqueue は拒否され、ベースセッションを再生成しない(Fail-Fast)", async () => {
+    const log: string[] = [];
+    const createBaseSession = vi.fn(async () => createFakeSession(log, "base"));
+    const pool = createPool(createBaseSession);
+    await pool.warmUp();
+    pool.dispose();
+
+    const run = vi.fn(async () => "should not run");
+    await expect(pool.enqueue("high", run)).rejects.toThrow(/disposed/);
+
+    expect(run).not.toHaveBeenCalled();
+    expect(createBaseSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose() 後の warmUp() は拒否される(Fail-Fast)", async () => {
+    const pool = createPool(async () => createFakeSession([], "base"));
+    pool.dispose();
+
+    await expect(pool.warmUp()).rejects.toThrow(/disposed/);
+  });
+
+  it("実行中のジョブはクローンセッションで動作しているため、dispose() 後も完了できる", async () => {
+    const log: string[] = [];
+    const baseSession = createFakeSession(log, "base");
+    const pool = createPool(async () => baseSession);
+    const blocker = createDeferred<string>();
+
+    const pJob = pool.enqueue("high", async (session) => {
+      const text = await session.prompt("hello");
+      await blocker.promise;
+      return text;
+    });
+    await flushMicrotasks();
+
+    pool.dispose();
+    blocker.resolve("released");
+
+    expect(await pJob).toBe("response from base-clone1");
+    expect(baseSession.destroy).toHaveBeenCalledTimes(1);
+  });
+});

@@ -60,6 +60,9 @@ function getDefineTermPool(): SessionPool {
   // 構造ごと JSON にして比較する(設定・配信情報はどちらも小さな平坦オブジェクト)
   const key = JSON.stringify([settings, streamInfo]);
   if (cachedPool === null || cachedPool.key !== key) {
+    // 旧プールのウォームアップ済みベースセッションを破棄し、Gemini Nano のネイティブセッションを
+    // リークさせない(issue #75)。旧プールに残っていたジョブは破棄済みエラーで failed になる
+    cachedPool?.pool.dispose();
     cachedPool = {
       key,
       pool: createSessionPool({
@@ -216,6 +219,7 @@ export function clearManualPickups(): void {
 /** テスト専用: ストアとセッションプールのキャッシュを初期状態に戻す。各テストの afterEach で呼び出すこと */
 export function resetManualPickupStoreForTests(): void {
   abortAllPendingGenerations();
+  cachedPool?.pool.dispose();
   cachedPool = null;
   useManualPickupStore.setState({ entries: {} });
 }

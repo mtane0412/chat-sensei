@@ -6,6 +6,8 @@
  * 意味の生成(LLM 呼び出し)と Prompt API の利用可否はフェイクを注入する。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PromptSessionLike } from "@/lib/ai/session-pool";
+import { DEFAULT_SETTINGS } from "@/lib/settings";
 import {
   addManualPickup,
   clearManualPickups,
@@ -14,6 +16,35 @@ import {
   useManualPickupStore,
   type ManualPickupDeps,
 } from "./manual-pickups";
+import { resetPromptApiStoreForTests, usePromptApiStore } from "./prompt-api";
+import { resetSettingsStoreForTests, useSettingsStore } from "./settings";
+
+/**
+ * getDefineTermPool(セッションプールの差し替え)を検証するために define-term をモックする(issue #75)。
+ * デフォルト依存(deps を省略した呼び出し)だけがこのモックに到達し、
+ * ManualPickupDeps を注入する既存テストの経路には影響しない。
+ */
+const defineTermMockState = vi.hoisted(() => {
+  /** createDefineTermBaseSessionFactory が生成したフェイクのベースセッションの破棄記録(生成順) */
+  const createdBaseSessions: Array<{ destroyCount: number }> = [];
+  return { createdBaseSessions };
+});
+
+vi.mock("@/lib/ai/define-term", () => ({
+  createDefineTermBaseSessionFactory: () => async (): Promise<PromptSessionLike> => {
+    const tracker = { destroyCount: 0 };
+    defineTermMockState.createdBaseSessions.push(tracker);
+    const session: PromptSessionLike = {
+      prompt: async () => "モックの応答",
+      clone: async () => session,
+      destroy: () => {
+        tracker.destroyCount += 1;
+      },
+    };
+    return session;
+  },
+  defineTerm: async () => ({ meaning: "モックが生成した意味" }),
+}));
 
 function createDeps(overrides: Partial<ManualPickupDeps> = {}): ManualPickupDeps {
   return {
@@ -243,5 +274,68 @@ describe("manual-pickups ストア", () => {
     clearManualPickups();
 
     expect(useManualPickupStore.getState().entries).toEqual({});
+  });
+});
+
+/**
+ * issue #75: 設定・配信情報の変化でセッションプールを差し替えるとき、旧プールのウォームアップ済み
+ * ベースセッション(Gemini Nano のネイティブセッション)を破棄し、リークさせないこと。
+ * デフォルト依存(deps 省略)で getDefineTermPool を経由させるため、define-term をモックしている。
+ */
+describe("getDefineTermPool: プール差し替え時の破棄(issue #75)", () => {
+  /** ウォームアップ(ベースセッション生成)や dispose の destroy 呼び出しが落ち着くまでフラッシュする */
+  async function flushMicrotasks(times = 10) {
+    for (let i = 0; i < times; i++) {
+      await Promise.resolve();
+    }
+  }
+
+  /** デフォルト依存が参照する設定ストア・Prompt API ストアを「利用可能」な状態にする */
+  function setUpDefaultDepsEnvironment() {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, hydrated: true });
+    usePromptApiStore.setState({ status: { status: "ready" } });
+  }
+
+  afterEach(() => {
+    defineTermMockState.createdBaseSessions.length = 0;
+    resetSettingsStoreForTests();
+    resetPromptApiStoreForTests();
+  });
+
+  it("設定が同じ間はプールを使い回し、ベースセッションを破棄しない", async () => {
+    setUpDefaultDepsEnvironment();
+
+    await addManualPickup("msg-1", "gg", "gg chat");
+    await addManualPickup("msg-2", "poggers", "poggers wow");
+    await flushMicrotasks();
+
+    expect(defineTermMockState.createdBaseSessions).toHaveLength(1);
+    expect(defineTermMockState.createdBaseSessions[0].destroyCount).toBe(0);
+  });
+
+  it("設定が変わって新しいプールを作るとき、旧プールのベースセッションを destroy する", async () => {
+    setUpDefaultDepsEnvironment();
+    await addManualPickup("msg-1", "gg", "gg chat");
+    await flushMicrotasks();
+    expect(defineTermMockState.createdBaseSessions).toHaveLength(1);
+
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, explainLang: "es" }, hydrated: true });
+    await addManualPickup("msg-2", "poggers", "poggers wow");
+    await flushMicrotasks();
+
+    expect(defineTermMockState.createdBaseSessions).toHaveLength(2);
+    expect(defineTermMockState.createdBaseSessions[0].destroyCount).toBe(1); // 旧プールは破棄する
+    expect(defineTermMockState.createdBaseSessions[1].destroyCount).toBe(0); // 新プールは使い続ける
+  });
+
+  it("resetManualPickupStoreForTests はキャッシュ中のプールのベースセッションを破棄する", async () => {
+    setUpDefaultDepsEnvironment();
+    await addManualPickup("msg-1", "gg", "gg chat");
+    await flushMicrotasks();
+
+    resetManualPickupStoreForTests();
+    await flushMicrotasks();
+
+    expect(defineTermMockState.createdBaseSessions[0].destroyCount).toBe(1);
   });
 });

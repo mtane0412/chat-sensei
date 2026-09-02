@@ -92,7 +92,8 @@ export function createDeps(
     return run({ prompt });
   });
   const warmUp = vi.fn(async () => {});
-  const pool = { enqueue, warmUp } as unknown as SessionPool;
+  const dispose = vi.fn();
+  const pool = { enqueue, warmUp, dispose } as unknown as SessionPool;
 
   /** 逆方向ジョブ用のフェイクセッションの prompt。順方向と分けて検証できるようにする */
   const reversePrompt = vi.fn((): Promise<string> => {
@@ -104,7 +105,8 @@ export function createDeps(
     return run({ prompt: reversePrompt });
   });
   const reverseWarmUp = vi.fn(async () => {});
-  const reversePool = { enqueue: reverseEnqueue, warmUp: reverseWarmUp } as unknown as SessionPool;
+  const reverseDispose = vi.fn();
+  const reversePool = { enqueue: reverseEnqueue, warmUp: reverseWarmUp, dispose: reverseDispose } as unknown as SessionPool;
 
   /** フェイクの Language Detector。判定に渡された本文を検証するために公開する */
   const detect = vi.fn(
@@ -143,9 +145,11 @@ export function createDeps(
     enqueue,
     prompt,
     warmUp,
+    dispose,
     reverseEnqueue,
     reversePrompt,
     reverseWarmUp,
+    reverseDispose,
     detect,
     createDetector,
     listeners,
