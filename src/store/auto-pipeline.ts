@@ -366,6 +366,10 @@ export function createAutoPipeline<TDone extends object>(config: AutoPipelineCon
     return () => {
       unsubscribe();
       controller.abort();
+      // 生成済みプールのベースセッション(Gemini Nano のネイティブセッション)を解放する(issue #75)。
+      // 破棄済みプールへの遅延ジョブは拒否されるが、controller.abort() 済みのため結果には反映されない
+      forwardPool?.dispose();
+      reversePool?.dispose();
       if (activePipeline === handle) activePipeline = null;
     };
   }

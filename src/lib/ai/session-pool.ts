@@ -70,6 +70,16 @@ export interface SessionPool {
    * ベースセッションを先に作っておく用途に使う。生成に失敗した場合は例外をそのまま投げる。
    */
   warmUp(): Promise<void>;
+  /**
+   * 生成済み(生成中を含む)のベースセッションを `destroy()` し、Gemini Nano のネイティブセッションを
+   * 解放する。プールの差し替え・パイプラインの停止時に呼ぶこと(issue #75)。
+   * - 冪等であり、2回以上呼んでも安全
+   * - 呼び出し後の `enqueue` / `warmUp` はベースセッションを再生成せず
+   *   `SessionPoolDisposedError` で拒否する(Fail-Fast)
+   * - 実行中のジョブは影響を受けない。クローン中(`clone()` 実行中)の場合は
+   *   クローン完了を待ってからベースセッションを destroy する
+   */
+  dispose(): void;
 }
 
 const DEFAULT_MAX_LOW_PRIORITY_QUEUE_LENGTH = 20;
@@ -82,6 +92,19 @@ export class LowPriorityQueueOverflowError extends Error {
   constructor() {
     super("低優先度キューの上限に達したため、このジョブは破棄されました");
     this.name = "LowPriorityQueueOverflowError";
+  }
+}
+
+/**
+ * dispose() 済みのプールに enqueue / warmUp した際のエラー。
+ * 呼び出し側(manual-pickups など)が `instanceof` で判別し、
+ * 内部文言ではなく利用者向けの失敗理由に差し替えられるようにする(issue #75)。
+ */
+export class SessionPoolDisposedError extends Error {
+  constructor() {
+    // failed の理由として画面に表示され得るため、UIの言語(英語)で書く
+    super("This session pool has already been disposed");
+    this.name = "SessionPoolDisposedError";
   }
 }
 
@@ -187,8 +210,35 @@ export function createPromptJobQueue(options: PromptJobQueueOptions = {}): Promp
 
 export function createSessionPool(deps: SessionPoolDeps): SessionPool {
   let baseSessionPromise: Promise<PromptSessionLike> | null = null;
+  /** dispose() 済みか。破棄後にベースセッションを再生成して再リークさせないためのフラグ */
+  let disposed = false;
+  /** `clone()` 実行中のジョブ数。直列キューのため実質 0 か 1 */
+  let cloningCount = 0;
+  /** dispose() 時に clone() 実行中だった場合の destroy 待ちベースセッション */
+  let pendingDestroySession: PromptSessionLike | null = null;
+
+  /**
+   * destroy 待ちのベースセッションを、clone() 実行中のジョブがいなければ destroy する。
+   * clone() の途中で destroy すると clone() がブラウザ内部のエラーで失敗するため、
+   * dispose() と clone() 完了の両方からこの関数を呼び、後に到達した方が破棄を実行する
+   */
+  function destroyPendingBaseSessionIfIdle(): void {
+    if (!pendingDestroySession || cloningCount > 0) return;
+    const session = pendingDestroySession;
+    pendingDestroySession = null;
+    try {
+      session.destroy();
+    } catch (error) {
+      // destroy の失敗はネイティブセッションのリーク残存を意味するが、dispose の呼び出し元
+      // (パイプラインの停止処理など)を巻き込まないよう、例外にせず警告として記録する
+      console.warn("SessionPool: ベースセッションの destroy に失敗しました", error);
+    }
+  }
 
   function getBaseSession(): Promise<PromptSessionLike> {
+    if (disposed) {
+      return Promise.reject(new SessionPoolDisposedError());
+    }
     if (!baseSessionPromise) {
       baseSessionPromise = deps.createBaseSession().catch((error: unknown) => {
         // 生成に失敗したら次回 enqueue 時に再試行できるようキャッシュを捨てる
@@ -203,13 +253,37 @@ export function createSessionPool(deps: SessionPoolDeps): SessionPool {
     async warmUp() {
       await getBaseSession();
     },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      const promise = baseSessionPromise;
+      baseSessionPromise = null;
+      // 生成中でも、完了を待ってから destroy する(生成そのものは中断できないため)。
+      // 拒否ハンドラは「生成失敗 = 破棄する対象が無い」場合専用で、destroy の失敗は
+      // destroyPendingBaseSessionIfIdle が警告として記録する(暗黙に握りつぶさない)
+      void promise?.then(
+        (session) => {
+          pendingDestroySession = session;
+          destroyPendingBaseSessionIfIdle();
+        },
+        () => {},
+      );
+    },
     enqueue<T>(priority: JobPriority, run: (session: PromptSessionLike) => Promise<T>, signal?: AbortSignal): Promise<T> {
       // ベースセッションの生成・クローンもキューの中で行い、`LanguageModel.create()` を含めて直列にする
       return deps.queue.enqueue(
         priority,
         async () => {
           const baseSession = await getBaseSession();
-          const jobSession = await baseSession.clone();
+          // clone() の途中で dispose() がベースセッションを destroy しないよう、clone 中を数えて破棄を遅延させる
+          cloningCount += 1;
+          let jobSession: PromptSessionLike;
+          try {
+            jobSession = await baseSession.clone();
+          } finally {
+            cloningCount -= 1;
+            destroyPendingBaseSessionIfIdle();
+          }
           try {
             return await run(jobSession);
           } finally {

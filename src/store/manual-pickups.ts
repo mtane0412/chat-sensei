@@ -16,7 +16,7 @@
  */
 import { create } from "zustand";
 import { createDefineTermBaseSessionFactory, defineTerm } from "@/lib/ai/define-term";
-import { createSessionPool, type SessionPool } from "@/lib/ai/session-pool";
+import { createSessionPool, SessionPoolDisposedError, type SessionPool } from "@/lib/ai/session-pool";
 import { sharedPromptJobQueue } from "./auto-pipeline";
 import { normalizePickupTerm } from "./hidden-pickups";
 import { usePromptApiStore, type PromptApiStatus } from "./prompt-api";
@@ -50,6 +50,16 @@ export interface ManualPickupDeps {
  */
 let cachedPool: { key: string; pool: SessionPool } | null = null;
 
+/**
+ * キャッシュ中のプールを破棄して捨てる。「捨てる前に必ず dispose する」という不変条件を
+ * 1箇所に集約し、旧プールのウォームアップ済みベースセッション(Gemini Nano のネイティブ
+ * セッション)をリークさせない(issue #75)。プールが無ければ何もしない
+ */
+function disposeCachedPool(): void {
+  cachedPool?.pool.dispose();
+  cachedPool = null;
+}
+
 function getDefineTermPool(): SessionPool {
   const { hydrated, settings } = useSettingsStore.getState();
   // 手動Pick upはユーザー操作起点のため通常は復元済みだが、呼び出し順の誤りを暗黙に隠さない(Fail-Fast)。
@@ -60,6 +70,9 @@ function getDefineTermPool(): SessionPool {
   // 構造ごと JSON にして比較する(設定・配信情報はどちらも小さな平坦オブジェクト)
   const key = JSON.stringify([settings, streamInfo]);
   if (cachedPool === null || cachedPool.key !== key) {
+    // 旧プールに残っていたジョブは SessionPoolDisposedError で failed になり、
+    // addManualPickup が再試行を促す理由に差し替える
+    disposeCachedPool();
     cachedPool = {
       key,
       pool: createSessionPool({
@@ -175,12 +188,16 @@ export async function addManualPickup(
     const meaning = await deps.generateMeaning(trimmed, messageText, controller.signal);
     replaceEntry(messageId, trimmed, { status: "done", term: trimmed, meaning });
   } catch (error) {
-    // 削除・クリアによる中断はエントリ自体が消えているため、replaceEntry のガードで何も反映されない
-    replaceEntry(messageId, trimmed, {
-      status: "failed",
-      term: trimmed,
-      reason: error instanceof Error ? error.message : String(error),
-    });
+    // 削除・クリアによる中断はエントリ自体が消えているため、replaceEntry のガードで何も反映されない。
+    // プール差し替え(設定変更・配信情報の更新)で破棄されたジョブは、内部文言ではなく
+    // 再試行(語句の再選択)を促す理由に差し替える(issue #75)
+    const reason =
+      error instanceof SessionPoolDisposedError
+        ? "Cancelled because the settings or stream context changed. Select the term again to retry."
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    replaceEntry(messageId, trimmed, { status: "failed", term: trimmed, reason });
   } finally {
     pendingControllers.delete(pendingKey(messageId, trimmed));
   }
@@ -210,12 +227,15 @@ export function removeManualPickup(messageId: string, term: string): void {
 /** 手動Pick upをすべて破棄する。チャンネル切り替え時(`chat-connection.ts` の connect())に呼ぶ */
 export function clearManualPickups(): void {
   abortAllPendingGenerations();
+  // チャンネル切替後は配信情報が変わりプールキーが二度と一致しないため、ここで破棄しないと
+  // 旧チャンネルのベースセッションがページの寿命までリークし得る(issue #75)
+  disposeCachedPool();
   useManualPickupStore.setState({ entries: {} });
 }
 
 /** テスト専用: ストアとセッションプールのキャッシュを初期状態に戻す。各テストの afterEach で呼び出すこと */
 export function resetManualPickupStoreForTests(): void {
   abortAllPendingGenerations();
-  cachedPool = null;
+  disposeCachedPool();
   useManualPickupStore.setState({ entries: {} });
 }

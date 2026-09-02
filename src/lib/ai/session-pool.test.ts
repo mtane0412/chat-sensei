@@ -12,6 +12,7 @@ import {
   createPromptJobQueue,
   createSessionPool,
   LowPriorityQueueOverflowError,
+  SessionPoolDisposedError,
   type PromptJobQueue,
   type PromptSessionLike,
 } from "./session-pool";
@@ -369,5 +370,158 @@ describe("createSessionPool: 複数プールでのキュー共有(issue #23)", (
 
     expect(await pPickup1).toBe("pickup1");
     expect(await pTranslate2).toBe("translate2");
+  });
+});
+
+/**
+ * issue #75: プール差し替え・パイプライン停止時に、ウォームアップ済みのベースセッション
+ * (Gemini Nano のネイティブセッション)がページの寿命までリークしないよう破棄する API。
+ */
+describe("createSessionPool: dispose(issue #75)", () => {
+  it("dispose() は生成済みのベースセッションを destroy する", async () => {
+    const log: string[] = [];
+    const baseSession = createFakeSession(log, "base");
+    const pool = createPool(async () => baseSession);
+    await pool.warmUp();
+
+    pool.dispose();
+    await flushMicrotasks();
+
+    expect(baseSession.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose() は冪等で、2回呼んでも destroy は1回しか呼ばれない", async () => {
+    const log: string[] = [];
+    const baseSession = createFakeSession(log, "base");
+    const pool = createPool(async () => baseSession);
+    await pool.warmUp();
+
+    pool.dispose();
+    pool.dispose();
+    await flushMicrotasks();
+
+    expect(baseSession.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("ベースセッションが未生成のまま dispose() しても、生成を試みない", async () => {
+    const createBaseSession = vi.fn(async () => createFakeSession([], "base"));
+    const pool = createPool(createBaseSession);
+
+    pool.dispose();
+    await flushMicrotasks();
+
+    expect(createBaseSession).not.toHaveBeenCalled();
+  });
+
+  it("ベースセッションの生成中に dispose() した場合、生成完了後に destroy する", async () => {
+    const log: string[] = [];
+    const baseSession = createFakeSession(log, "base");
+    const deferred = createDeferred<PromptSessionLike>();
+    const pool = createPool(() => deferred.promise);
+
+    const warmUpPromise = pool.warmUp();
+    pool.dispose();
+    deferred.resolve(baseSession);
+    await warmUpPromise;
+    await flushMicrotasks();
+
+    expect(baseSession.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose() 後の enqueue は拒否され、ベースセッションを再生成しない(Fail-Fast)", async () => {
+    const log: string[] = [];
+    const createBaseSession = vi.fn(async () => createFakeSession(log, "base"));
+    const pool = createPool(createBaseSession);
+    await pool.warmUp();
+    pool.dispose();
+
+    const run = vi.fn(async () => "should not run");
+    await expect(pool.enqueue("high", run)).rejects.toThrow(/disposed/);
+
+    expect(run).not.toHaveBeenCalled();
+    expect(createBaseSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose() 後の warmUp() は拒否される(Fail-Fast)", async () => {
+    const pool = createPool(async () => createFakeSession([], "base"));
+    pool.dispose();
+
+    await expect(pool.warmUp()).rejects.toThrow(/disposed/);
+  });
+
+  it("dispose() 後の enqueue は SessionPoolDisposedError で拒否され、呼び出し側が判別できる", async () => {
+    const pool = createPool(async () => createFakeSession([], "base"));
+    await pool.warmUp();
+    pool.dispose();
+
+    await expect(pool.enqueue("high", async () => "x")).rejects.toBeInstanceOf(SessionPoolDisposedError);
+  });
+
+  it("ベースセッションの clone() 実行中に dispose() しても、clone 完了を待ってから destroy する(clone 中の破棄レースを防ぐ)", async () => {
+    const cloneDeferred = createDeferred<PromptSessionLike>();
+    const cloneSession: PromptSessionLike = {
+      prompt: async () => "cloned response",
+      clone: async () => cloneSession,
+      destroy: vi.fn(),
+    };
+    const baseSession: PromptSessionLike = {
+      prompt: async () => "base response",
+      clone: () => cloneDeferred.promise,
+      destroy: vi.fn(),
+    };
+    const pool = createPool(async () => baseSession);
+
+    const pJob = pool.enqueue("high", (session) => session.prompt("hello"));
+    await flushMicrotasks(); // ジョブが clone() の完了待ちに入るまで進める
+
+    pool.dispose();
+    await flushMicrotasks();
+    expect(baseSession.destroy).not.toHaveBeenCalled(); // clone 完了前は destroy しない
+
+    cloneDeferred.resolve(cloneSession);
+    expect(await pJob).toBe("cloned response");
+    expect(baseSession.destroy).toHaveBeenCalledTimes(1); // clone 完了後に destroy する
+  });
+
+  it("ベースセッションの destroy() が失敗した場合は握りつぶさず console.warn で記録する", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const baseSession: PromptSessionLike = {
+        prompt: async () => "",
+        clone: async () => baseSession,
+        destroy: () => {
+          throw new Error("destroy failed");
+        },
+      };
+      const pool = createPool(async () => baseSession);
+      await pool.warmUp();
+
+      pool.dispose();
+      await flushMicrotasks();
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("実行中のジョブはクローンセッションで動作しているため、dispose() 後も完了できる", async () => {
+    const log: string[] = [];
+    const baseSession = createFakeSession(log, "base");
+    const pool = createPool(async () => baseSession);
+    const blocker = createDeferred<string>();
+
+    const pJob = pool.enqueue("high", async (session) => {
+      const text = await session.prompt("hello");
+      await blocker.promise;
+      return text;
+    });
+    await flushMicrotasks();
+
+    pool.dispose();
+    blocker.resolve("released");
+
+    expect(await pJob).toBe("response from base-clone1");
+    expect(baseSession.destroy).toHaveBeenCalledTimes(1);
   });
 });

@@ -600,3 +600,52 @@ describe("createAutoPipeline().resetForTests", () => {
     expect(useStore.getState().entries).toEqual({});
   });
 });
+
+/**
+ * issue #75: パイプライン停止時に、生成済みのセッションプール(ウォームアップ済みベースセッション)を
+ * dispose し、Gemini Nano のネイティブセッションをリークさせないこと。
+ */
+describe("createAutoPipeline: 停止時のセッションプール破棄(issue #75)", () => {
+  it("停止関数はウォームアップで生成した順方向・逆方向プールを dispose する", async () => {
+    const { deps, dispose, reverseDispose } = createDeps();
+
+    const stop = start(deps);
+    await flush();
+    warmUpPipeline();
+    await flush();
+
+    expect(dispose).not.toHaveBeenCalled();
+    expect(reverseDispose).not.toHaveBeenCalled();
+    stop();
+
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(reverseDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("発言処理で生成した順方向プールだけを dispose し、未生成の逆方向プールは作らない", async () => {
+    const { deps, emit, dispose, reverseDispose } = createDeps({ promptResults: [Promise.resolve("訳文")] });
+
+    const stop = start(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "gg chat" }));
+    await flush();
+    stop();
+
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(reverseDispose).not.toHaveBeenCalled();
+    expect(deps.createReversePool).not.toHaveBeenCalled();
+  });
+
+  it("プールを一度も生成しないまま停止した場合、dispose のために新しくプールを作らない", async () => {
+    const { deps, dispose, reverseDispose } = createDeps();
+
+    const stop = start(deps);
+    await flush();
+    stop();
+
+    expect(deps.createPool).not.toHaveBeenCalled();
+    expect(deps.createReversePool).not.toHaveBeenCalled();
+    expect(dispose).not.toHaveBeenCalled();
+    expect(reverseDispose).not.toHaveBeenCalled();
+  });
+});
