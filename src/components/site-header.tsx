@@ -12,7 +12,8 @@ import { SettingsDialog } from "@/components/settings-dialog";
 
 export function SiteHeader() {
   return (
-    <header className="border-b bg-background">
+    // Surface 色で配信embedと地続きに見せる(issue #87)
+    <header className="border-b bg-card">
       <nav className="mx-auto flex w-full items-center justify-between gap-4 px-6 py-2">
         <Link href="/" className="font-heading text-lg font-semibold">
           chat-sensei
