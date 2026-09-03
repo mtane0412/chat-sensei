@@ -15,7 +15,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { UsersIcon } from "lucide-react";
+import { UserIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { LANGUAGE_DISPLAY_NAMES } from "@/lib/settings";
 import { fetchLanguagePairStreams, type TaggedStream } from "@/lib/twitch/stream-list";
@@ -103,8 +103,10 @@ export function LanguagePairStreamList() {
                   <span className="flex items-center gap-2 text-xs text-muted-foreground">
                     {stream.category !== "" && <span className="truncate">{stream.category}</span>}
                     {stream.viewerCount !== null && (
-                      <span className="flex shrink-0 items-center gap-1">
-                        <UsersIcon aria-hidden="true" className="size-3" />
+                      // 配信者情報パネル(stream-info-panel.tsx)と同じ「赤色の人アイコン + 数字」
+                      // (色はライブ配信用トークン --live)に揃える
+                      <span className="flex shrink-0 items-center gap-1 font-semibold text-live">
+                        <UserIcon aria-hidden="true" className="size-3" />
                         {VIEWER_COUNT_FORMAT.format(stream.viewerCount)}
                         <span className="sr-only"> viewers</span>
                       </span>
