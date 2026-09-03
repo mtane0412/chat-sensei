@@ -17,7 +17,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { User } from "lucide-react";
+import { UserIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import { fetchGameBoxArtUrl } from "@/lib/twitch/game-box-art";
@@ -91,13 +91,14 @@ export function StreamInfoPanel() {
           </p>
         </div>
         {streamInfo !== null && streamInfo.viewerCount !== null && (
-          // Twitch 本体と同様の「赤色の人アイコン + 数字」。読み上げには aria-label で「viewers」を補う
-          <span
-            aria-label={`${VIEWER_COUNT_FORMAT.format(streamInfo.viewerCount)} viewers`}
-            className="flex shrink-0 items-center gap-1 text-sm font-semibold text-red-500"
-          >
-            <User aria-hidden="true" className="size-4" />
-            {VIEWER_COUNT_FORMAT.format(streamInfo.viewerCount)}
+          // Twitch 本体と同様の「赤色の人アイコン + 数字」(色はライブ配信用トークン --live)。
+          // 画面には数字のみを表示し、スクリーンリーダーには sr-only の「viewers」で単位を補う
+          <span className="flex shrink-0 items-center gap-1 text-sm font-semibold text-live">
+            <UserIcon aria-hidden="true" className="size-4" />
+            <span>
+              {VIEWER_COUNT_FORMAT.format(streamInfo.viewerCount)}
+              <span className="sr-only"> viewers</span>
+            </span>
           </span>
         )}
         <Button onClick={disconnect} variant="outline" size="sm">

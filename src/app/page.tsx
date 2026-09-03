@@ -9,7 +9,7 @@
  *
  * Twitch チャンネル名を入力して匿名接続し、流れてくる発言を3列で表示する。
  *
- * - 左列「生IRC」: 受信した発言をそのまま(表示名の色・emote画像付きで)表示する
+ * - 左列「Raw Chat」: 受信した発言をそのまま(表示名の色・emote画像付きで)表示する
  * - 中央列「翻訳」: 発言ごとの翻訳(translations ストア)を左列と同じ高さの行に表示する
  * - 右列「Pick up」: 発言ごとに抽出した注目の表現(語句と意味のペア。pickups ストア)を同じ行に表示する
  *
@@ -20,7 +20,7 @@
  *
  * 翻訳列・Pick up列は各列の見出し右端に置いた目のアイコンのトグル(BlurToggle)でぼかせる
  * (自力で読む練習をしたいときに使う。初期状態はどちらも見える)。
- * 生IRC列の見出しには、新着発言に合わせてスクロール領域を最下部へ送り続ける追従トグル(FollowToggle。
+ * Raw Chat列の見出しには、新着発言に合わせてスクロール領域を最下部へ送り続ける追従トグル(FollowToggle。
  * 初期状態はオンで、利用者が上へスクロールして最下部から離れると自動でオフになる)と、
  * bot除外設定(BotFilterDialog)を開くアイコンを置く。
  * 言語ペア(学ぶ言語 / 解説言語)のセレクトと設定ダイアログは、接続前後のどちらの画面でも
@@ -28,7 +28,7 @@
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
  * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
- * 各パイプラインはこの画面のマウント時に開始する。生IRC列のテキストを範囲選択すると
+ * 各パイプラインはこの画面のマウント時に開始する。Raw Chat列のテキストを範囲選択すると
  * フローティングの「Pick up」ボタン(ManualPickupOverlay)が出て、選択した語句を手動でPick upできる
  * (issue #72。意味の生成状態は manual-pickups ストアが保持し、Pick up列で自動抽出分とあわせて表示する)。
  * Pick up列の各語句はユーザーが削除でき、
@@ -203,7 +203,7 @@ export default function Home() {
 
   const connected = isConnectingOrConnected(connectionState);
 
-  // 生IRC列の範囲選択から手動Pick up(issue #72)。選択した語句の意味を、発言本文を文脈として生成する
+  // Raw Chat列の範囲選択から手動Pick up(issue #72)。選択した語句の意味を、発言本文を文脈として生成する
   const handleManualPickup = useCallback((messageId: string, term: string) => {
     const message = useChatConnectionStore.getState().messages.find((item) => item.id === messageId);
     // 選択からクリックまでの間に発言がリングバッファから溢れた場合、結果を表示する行が無いため追加しない
@@ -361,7 +361,7 @@ function BlurToggle({
 }
 
 /**
- * 新着発言への追従を切り替えるアイコンのトグル。生IRC列の見出し右端に置く。
+ * 新着発言への追従を切り替えるアイコンのトグル。Raw Chat列の見出し右端に置く。
  * `role="switch"` + `aria-checked` で状態を公開し、オンの間はアイコンを強調色で表示する。
  */
 function FollowToggle({
@@ -401,7 +401,7 @@ function Column({
   title: string;
   /** 列全体がぼかし中か(実際のぼかしは行単位で適用し、ここでは data 属性で状態を公開する) */
   blurred: boolean;
-  /** 列の識別子(`data-column` 属性)。手動Pick upの選択範囲の判定(生IRC列に限定)に使う */
+  /** 列の識別子(`data-column` 属性)。手動Pick upの選択範囲の判定(Raw Chat列に限定)に使う */
   dataColumn?: string;
   /** 見出しの下に表示する補足(Prompt API 利用不可の理由など) */
   headerExtra?: React.ReactNode;

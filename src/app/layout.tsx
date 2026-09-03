@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "chat-sensei",
   description:
-    "Read Twitch live chat in three columns — raw IRC, translation, and Pick up — powered entirely by Chrome's built-in AI (Gemini Nano). Runs fully client-side.",
+    "Read Twitch live chat in three columns — raw chat, translation, and Pick up — powered entirely by Chrome's built-in AI (Gemini Nano). Runs fully client-side.",
 };
 
 export default function RootLayout({

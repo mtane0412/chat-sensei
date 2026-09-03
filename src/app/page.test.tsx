@@ -431,13 +431,18 @@ describe("Home(Pick up列)", () => {
     expect(rows[1]).toHaveTextContent("激しく同意");
   });
 
-  it("該当する表現が無い行は何も表示しない(「None」を出さない)", () => {
+  it("該当する表現が無い行は、行自体は描画しつつ中身を空にする(「None」を出さない)", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
     usePickupStore.setState({ entries: { "msg-1": { status: "done", terms: [] } } });
 
     render(<Home />);
 
-    expect(within(screen.getByRole("region", { name: "Pick up" })).queryByText("None")).not.toBeInTheDocument();
+    // 3カラムの行対応(subgrid)を保つため、行そのものは存在し続けることを確認する
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    const row = within(pickupColumn).getByRole("listitem");
+    expect(row).toHaveAttribute("data-message-id", "msg-1");
+    expect(row.textContent).toBe("");
+    expect(within(pickupColumn).queryByText("None")).not.toBeInTheDocument();
   });
 
   it("生成中の行は「抽出中」と表示する", () => {

@@ -74,10 +74,14 @@ describe("StreamInfoPanel(配信情報あり)", () => {
   it("同時視聴者数を、Twitch と同様の赤色の人アイコン + 桁区切りの数字で表示する", () => {
     render(<StreamInfoPanel />);
 
-    // 数字のみを表示し、スクリーンリーダー向けに aria-label で「viewers」を補う
-    const viewerCount = screen.getByLabelText("4,321 viewers");
-    expect(viewerCount).toHaveTextContent("4,321");
-    expect(viewerCount.className).toContain("text-red-500");
+    // 画面には数字のみを表示し、スクリーンリーダーには sr-only の「viewers」で単位を補う
+    const unit = screen.getByText("viewers");
+    expect(unit.className).toContain("sr-only");
+    expect(unit.parentElement).toHaveTextContent("4,321 viewers");
+    // 人アイコン(svg)を伴い、ライブ配信用の赤色トークン(text-live)で強調する
+    const badge = unit.parentElement?.parentElement;
+    expect(badge?.querySelector("svg")).not.toBeNull();
+    expect(badge?.className).toContain("text-live");
   });
 
   it("配信者のアバター取得を要求し、取得済みならアバター画像を表示する", () => {
@@ -122,7 +126,7 @@ describe("StreamInfoPanel(配信情報なし = オフライン・Helix 利用不
     render(<StreamInfoPanel />);
 
     expect(screen.getByText("zackrawrr")).toBeInTheDocument();
-    expect(screen.queryByLabelText(/viewers/)).toBeNull();
+    expect(screen.queryByText(/viewers/)).toBeNull();
   });
 
   it("ゲームIDが無いためボックスアートの取得を要求しない", () => {
