@@ -54,6 +54,19 @@ export function ChannelAutocompleteInput({
   /** 候補の選択で value を変えた直後は true にし、その変化による再検索を抑止する */
   const skipNextSearchRef = useRef(false);
 
+  // 親が value を外部から空にした場合(接続フォームの送信後クリアなど)は handleInputChange を
+  // 経由しないため、値の変化を render 中に検知してドロップダウンを閉じ、候補を破棄する
+  // (React の「render 中の派生 state 調整」パターン。effect 内の同期 setState は使わない)
+  const [prevValue, setPrevValue] = useState(value);
+  if (prevValue !== value) {
+    setPrevValue(value);
+    if (value.trim() === "") {
+      setSuggestions([]);
+      setOpen(false);
+      setActiveIndex(-1);
+    }
+  }
+
   // 入力の変化をデバウンスして候補を検索する。次の入力・アンマウントでタイマーと
   // 進行中のリクエストを破棄するため、古い結果が後から表示されることはない
   useEffect(() => {
@@ -61,7 +74,7 @@ export function ChannelAutocompleteInput({
       skipNextSearchRef.current = false;
       return;
     }
-    // 空入力時のクリアは handleInputChange(イベントハンドラ)で行うため、ここでは検索しないだけでよい
+    // 空入力では検索しない(空値時のドロップダウンのクローズは render 中の派生 state 調整で行う)
     const query = value.trim();
     if (query === "") return;
 
@@ -130,7 +143,8 @@ export function ChannelAutocompleteInput({
   };
 
   return (
-    <div className="relative">
+    // 置き場所(接続フォーム・ヘッダー検索)の行幅いっぱいに広がるよう w-full にする(幅は親が決める)
+    <div className="relative w-full">
       <Input
         {...inputProps}
         role="combobox"

@@ -106,6 +106,14 @@ function getClient(): TwitchIrcClient {
   return client;
 }
 
+/**
+ * 接続中とみなす状態かを判定する。ホーム画面(切断ボタンへの切り替え・3カラム表示)と
+ * 共通ヘッダー(接続中にだけ表示する)で共有する。
+ */
+export function isConnectingOrConnected(state: ConnectionState): boolean {
+  return state === "connecting" || state === "open" || state === "reconnecting";
+}
+
 export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
   connectionState: "idle",
   messages: [],

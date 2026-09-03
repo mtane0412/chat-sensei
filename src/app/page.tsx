@@ -1,7 +1,9 @@
 /**
  * ホームページ(/)。接続状態で画面が切り替わる。
  *
- * - 未接続(idle / closed): 画面中央にチャンネル入力と Connect ボタンの接続画面を表示する
+ * - 未接続(idle / closed): ヘッダーなしのウェルカム画面を表示する。アプリ名とタグラインの下に
+ *   チャンネル検索(ChannelSearchForm の hero バリアント)、言語ペアのセレクト、
+ *   AIモデル設定(SettingsDialog のラベル付きトリガー)を縦に並べる
  * - 接続中(connecting / open / reconnecting): 上半分に配信embed(TwitchEmbedPlayer)と
  *   配信者情報パネル(StreamInfoPanel)、下半分に3カラムのチャット閲覧領域を表示する。
  *   全体がビューポート1ページに収まり(レイアウト側で高さを固定)、3カラム領域は
@@ -23,8 +25,8 @@
  * Raw Chat列の見出しには、新着発言に合わせてスクロール領域を最下部へ送り続ける追従トグル(FollowToggle。
  * 初期状態はオンで、利用者が上へスクロールして最下部から離れると自動でオフになる)と、
  * bot除外設定(BotFilterDialog)を開くアイコンを置く。
- * 言語ペア(学ぶ言語 / 解説言語)のセレクトと設定ダイアログは、接続前後のどちらの画面でも
- * 触れるようヘッダー(SiteHeader)に常時表示する(このページには置かない)。除外パターンは
+ * 言語ペア(学ぶ言語 / 解説言語)のセレクトと設定ダイアログは、未接続時はこのページの
+ * ウェルカム画面に、接続中はヘッダー(SiteHeader)に表示する。除外パターンは
  * bot-filter ストアが LocalStorage から復元し、chat-connection ストアが受信時に適用する。
  * 接続状態・受信済み発言はモジュールスコープのストア(chat-connection.ts)が、
  * 翻訳結果は translations ストアが、抽出結果は pickups ストアが保持し、
@@ -46,20 +48,20 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronsDownIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
 import { ManualPickupOverlay, MESSAGE_TEXT_ATTRIBUTE, RAW_IRC_COLUMN_NAME } from "@/components/manual-pickup";
-import { ChannelAutocompleteInput } from "@/components/channel-autocomplete";
-import { CONNECTION_STATE_LABEL, StreamInfoPanel } from "@/components/stream-info-panel";
+import { ChannelSearchForm } from "@/components/channel-search-form";
+import { LanguagePairSelect } from "@/components/language-pair-select";
+import { SettingsDialog } from "@/components/settings-dialog";
+import { StreamInfoPanel } from "@/components/stream-info-panel";
 import { TwitchEmbedPlayer } from "@/components/twitch-embed-player";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import type { ConnectionState } from "@/lib/twitch/irc-client";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
 import { buildEmoteImageUrl, splitMessageIntoSegments, type MessageSegment } from "@/lib/twitch/emotes";
 import { useAvatarStore } from "@/store/avatars";
 import { useBadgeStore } from "@/store/badges";
 import { hydrateBotFilterStore } from "@/store/bot-filter";
-import { useChatConnectionStore } from "@/store/chat-connection";
+import { isConnectingOrConnected, useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
 import { hidePickupTerm, isPickupTermHidden, useHiddenPickupStore } from "@/store/hidden-pickups";
 import { announcePickupRemoval, usePickupAnnouncementStore } from "@/store/pickup-announcements";
@@ -105,17 +107,10 @@ const PICKUP_LABELS: PipelineCellLabels = {
 /** 最下部からこの距離(px)を超えて上へスクロールしたら、新着への追従を自動でオフにする(サブピクセル誤差の吸収用) */
 const FOLLOW_RELEASE_THRESHOLD_PX = 4;
 
-/** 接続中とみなす状態(切断ボタンに切り替える基準) */
-function isConnectingOrConnected(state: ConnectionState): boolean {
-  return state === "connecting" || state === "open" || state === "reconnecting";
-}
-
 export default function Home() {
-  const [channelInput, setChannelInput] = useState("");
   const connectionState = useChatConnectionStore((state) => state.connectionState);
   const messages = useChatConnectionStore((state) => state.messages);
   const channel = useChatConnectionStore((state) => state.channel);
-  const connect = useChatConnectionStore((state) => state.connect);
 
   // 翻訳列・Pick up列のぼかし。初期状態はどちらも見える(自力で読みたいときに利用者がぼかす)
   const [translationBlurred, setTranslationBlurred] = useState(false);
@@ -191,15 +186,6 @@ export default function Home() {
     return stop;
   }, [settingsHydrated, settingsKey, streamInfoKey]);
 
-  const handleConnect = useCallback(() => {
-    const channel = channelInput.trim();
-    if (!channel) return;
-    // モデル未ダウンロード時の LanguageModel.create() にはユーザー操作が必要なため、クリックの延長で先に生成する
-    warmUpTranslationPipeline();
-    warmUpPickupPipeline();
-    connect(channel);
-  }, [channelInput, connect]);
-
   const connected = isConnectingOrConnected(connectionState);
 
   // Raw Chat列の範囲選択から手動Pick up(issue #72)。選択した語句の意味を、発言本文を文脈として生成する
@@ -213,24 +199,21 @@ export default function Home() {
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col gap-4 p-4">
       {!connected ? (
-        // 未接続: 画面中央の接続画面(3カラム・配信embedは表示しない)
+        // 未接続: ヘッダーなしのウェルカム画面。アプリ名 + タグラインの下にチャンネル検索を置き、
+        // 言語ペア・AIモデルの設定もこの画面から触れるようにする(接続中はヘッダーに移る)
         <div className="flex flex-1 items-center justify-center">
-          <div className="flex w-full max-w-sm flex-col gap-1.5">
-            <Label htmlFor="channel-input">Channel</Label>
-            <div className="flex items-center gap-2">
-              <ChannelAutocompleteInput
-                id="channel-input"
-                placeholder="e.g. zackrawrr"
-                value={channelInput}
-                onValueChange={setChannelInput}
-              />
-              <Button onClick={handleConnect} disabled={channelInput.trim().length === 0}>
-                Connect
-              </Button>
+          <div className="flex w-full max-w-md flex-col items-center gap-10">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <h1 className="font-heading text-4xl font-semibold tracking-tight">chat-sensei</h1>
+              <p className="text-sm text-muted-foreground">
+                Learn a language from live Twitch chat — translated and explained as it flows.
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground" role="status">
-              Status: <span>{CONNECTION_STATE_LABEL[connectionState]}</span>
-            </p>
+            <ChannelSearchForm variant="hero" />
+            <div className="flex flex-col items-center gap-3">
+              <LanguagePairSelect />
+              <SettingsDialog triggerLabel="AI model settings" />
+            </div>
           </div>
         </div>
       ) : (
