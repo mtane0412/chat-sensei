@@ -472,6 +472,15 @@ describe("filterProperNounPhraseTerms", () => {
     expect(filterProperNounPhraseTerms(terms, "en")).toEqual(terms);
   });
 
+  it("文中の語中に大文字を含む語(iPhone / eBay のようなブランド名)がある語句も落とす(CodeRabbit の指摘)", () => {
+    const terms = [
+      { term: "grab the iPhone", meaning: "iPhoneを手に取る" },
+      { term: "selling on eBay", meaning: "eBayで売る" },
+    ];
+
+    expect(filterProperNounPhraseTerms(terms, "en")).toEqual([]);
+  });
+
   it("一人称の I / I'm のような語は固有名詞とみなさず残す", () => {
     const terms = [
       { term: "what am I saying", meaning: "何を言ってるんだ俺は" },
@@ -518,6 +527,15 @@ describe("filterQuestionSentenceTerms", () => {
 
   it("全角の疑問符(？)で終わる複数語の語句も落とす(機械翻訳の訳文に残るケース)", () => {
     const terms = [{ term: "do you like this game？", meaning: "このゲーム好き?" }];
+
+    expect(filterQuestionSentenceTerms(terms)).toEqual([]);
+  });
+
+  it("疑問符に感嘆符が続く形(?! / ？！)で終わる複数語の語句も落とす(CodeRabbit の指摘)", () => {
+    const terms = [
+      { term: "are you serious?!", meaning: "マジで言ってる!?" },
+      { term: "is this real？！", meaning: "これ現実!?" },
+    ];
 
     expect(filterQuestionSentenceTerms(terms)).toEqual([]);
   });

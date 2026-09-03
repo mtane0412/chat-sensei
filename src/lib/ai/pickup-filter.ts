@@ -190,8 +190,6 @@ function hasCapitalizedHyphenatedForm(word: string): boolean {
   return CAPITALIZED_HYPHENATED_WORD_PATTERN.test(word.replace(SURROUNDING_NON_LETTERS_PATTERN, ""));
 }
 
-/** 大文字で始まる語(どの言語の大文字でもよい) */
-const CAPITALIZED_WORD_PATTERN = /^\p{Lu}/u;
 /** 一人称の I とその短縮形(I'm / I'll / I've / I'd。曲がった引用符も許容する) */
 const FIRST_PERSON_I_PATTERN = /^I['’]/;
 
@@ -204,8 +202,10 @@ const FIRST_PERSON_I_PATTERN = /^I['’]/;
  * 逆方向 Pick up には、より厳しい語句全体での判定(`filterTranslationArtifactTerms`。issue #94)が
  * 既に適用されるため、このフィルタは順方向専用である。
  *
- * 落とす条件: 文中(先頭以外)の語に「大文字で始まり、かつ小文字を含む語」がある語句。
- * ただし表現リスト(issue #95)に一致する語句は正当な定型表現とみなして残す。
+ * 落とす条件: 文中(先頭以外)の語に「大文字と小文字の両方を含む語」がある語句。
+ * 大文字始まりの固有名詞("Nike")に加え、語中に大文字を持つブランド名("iPhone" / "eBay")も
+ * 該当する(#94 と同じ基準)。ただし表現リスト(issue #95)に一致する語句は正当な定型表現と
+ * みなして残す。
  * - 先頭の語は文頭に置かれただけの表現("Toss it!")と区別できないため対象にしない
  * - 全大文字の語("LOL" / "big W" の "W")は略語・強調であり固有名詞とみなさない
  * - 一人称の "I" 単独は小文字を含まず対象外。"I'm" のような短縮形は明示的に除外する
@@ -225,7 +225,7 @@ export function filterProperNounPhraseTerms(terms: PickupTerm[], learningLang: S
       .slice(1)
       .some(
         (word) =>
-          CAPITALIZED_WORD_PATTERN.test(word) &&
+          UPPERCASE_LETTER_PATTERN.test(word) &&
           LOWERCASE_LETTER_PATTERN.test(word) &&
           !FIRST_PERSON_I_PATTERN.test(word),
       );
@@ -234,8 +234,11 @@ export function filterProperNounPhraseTerms(terms: PickupTerm[], learningLang: S
   });
 }
 
-/** 半角・全角の疑問符で終わる語句にマッチする(全角は機械翻訳の訳文に残ることがある) */
-const TRAILING_QUESTION_MARK_PATTERN = /[?？]$/;
+/**
+ * 半角・全角の疑問符で終わる語句にマッチする(全角は機械翻訳の訳文に残ることがある)。
+ * "are you serious?!" のように疑問符の後に感嘆符が続く形も疑問文の終わりとみなす。
+ */
+const TRAILING_QUESTION_MARK_PATTERN = /[?？]+[!！]*$/;
 
 /**
  * 疑問文がまるごと1つの「表現」として抽出されたと判別できる語句を落とす後段フィルタ(issue #100)。
