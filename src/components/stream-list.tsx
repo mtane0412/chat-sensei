@@ -3,7 +3,8 @@
  *
  * 未接続時のウェルカム画面で、チャンネル接続UIの下に「選択中の言語ペア
  * (学習言語・解説言語)の両方の言語タグを含むライブ配信」の一覧をカードで表示する。
- * カードをクリックするとそのチャンネルへ接続する(チャンネル検索フォームと同様に、
+ * カードをクリックするとそのチャンネルのページ(/[channel])へ遷移する
+ * (IRC 接続はチャンネルページが URL を起点に開始する。チャンネル検索フォームと同様に、
  * モデル未ダウンロード時の `LanguageModel.create()` にはユーザー操作が必要なため、
  * クリックの延長で翻訳・Pick up のセッションを先にウォームアップする)。
  *
@@ -15,11 +16,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { UserIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { LANGUAGE_DISPLAY_NAMES } from "@/lib/settings";
 import { fetchLanguagePairStreams, type TaggedStream } from "@/lib/twitch/stream-list";
-import { useChatConnectionStore } from "@/store/chat-connection";
 import { warmUpPickupPipeline } from "@/store/pickups";
 import { useSettingsStore } from "@/store/settings";
 import { warmUpTranslationPipeline } from "@/store/translations";
@@ -42,7 +43,7 @@ interface StreamListResult {
 export function LanguagePairStreamList() {
   const settings = useSettingsStore((state) => state.settings);
   const hydrated = useSettingsStore((state) => state.hydrated);
-  const connect = useChatConnectionStore((state) => state.connect);
+  const router = useRouter();
   const [result, setResult] = useState<StreamListResult | null>(null);
 
   const { learningLang, explainLang } = settings;
@@ -68,7 +69,8 @@ export function LanguagePairStreamList() {
     // モデル未ダウンロード時の LanguageModel.create() にはユーザー操作が必要なため、クリックの延長で先に生成する
     warmUpTranslationPipeline();
     warmUpPickupPipeline();
-    connect(login);
+    // 接続はチャンネルページ(/[channel])が URL を起点に開始する。login は Helix が返す正規化済みの小文字名
+    router.push(`/${login}`);
   };
 
   return (

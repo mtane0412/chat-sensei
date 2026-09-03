@@ -3,17 +3,24 @@
  *
  * ウェルカム画面に表示する「選択中の言語ペアの両タグを含むライブ配信」の一覧が、
  * 設定ストアの復元(hydrate)後に取得を始めること、取得結果をカードとして表示すること、
- * カードのクリックで chat-connection ストアの connect を呼び翻訳・Pick up のセッションを
- * ウォームアップすること、0件・取得失敗時の表示を検証する。
+ * カードのクリックでそのチャンネルのページ(/[channel])へ遷移し翻訳・Pick up のセッションを
+ * ウォームアップすること(接続はチャンネルページがURLを起点に行う)、0件・取得失敗時の表示を検証する。
  * 実際の API 呼び出しは行わず、取得関数(fetchLanguagePairStreams)をモックに差し替える。
+ * Next.js のルーティング(useRouter)はテスト環境に App Router が無いためモックする。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import type { TaggedStream } from "@/lib/twitch/stream-list";
-import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
+import { resetChatConnectionStoreForTests } from "@/store/chat-connection";
 import { resetSettingsStoreForTests, useSettingsStore } from "@/store/settings";
+
+// チャンネルページ(/[channel])への遷移を検証するため useRouter をモックする
+const mockRouterPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockRouterPush, replace: vi.fn(), prefetch: vi.fn() }),
+}));
 
 const mockFetchLanguagePairStreams = vi.fn();
 vi.mock("@/lib/twitch/stream-list", async (importOriginal) => ({
@@ -55,6 +62,7 @@ function hydrateSettingsForTest(): void {
 }
 
 beforeEach(() => {
+  mockRouterPush.mockClear();
   mockFetchLanguagePairStreams.mockReset();
   mockWarmUpTranslationPipeline.mockClear();
   mockWarmUpPickupPipeline.mockClear();
@@ -97,17 +105,16 @@ describe("LanguagePairStreamList", () => {
     expect(screen.getByText("1,234")).toBeInTheDocument();
   });
 
-  it("カードをクリックすると、そのチャンネルへ connect を呼び、翻訳・Pick up のセッションをウォームアップする", async () => {
+  it("カードをクリックすると、そのチャンネルのページ(/[channel])へ遷移し、翻訳・Pick up のセッションをウォームアップする", async () => {
     const user = userEvent.setup();
-    const connectMock = vi.fn();
-    useChatConnectionStore.setState({ connect: connectMock });
     mockFetchLanguagePairStreams.mockResolvedValue([createTaggedStream()]);
     hydrateSettingsForTest();
     render(<LanguagePairStreamList />);
 
     await user.click(await screen.findByRole("button", { name: /英語の先生/ }));
 
-    expect(connectMock).toHaveBeenCalledWith("eigo_sensei");
+    // 接続はチャンネルページがURLを起点に行うため、ここでは遷移のみを行う
+    expect(mockRouterPush).toHaveBeenCalledWith("/eigo_sensei");
     expect(mockWarmUpTranslationPipeline).toHaveBeenCalledTimes(1);
     expect(mockWarmUpPickupPipeline).toHaveBeenCalledTimes(1);
   });
