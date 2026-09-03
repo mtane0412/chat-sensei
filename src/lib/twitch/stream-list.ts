@@ -147,6 +147,10 @@ async function fetchStreamsByBroadcastLanguage(
  * - ネットワークエラー・`signal` による中断(AbortError)
  * - 200 だが `data` が配列でない(形式不正)ボディ
  * - いずれか片方のリクエストだけ失敗した場合(部分的な一覧を正常時と区別できないため)
+ *
+ * 前提条件: learningLang と explainLang は異なる言語であること(同一言語ペアは
+ * 設定スキーマ(`lib/settings.ts` の settingsSchema)が保存時点で拒否するため発生しない。
+ * 同値の場合の重複リクエスト排除は意図的に実装していない)。
  */
 export async function fetchLanguagePairStreams(
   learningLang: SupportedLanguage,
