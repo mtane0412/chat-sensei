@@ -3,7 +3,8 @@
  *
  * - 未接続(idle / closed): ヘッダーなしのウェルカム画面を表示する。アプリ名とタグラインの下に
  *   チャンネル検索(ChannelSearchForm の hero バリアント)、言語ペアのセレクト、
- *   AIモデル設定(SettingsDialog のラベル付きトリガー)を縦に並べる
+ *   AIモデル設定(SettingsDialog のラベル付きトリガー)を縦に並べ、その下に
+ *   言語ペアの両タグを含むライブ配信の一覧(LanguagePairStreamList。issue #90)を表示する
  * - 接続中(connecting / open / reconnecting): 上半分に配信embed(TwitchEmbedPlayer)と
  *   配信者情報パネル(StreamInfoPanel)、下半分に3カラムのチャット閲覧領域を表示する。
  *   全体がビューポート1ページに収まり(レイアウト側で高さを固定)、3カラム領域は
@@ -51,6 +52,7 @@ import { ManualPickupOverlay, MESSAGE_TEXT_ATTRIBUTE, RAW_IRC_COLUMN_NAME } from
 import { ChannelSearchForm } from "@/components/channel-search-form";
 import { LanguagePairSelect } from "@/components/language-pair-select";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { LanguagePairStreamList } from "@/components/stream-list";
 import { StreamInfoPanel } from "@/components/stream-info-panel";
 import { TwitchEmbedPlayer } from "@/components/twitch-embed-player";
 import { Button } from "@/components/ui/button";
@@ -200,20 +202,25 @@ export default function Home() {
     <div className="flex min-h-0 w-full flex-1 flex-col gap-4 p-4">
       {!connected ? (
         // 未接続: ヘッダーなしのウェルカム画面。アプリ名 + タグラインの下にチャンネル検索を置き、
-        // 言語ペア・AIモデルの設定もこの画面から触れるようにする(接続中はヘッダーに移る)
-        <div className="flex flex-1 items-center justify-center">
-          <div className="flex w-full max-w-md flex-col items-center gap-10">
-            <div className="flex flex-col items-center gap-3 text-center">
-              <h1 className="font-heading text-4xl font-semibold tracking-tight">chat-sensei</h1>
-              <p className="text-sm text-muted-foreground">
-                Learn a language from live Twitch chat — translated and explained as it flows.
-              </p>
+        // 言語ペア・AIモデルの設定もこの画面から触れるようにする(接続中はヘッダーに移る)。
+        // その下に言語ペアの両タグを含む配信一覧(issue #90)を表示する。レイアウト(layout.tsx)が
+        // 高さを固定しているため、一覧が伸びたぶんはこのラッパーの内部でスクロールする
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col items-center justify-center gap-10 py-10">
+            <div className="flex w-full max-w-md flex-col items-center gap-10">
+              <div className="flex flex-col items-center gap-3 text-center">
+                <h1 className="font-heading text-4xl font-semibold tracking-tight">chat-sensei</h1>
+                <p className="text-sm text-muted-foreground">
+                  Learn a language from live Twitch chat — translated and explained as it flows.
+                </p>
+              </div>
+              <ChannelSearchForm variant="hero" />
+              <div className="flex flex-col items-center gap-3">
+                <LanguagePairSelect />
+                <SettingsDialog triggerLabel="AI model settings" />
+              </div>
             </div>
-            <ChannelSearchForm variant="hero" />
-            <div className="flex flex-col items-center gap-3">
-              <LanguagePairSelect />
-              <SettingsDialog triggerLabel="AI model settings" />
-            </div>
+            <LanguagePairStreamList />
           </div>
         </div>
       ) : (
