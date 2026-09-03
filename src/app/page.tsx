@@ -417,7 +417,8 @@ function Column({
     >
       <div className="sticky top-0 z-10 border-b bg-card px-4 py-2">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold">{title}</h2>
+          {/* 列見出しは小さめ + わずかな letter-spacing で引き締める(issue #87) */}
+          <h2 className="font-heading text-xs font-semibold tracking-wide">{title}</h2>
           <div className="flex items-center gap-1">{headerAction}</div>
         </div>
         {headerExtra}
@@ -566,7 +567,9 @@ function PickupTermRow({
 }) {
   return (
     <div className="group/term flex flex-wrap items-baseline gap-x-2">
-      <dt className="font-semibold">
+      {/* 「チャットから拾い上げた語彙」が目に留まるよう、語句をゴールド + 破線下線で強調する(issue #87)。
+          破線下線は inline-flex の削除ボタンには波及しない */}
+      <dt className="font-semibold text-pickup underline decoration-dashed decoration-pickup/50 underline-offset-4">
         {term}
         <Button
           variant="ghost"

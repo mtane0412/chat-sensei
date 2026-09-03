@@ -40,4 +40,11 @@ describe("SiteHeader", () => {
 
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
+
+  it("ヘッダーは Surface 色(bg-card)で描画し、配信embedと地続きに見せる(issue #87)", () => {
+    render(<SiteHeader />);
+
+    const header = screen.getByRole("banner");
+    expect(header.className).toContain("bg-card");
+  });
 });

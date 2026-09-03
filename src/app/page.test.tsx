@@ -431,6 +431,19 @@ describe("Home(Pick up列)", () => {
     expect(rows[1]).toHaveTextContent("激しく同意");
   });
 
+  it("語句(dt)はゴールドの強調色(text-pickup)で表示する(issue #87)", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "good game の略、お疲れ" }] } },
+    });
+
+    render(<Home />);
+
+    // 「チャットから拾い上げた語彙」が目に留まるよう、語句だけをゴールドで強調する
+    const term = within(screen.getByRole("region", { name: "Pick up" })).getByText("gg");
+    expect(term.className).toContain("text-pickup");
+  });
+
   it("該当する表現が無い行は、行自体は描画しつつ中身を空にする(「None」を出さない)", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
     usePickupStore.setState({ entries: { "msg-1": { status: "done", terms: [] } } });

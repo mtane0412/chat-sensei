@@ -9,9 +9,12 @@
   --color-foreground: var(--foreground);
   /* ライブ配信の指標(視聴者数など)を強調する Twitch 風の赤。text-live 等で使う */
   --color-live: var(--live);
+  /* Pick up 語句の強調用ゴールド(issue #87)。text-pickup / decoration-pickup 等で使う */
+  --color-pickup: var(--pickup);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  /* 見出しは Sora(layout.tsx の next/font が --font-sora を注入する) */
+  --font-heading: var(--font-sora);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -50,77 +53,89 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * Twitch ライクなダークファーストのパレット(issue #87)。
+ * 紫みを帯びたダークグレー基調で配信embedと地続きの没入感を作る。
+ * - Ground   oklch(0.166 0.01 285.21)  ページ背景
+ * - Surface  oklch(0.208 0.016 284.95) カード・3カラムの列
+ * - Elevated oklch(0.24 0.021 284.72)  ポップオーバー等の浮き面
+ * - Violet   oklch(0.709 0.159 293.54) インタラクティブ要素のアクセント
+ * - Gold     oklch(0.824 0.141 70.17)  Pick up 語句の強調(--pickup)
+ * ダークを基準とするため :root と .dark は同じ値を持つ(ライトテーマの調整は別issue)。
+ */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  /* ライトテーマの白背景で WCAG AA(4.5:1)を満たす赤 */
-  --live: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --background: oklch(0.166 0.01 285.21);
+  --foreground: oklch(0.954 0.007 286.27);
+  --card: oklch(0.208 0.016 284.95);
+  --card-foreground: oklch(0.954 0.007 286.27);
+  --popover: oklch(0.24 0.021 284.72);
+  --popover-foreground: oklch(0.954 0.007 286.27);
+  --primary: oklch(0.709 0.159 293.54);
+  --primary-foreground: oklch(0.166 0.01 285.21);
+  --secondary: oklch(0.24 0.021 284.72);
+  --secondary-foreground: oklch(0.954 0.007 286.27);
+  --muted: oklch(0.24 0.021 284.72);
+  --muted-foreground: oklch(0.684 0.025 293.83);
+  --accent: oklch(0.24 0.021 284.72);
+  --accent-foreground: oklch(0.954 0.007 286.27);
+  --destructive: oklch(0.704 0.191 22.216);
+  /* ダークの背景でも読める明るめの赤(視聴者数などのライブ指標用) */
+  --live: oklch(0.704 0.191 22.216);
+  /* Pick up 語句の強調用ゴールド。「チャットから拾い上げた語彙」を目立たせる */
+  --pickup: oklch(0.824 0.141 70.17);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.709 0.159 293.54);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.208 0.016 284.95);
+  --sidebar-foreground: oklch(0.954 0.007 286.27);
+  --sidebar-primary: oklch(0.709 0.159 293.54);
+  --sidebar-primary-foreground: oklch(0.166 0.01 285.21);
+  --sidebar-accent: oklch(0.24 0.021 284.72);
+  --sidebar-accent-foreground: oklch(0.954 0.007 286.27);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.709 0.159 293.54);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --background: oklch(0.166 0.01 285.21);
+  --foreground: oklch(0.954 0.007 286.27);
+  --card: oklch(0.208 0.016 284.95);
+  --card-foreground: oklch(0.954 0.007 286.27);
+  --popover: oklch(0.24 0.021 284.72);
+  --popover-foreground: oklch(0.954 0.007 286.27);
+  --primary: oklch(0.709 0.159 293.54);
+  --primary-foreground: oklch(0.166 0.01 285.21);
+  --secondary: oklch(0.24 0.021 284.72);
+  --secondary-foreground: oklch(0.954 0.007 286.27);
+  --muted: oklch(0.24 0.021 284.72);
+  --muted-foreground: oklch(0.684 0.025 293.83);
+  --accent: oklch(0.24 0.021 284.72);
+  --accent-foreground: oklch(0.954 0.007 286.27);
   --destructive: oklch(0.704 0.191 22.216);
-  /* ダークテーマの暗い背景でも読める明るめの赤 */
   --live: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --pickup: oklch(0.824 0.141 70.17);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.709 0.159 293.54);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar: oklch(0.208 0.016 284.95);
+  --sidebar-foreground: oklch(0.954 0.007 286.27);
+  --sidebar-primary: oklch(0.709 0.159 293.54);
+  --sidebar-primary-foreground: oklch(0.166 0.01 285.21);
+  --sidebar-accent: oklch(0.24 0.021 284.72);
+  --sidebar-accent-foreground: oklch(0.954 0.007 286.27);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.709 0.159 293.54);
 }
 
 @layer base {
