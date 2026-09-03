@@ -87,6 +87,43 @@ describe("filterOrdinaryTerms", () => {
     expect(survivingTerms(["quests", "streamers"])).toEqual([]);
   });
 
+  it("NGSL圏外だが字幕頻度リスト(第2層)にある普通の1語を落とす(issue #99 のゴールデンセット)", () => {
+    // 実チャットで観測した NGSL 未収録の普通語。字幕頻度リスト上位25000語で捕捉する
+    expect(survivingTerms(["flavour", "paradise", "pimple"])).toEqual([]);
+  });
+
+  it("字幕頻度リストの上位に入るTwitch・ネット特有の意味を持つ語は手動除外により残す(issue #99)", () => {
+    // "raid"(字幕4835位)や "troll"(10163位)等は頻度上位だが Twitch・ネット特有の意味を持ち
+    // 学習価値があるため、第2層から手動で除外して残す
+    // ("mod" は NGSL の "mode" とステムが衝突して従来から落ちるため、ここでは検証しない)
+    expect(survivingTerms(["raid", "sub", "clip", "lurk", "troll"])).toEqual([
+      "raid",
+      "sub",
+      "clip",
+      "lurk",
+      "troll",
+    ]);
+  });
+
+  it("字幕頻度リストの上位に入る狭義スラング・卑語はカテゴリ除外により残す(issue #99)", () => {
+    // "lol"(字幕18339位、internet slang)/ "shit"(285位、swear words)は頻度上位だが
+    // 学習価値があるため、Wiktionary の狭義スラングカテゴリの1語見出し語を除外側に使って第2層から外す
+    expect(survivingTerms(["lol", "shit"])).toEqual(["lol", "shit"]);
+  });
+
+  it("卑語のg落ち口語形(fuckin)もg復元の照合により第2層から除外されて残す(issue #99 のレビュー指摘)", () => {
+    // 字幕頻度リストには "fuckin" のようなg落ちの口語形が含まれるが、"g" を補った形
+    // ("fucking"、swear words カテゴリ収録)のステムで照合して第2層から除外する
+    expect(survivingTerms(["fuckin"])).toEqual(["fuckin"]);
+  });
+
+  it("広義スラングカテゴリにしか入らない超高頻度の口語は普通の語として落とす(issue #99 の設計判断)", () => {
+    // "dude"(708位)/ "gonna"(96位)/ "damn"(396位)は広義の English slang / informal terms にしか
+    // 入っていない(または未収載の)超高頻度の口語。広義カテゴリを除外に使うと "paradise" / "pimple" の
+    // ような普通語まで除外してしまうため除外に使わず、これらの口語は普通の語として落とす
+    expect(survivingTerms(["dude", "gonna", "damn"])).toEqual([]);
+  });
+
   it("伸ばし字の1語(sooo / niceee)は同一文字の連続を潰した形でも照合して落とす(issue #97)", () => {
     expect(survivingTerms(["sooo", "niceee", "yesss"])).toEqual([]);
   });

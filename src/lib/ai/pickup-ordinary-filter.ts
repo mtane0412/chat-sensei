@@ -6,7 +6,9 @@
  * だけでは "give up" のような「高頻度語だけで構成される句動詞・イディオム」まで落としてしまうため、
  * 表現リストを併用するハイブリッド方式を採る:
  *
- * - 1語の語句: 高頻度語リスト(NGSL 1.2 約2800レンマ + 手動補完語)にあれば落とす。
+ * - 1語の語句: 高頻度語リスト(NGSL 1.2 約2800レンマ + 手動補完語 + 字幕頻度リスト第2層)にあれば落とす。
+ *   第2層(issue #99)は OpenSubtitles 由来の頻度上位語から Wiktionary スラング系カテゴリの1語と
+ *   Twitch特有の意味を持つ語を除いたもので、NGSL 圏外の普通語("flavour" / "paradise")を捕捉する。
  *   リストに無いスラング("lol" / "malding")や Twitch 用語("raid" / "emote")は残る。
  *   "sooo" のような伸ばし字は同一文字の3連続以上を潰した形でも照合して落とす(issue #97)
  * - 複数語の語句: 表現リスト(Wiktionary の句動詞・イディオム・スラング + 手動補完の定型表現)に
@@ -52,9 +54,11 @@ export const CURATED_EXPRESSIONS: readonly string[] = [
   "on god",
 ];
 
-/** 高頻度語の照合キー集合。NGSL のレンマと手動補完語を `stemForMatch` で正規化して持つ */
+/** 高頻度語の照合キー集合。NGSL のレンマ・手動補完語・字幕頻度リスト(第2層)を `stemForMatch` で正規化して持つ */
 const FREQUENT_STEMS: ReadonlySet<string> = new Set(
-  [...enFrequentWords.ngslWords, ...enFrequentWords.supplementaryWords].map(stemForMatch),
+  [...enFrequentWords.ngslWords, ...enFrequentWords.supplementaryWords, ...enFrequentWords.subtitleWords].map(
+    stemForMatch,
+  ),
 );
 
 /**
