@@ -19,6 +19,19 @@
 /** 語の前後に連続する、文字以外の記号(引用符・括弧・`!` など) */
 const SURROUNDING_NON_LETTERS_PATTERN = /^[^\p{L}]+|[^\p{L}]+$/gu;
 
+/** 同じ文字が2回以上連続する箇所(`ohhh` の `hhh` など) */
+const REPEATED_LETTER_PATTERN = /(\p{L})\1+/gu;
+
+/**
+ * `ohhh` / `sooo` のように文字を伸ばした形を照合できるよう、同じ文字の連続を1文字にまとめる。
+ * `good` → `god` のように正当な重ね字も潰れるため、この結果だけで判定せず、
+ * 必ず元の形と併用して照合すること(issue #97 の「どちらかが一致したら」方式)。
+ * 笑い声・相槌の照合(pickup-filter.ts)と高頻度語の照合(pickup-ordinary-filter.ts)で共用する。
+ */
+export function collapseRepeatedLetters(word: string): string {
+  return word.replace(REPEATED_LETTER_PATTERN, "$1");
+}
+
 /**
  * 語句を照合用の語の配列に分割する。空白で区切り、各語の前後の記号を外す。
  * 語の内部のアポストロフィ・ハイフン("don't" / "uh-oh")は保持し、

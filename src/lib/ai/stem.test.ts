@@ -8,7 +8,7 @@
  * そのためテストは「変化形と基本形が同じキーになる」ことを中心に検証する。
  */
 import { describe, expect, it } from "vitest";
-import { splitIntoMatchWords, stemForMatch } from "./stem";
+import { collapseRepeatedLetters, splitIntoMatchWords, stemForMatch } from "./stem";
 
 /** 変化形と基本形が同じ照合キーに揃うことを検証するヘルパー */
 function expectSameKey(inflected: string, base: string) {
@@ -106,5 +106,22 @@ describe("splitIntoMatchWords", () => {
 
   it("記号だけの語は除く", () => {
     expect(splitIntoMatchWords("wait ... what")).toEqual(["wait", "what"]);
+  });
+});
+
+describe("collapseRepeatedLetters", () => {
+  it("同じ文字の連続を1文字にまとめる(sooo → so / ohhh → oh)", () => {
+    expect(collapseRepeatedLetters("sooo")).toBe("so");
+    expect(collapseRepeatedLetters("ohhh")).toBe("oh");
+    expect(collapseRepeatedLetters("hmmm")).toBe("hm");
+  });
+
+  it("連続の無い語はそのまま返す", () => {
+    expect(collapseRepeatedLetters("sticky")).toBe("sticky");
+    expect(collapseRepeatedLetters("haha")).toBe("haha");
+  });
+
+  it("正当な重ね字も潰れる(good → god)。呼び出し側は元の形と併用して照合すること", () => {
+    expect(collapseRepeatedLetters("good")).toBe("god");
   });
 });
