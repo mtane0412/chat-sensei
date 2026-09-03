@@ -32,6 +32,13 @@ export interface StreamInfo {
   gameId: string;
   /** 同時視聴者数(Helix の `viewer_count`)。取得できない場合は null(表示しないだけ) */
   viewerCount: number | null;
+  /** 配信タグ(Helix の `tags`)。取得できない場合は空配列(表示しないだけ) */
+  tags: string[];
+  /**
+   * 配信開始日時(Helix の `started_at`。ISO 8601 形式の文字列)。
+   * 取得できない・日時として解釈できない場合は null(経過時間を表示しないだけ)
+   */
+  startedAt: string | null;
 }
 
 /**
@@ -39,7 +46,8 @@ export interface StreamInfo {
  * 解析して StreamInfo を作る。オフライン(`data` が空)・形式が想定と異なる場合・
  * タイトルとカテゴリの両方が空の場合(文脈として意味が無い)は null を返す。
  * 配信者情報(ID・username・DisplayName)・ゲーム ID は取得できないフィールドだけを空文字として、
- * 視聴者数は null として読み飛ばす(いずれも表示しないだけで、文脈としては成立する)。
+ * 視聴者数は null、タグは空配列、配信開始日時は null として読み飛ばす
+ * (いずれも表示しないだけで、文脈としては成立する)。
  */
 export function parseStreamInfo(json: unknown): StreamInfo | null {
   const data = extractDataArray(json);
@@ -58,7 +66,12 @@ export function parseStreamInfo(json: unknown): StreamInfo | null {
   const broadcasterName = typeof record.user_name === "string" ? record.user_name : "";
   const gameId = typeof record.game_id === "string" ? record.game_id : "";
   const viewerCount = typeof record.viewer_count === "number" ? record.viewer_count : null;
-  return { title, category, broadcasterId, broadcasterLogin, broadcasterName, gameId, viewerCount };
+  // タグは文字列の要素だけを保持する(想定外の型の要素は読み飛ばす)
+  const tags = Array.isArray(record.tags) ? record.tags.filter((tag): tag is string => typeof tag === "string") : [];
+  // 配信開始日時は日時として解釈できる文字列だけを保持する(経過時間の計算に使うため)
+  const startedAt =
+    typeof record.started_at === "string" && !Number.isNaN(Date.parse(record.started_at)) ? record.started_at : null;
+  return { title, category, broadcasterId, broadcasterLogin, broadcasterName, gameId, viewerCount, tags, startedAt };
 }
 
 /**

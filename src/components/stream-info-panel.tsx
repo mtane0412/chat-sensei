@@ -7,7 +7,10 @@
  * - 配信カテゴリ(ゲーム名)。ゲームIDからボックスアート画像を取得できた場合は画像も表示する
  * - 同時視聴者数(Helix から取得できた場合のみ)。Twitch 本体と同様に、
  *   配信者名の横へ赤色の人アイコン + 桁区切りの数字で表示する
- * - 接続状態のラベルと Disconnect ボタン
+ * - 配信開始からの経過時間(Helix の `started_at` を取得できた場合のみ。1秒ごとに更新)
+ * - 配信タグ(取得できた場合のみ、チップのリストで表示)
+ * - 接続状態のラベル(Disconnect ボタンは持たない。切断はヘッダーのロゴクリック
+ *   (site-header.tsx)で行う)
  *
  * 配信情報は stream-info ストア(接続時に読み込み済み)を購読して表示するだけで、
  * このパネル自身は Helix を呼ばない(例外はボックスアート。ゲームIDが判明したときに
@@ -17,8 +20,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { UserIcon } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ClockIcon, UserIcon } from "lucide-react";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import { fetchGameBoxArtUrl } from "@/lib/twitch/game-box-art";
 import { requestAvatar, useAvatarStore } from "@/store/avatars";
@@ -37,10 +39,24 @@ export const CONNECTION_STATE_LABEL: Record<ConnectionState, string> = {
 /** 同時視聴者数の桁区切り表示(UI は英語のためロケールも en-US 固定) */
 const VIEWER_COUNT_FORMAT = new Intl.NumberFormat("en-US");
 
+/** 経過時間の再計算間隔。Twitch 本体の稼働時間表示と同様に秒単位で進める */
+const UPTIME_TICK_INTERVAL_MS = 1_000;
+
+/**
+ * 配信開始からの経過ミリ秒を `H:MM:SS` 形式(時は桁埋めなし)にする。
+ * 端末の時計ずれなどで負になった場合は 0 秒として扱う。
+ */
+function formatUptime(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 export function StreamInfoPanel() {
   const channel = useChatConnectionStore((state) => state.channel);
   const connectionState = useChatConnectionStore((state) => state.connectionState);
-  const disconnect = useChatConnectionStore((state) => state.disconnect);
   const streamInfo = useStreamInfoStore((state) => state.streamInfo);
 
   // 配信者のアバター。発言者アバターと同じ共通バッチ(avatars ストア)へ取得を要求する
@@ -67,6 +83,17 @@ export function StreamInfoPanel() {
     };
   }, [gameId]);
   const boxArtUrl = boxArt !== null && boxArt.gameId === gameId ? boxArt.url : null;
+
+  // 配信開始からの経過時間。startedAt がある間だけ、現在時刻を1秒ごとに更新して再計算する
+  // (初期値はマウント時の現在時刻。読み込み完了が遅れた場合も、最初の tick で最新に追従する)
+  const startedAt = streamInfo?.startedAt ?? null;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedAt === null) return;
+    const timerId = setInterval(() => setNow(Date.now()), UPTIME_TICK_INTERVAL_MS);
+    return () => clearInterval(timerId);
+  }, [startedAt]);
+  const uptimeText = startedAt !== null ? formatUptime(now - Date.parse(startedAt)) : null;
 
   // 配信情報が無い間(オフライン・Helix 利用不可・読み込み中)は接続中のチャンネル名で代用する
   const displayName =
@@ -101,9 +128,17 @@ export function StreamInfoPanel() {
             </span>
           </span>
         )}
-        <Button onClick={disconnect} variant="outline" size="sm">
-          Disconnect
-        </Button>
+        {uptimeText !== null && (
+          // Twitch 本体と同様の稼働時間表示。画面には時間のみを表示し、
+          // スクリーンリーダーには sr-only の「uptime」で意味を補う
+          <span className="flex shrink-0 items-center gap-1 text-sm font-medium text-muted-foreground tabular-nums">
+            <ClockIcon aria-hidden="true" className="size-4" />
+            <span>
+              {uptimeText}
+              <span className="sr-only"> uptime</span>
+            </span>
+          </span>
+        )}
       </div>
       {streamInfo !== null && (
         <div className="flex min-h-0 flex-1 gap-3">
@@ -114,6 +149,19 @@ export function StreamInfoPanel() {
           <div className="min-w-0 space-y-1">
             <p className="text-sm break-words">{streamInfo.title}</p>
             {streamInfo.category !== "" && <p className="text-sm text-muted-foreground">{streamInfo.category}</p>}
+            {streamInfo.tags.length > 0 && (
+              // Twitch 本体と同様のタグチップ。取得できた場合のみ表示する
+              <ul aria-label="Stream tags" className="flex flex-wrap gap-1.5 pt-1">
+                {streamInfo.tags.map((tag) => (
+                  <li
+                    key={tag}
+                    className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                  >
+                    {tag}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       )}

@@ -7,14 +7,14 @@
  * - 配信者のアバター(avatars ストアに取得済みの場合のみ)と、アバター取得の要求
  * - 配信タイトル・カテゴリ(ボックスアート画像はゲームIDから取得できた場合のみ)
  * - 同時視聴者数(取得できた場合のみ)
- * - 接続状態と Disconnect ボタン
+ * - 配信タグ(取得できた場合のみ)と配信開始からの経過時間(1秒ごとに更新)
+ * - 接続状態のラベル(Disconnect ボタンは持たない。切断はヘッダーのロゴクリックで行う)
  *
  * 配信情報・アバターは各ストアの state を直接書き換えて注入し、
  * ボックスアート取得(`fetchGameBoxArtUrl`)とアバター取得要求(`requestAvatar`)はモックする。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { StreamInfo } from "@/lib/twitch/stream-info";
 import { resetAvatarsForTests, useAvatarStore } from "@/store/avatars";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
@@ -43,6 +43,8 @@ const サンプル配信情報: StreamInfo = {
   broadcasterName: "ZackRawrr",
   gameId: "18122",
   viewerCount: 4321,
+  tags: ["English", "MMORPG"],
+  startedAt: "2026-09-03T10:00:00Z",
 };
 
 beforeEach(() => {
@@ -119,6 +121,61 @@ describe("StreamInfoPanel(配信情報あり)", () => {
     expect(screen.queryByRole("img", { name: "World of Warcraft" })).toBeNull();
     expect(screen.getByText("World of Warcraft")).toBeInTheDocument();
   });
+
+  it("配信タグをチップのリストとして表示する", () => {
+    render(<StreamInfoPanel />);
+
+    const tagList = screen.getByRole("list", { name: "Stream tags" });
+    const tags = Array.from(tagList.querySelectorAll("li")).map((li) => li.textContent);
+    expect(tags).toEqual(["English", "MMORPG"]);
+  });
+
+  it("タグが空の場合、タグのリスト自体を表示しない", () => {
+    useStreamInfoStore.setState({ streamInfo: { ...サンプル配信情報, tags: [] } });
+
+    render(<StreamInfoPanel />);
+
+    expect(screen.queryByRole("list", { name: "Stream tags" })).toBeNull();
+  });
+});
+
+describe("StreamInfoPanel(配信開始からの経過時間)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // 配信開始(10:00:00Z)から 1時間2分3秒 経過した時点に現在時刻を固定する
+    vi.setSystemTime(new Date("2026-09-03T11:02:03Z"));
+    useStreamInfoStore.setState({ streamInfo: サンプル配信情報 });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("配信開始からの経過時間を H:MM:SS 形式で表示し、スクリーンリーダー向けに uptime の単位を補う", () => {
+    render(<StreamInfoPanel />);
+
+    const unit = screen.getByText("uptime");
+    expect(unit.className).toContain("sr-only");
+    expect(unit.parentElement).toHaveTextContent("1:02:03 uptime");
+  });
+
+  it("経過時間は1秒ごとに更新される", () => {
+    render(<StreamInfoPanel />);
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(screen.getByText("uptime").parentElement).toHaveTextContent("1:02:04 uptime");
+  });
+
+  it("配信開始日時が取得できていない場合、経過時間を表示しない", () => {
+    useStreamInfoStore.setState({ streamInfo: { ...サンプル配信情報, startedAt: null } });
+
+    render(<StreamInfoPanel />);
+
+    expect(screen.queryByText("uptime")).toBeNull();
+  });
 });
 
 describe("StreamInfoPanel(配信情報なし = オフライン・Helix 利用不可)", () => {
@@ -136,7 +193,7 @@ describe("StreamInfoPanel(配信情報なし = オフライン・Helix 利用不
   });
 });
 
-describe("StreamInfoPanel(接続状態と切断)", () => {
+describe("StreamInfoPanel(接続状態)", () => {
   it("接続状態のラベルを表示する", () => {
     useChatConnectionStore.setState({ connectionState: "reconnecting" });
 
@@ -145,15 +202,9 @@ describe("StreamInfoPanel(接続状態と切断)", () => {
     expect(screen.getByText(/Reconnecting/)).toBeInTheDocument();
   });
 
-  it("Disconnect ボタンを押すと切断処理を呼ぶ", async () => {
-    const user = userEvent.setup();
-    const disconnectMock = vi.fn();
-    useChatConnectionStore.setState({ disconnect: disconnectMock });
-
+  it("Disconnect ボタンは表示しない(切断はヘッダーのロゴクリックで行う)", () => {
     render(<StreamInfoPanel />);
 
-    await user.click(screen.getByRole("button", { name: "Disconnect" }));
-
-    expect(disconnectMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Disconnect" })).toBeNull();
   });
 });

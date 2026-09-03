@@ -26,6 +26,8 @@ function createHelixStreamsJson(overrides: Record<string, unknown> = {}): unknow
         game_id: "18122",
         game_name: "World of Warcraft",
         viewer_count: 4321,
+        tags: ["English", "FPS"],
+        started_at: "2026-09-03T10:00:00Z",
         ...overrides,
       },
     ],
@@ -41,6 +43,8 @@ const 期待する配信情報 = {
   broadcasterName: "ZackRawrr",
   gameId: "18122",
   viewerCount: 4321,
+  tags: ["English", "FPS"],
+  startedAt: "2026-09-03T10:00:00Z",
 };
 
 describe("parseStreamInfo", () => {
@@ -81,6 +85,39 @@ describe("parseStreamInfo", () => {
     expect(parseStreamInfo(createHelixStreamsJson({ viewer_count: "many" }))).toEqual({
       ...期待する配信情報,
       viewerCount: null,
+    });
+  });
+
+  it("タグが無い・配列でない場合は空配列として保持する(タグを表示しないだけ)", () => {
+    expect(parseStreamInfo(createHelixStreamsJson({ tags: undefined }))).toEqual({
+      ...期待する配信情報,
+      tags: [],
+    });
+    expect(parseStreamInfo(createHelixStreamsJson({ tags: "not-an-array" }))).toEqual({
+      ...期待する配信情報,
+      tags: [],
+    });
+  });
+
+  it("タグの配列に文字列以外の要素が混ざっている場合は、文字列の要素だけを保持する", () => {
+    expect(parseStreamInfo(createHelixStreamsJson({ tags: ["English", 123, null, "FPS"] }))).toEqual({
+      ...期待する配信情報,
+      tags: ["English", "FPS"],
+    });
+  });
+
+  it("配信開始日時が無い・型が違う・日時として解釈できない場合は null として保持する(経過時間を表示しないだけ)", () => {
+    expect(parseStreamInfo(createHelixStreamsJson({ started_at: undefined }))).toEqual({
+      ...期待する配信情報,
+      startedAt: null,
+    });
+    expect(parseStreamInfo(createHelixStreamsJson({ started_at: 1234567890 }))).toEqual({
+      ...期待する配信情報,
+      startedAt: null,
+    });
+    expect(parseStreamInfo(createHelixStreamsJson({ started_at: "invalid-date" }))).toEqual({
+      ...期待する配信情報,
+      startedAt: null,
     });
   });
 
@@ -165,6 +202,12 @@ describe("streamInfoPromptKey", () => {
     expect(streamInfoPromptKey({ ...期待する配信情報, viewerCount: 9999 })).toBe(
       streamInfoPromptKey(期待する配信情報),
     );
+  });
+
+  it("タグ・配信開始日時が変わってもキーは変わらない(プロンプトに焼き込まないため)", () => {
+    expect(
+      streamInfoPromptKey({ ...期待する配信情報, tags: ["別のタグ"], startedAt: "2026-09-03T12:00:00Z" }),
+    ).toBe(streamInfoPromptKey(期待する配信情報));
   });
 
   it("null(未読み込み・オフライン)の場合は空文字を返す", () => {
