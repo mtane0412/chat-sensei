@@ -1061,20 +1061,37 @@ describe("Home(手動Pick up。issue #72)", () => {
   });
 });
 
-describe("Home(未接続の接続画面)", () => {
+describe("Home(未接続のウェルカム画面)", () => {
   beforeEach(() => {
     useChatConnectionStore.setState({ connectionState: "idle", channel: null });
   });
 
-  it("チャンネル入力と Connect ボタンの接続画面を表示し、3カラムと配信embedは表示しない", () => {
+  it("アプリ名の見出しと、チャンネル入力 + Connect ボタンを表示し、3カラムと配信embedは表示しない", () => {
     render(<Home />);
 
+    expect(screen.getByRole("heading", { level: 1, name: "chat-sensei" })).toBeInTheDocument();
     expect(screen.getByLabelText("Channel")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Raw Chat" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Translation" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Pick up" })).not.toBeInTheDocument();
     expect(screen.queryByTitle(/Twitch player/)).not.toBeInTheDocument();
+  });
+
+  it("言語ペアのセレクト(学ぶ言語 / 解説言語)を表示する(未接続時はヘッダーが無いため、この画面に置く)", () => {
+    render(<Home />);
+
+    expect(screen.getByRole("combobox", { name: "Learning language" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Explanation language" })).toBeInTheDocument();
+  });
+
+  it("AIモデル設定(設定ダイアログ)を開くラベル付きボタンを表示する", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+
+    // ダイアログを開くと LLM プロバイダ(AIモデル)の設定セクションが表示される
+    await user.click(screen.getByRole("button", { name: "AI model settings" }));
+    expect(screen.getByRole("region", { name: "LLM provider settings" })).toBeInTheDocument();
   });
 
   it("接続状態(Status)を表示する", () => {
@@ -1084,7 +1101,7 @@ describe("Home(未接続の接続画面)", () => {
     expect(screen.getByText("Idle")).toBeInTheDocument();
   });
 
-  it("切断(closed)後も接続画面に戻る", () => {
+  it("切断(closed)後もウェルカム画面に戻る", () => {
     useChatConnectionStore.setState({ connectionState: "closed" });
 
     render(<Home />);

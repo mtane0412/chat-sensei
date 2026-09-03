@@ -201,4 +201,42 @@ describe("ChannelAutocompleteInput", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(fetchSuggestions).toHaveBeenCalledTimes(1);
   });
+
+  it("親が value を外部から空にした場合(接続フォームの送信後クリアなど)もドロップダウンを閉じる", async () => {
+    // 入力欄の change イベントを経由せずに、親コンポーネントが value を直接空へ更新するケース。
+    // ヘッダーのチャンネル検索(channel-search-form.tsx)が送信後に入力をクリアしたとき、
+    // 開いたままの候補ドロップダウンが残らないことを検証する
+    function ClearableInput({
+      fetchSuggestions,
+    }: {
+      fetchSuggestions: (query: string, options: { signal?: AbortSignal }) => Promise<ChannelSuggestion[] | null>;
+    }) {
+      const [value, setValue] = useState("");
+      return (
+        <>
+          <ChannelAutocompleteInput
+            id="channel-input"
+            aria-label="Channel"
+            value={value}
+            onValueChange={setValue}
+            fetchSuggestions={fetchSuggestions}
+          />
+          <button type="button" onClick={() => setValue("")}>
+            クリア
+          </button>
+        </>
+      );
+    }
+    const fetchSuggestions = vi.fn().mockResolvedValue(サンプル候補);
+    render(<ClearableInput fetchSuggestions={fetchSuggestions} />);
+
+    const input = screen.getByLabelText("Channel");
+    typeInto(input, "zack");
+    await advanceDebounce();
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "クリア" }));
+
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
 });

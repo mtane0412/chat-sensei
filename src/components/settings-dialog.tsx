@@ -53,7 +53,7 @@ const DIAGNOSIS_LEVEL_STYLE: Record<DiagnosisMessage["level"], { Icon: typeof Ch
   error: { Icon: XCircleIcon, className: "text-destructive" },
 };
 
-export function SettingsDialog() {
+export function SettingsDialog({ triggerLabel }: { triggerLabel?: string } = {}) {
   const hydrated = useSettingsStore((state) => state.hydrated);
   const wasCorrupted = useSettingsStore((state) => state.wasCorrupted);
 
@@ -61,10 +61,19 @@ export function SettingsDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      {/* 未復元の間に初期化すると、まだ読み込んでいない LocalStorage の設定を消してしまうため、復元が済むまで開けないようにする */}
-      <DialogTrigger render={<Button variant="ghost" size="icon-sm" aria-label={DIALOG_TITLE} disabled={!hydrated} />}>
-        <SettingsIcon />
-      </DialogTrigger>
+      {/* 未復元の間に初期化すると、まだ読み込んでいない LocalStorage の設定を消してしまうため、復元が済むまで開けないようにする。
+          既定は歯車アイコンのみ(ヘッダー用)。triggerLabel を渡すとラベル付きのボタンになる
+          (ウェルカム画面で「AIモデル設定」であることを明示するため) */}
+      {triggerLabel === undefined ? (
+        <DialogTrigger render={<Button variant="ghost" size="icon-sm" aria-label={DIALOG_TITLE} disabled={!hydrated} />}>
+          <SettingsIcon />
+        </DialogTrigger>
+      ) : (
+        <DialogTrigger render={<Button variant="outline" size="sm" disabled={!hydrated} />}>
+          <SettingsIcon />
+          {triggerLabel}
+        </DialogTrigger>
+      )}
       <DialogContent aria-label={DIALOG_TITLE}>
         <DialogHeader>
           <DialogTitle>{DIALOG_TITLE}</DialogTitle>
