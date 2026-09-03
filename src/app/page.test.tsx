@@ -68,6 +68,16 @@ vi.mock("@/lib/twitch/channel-search", async (importOriginal) => ({
   fetchChannelSuggestions: () => Promise.resolve(null),
 }));
 
+// ウェルカム画面の配信一覧(issue #90)の取得もネットワークに触れるためモックする。
+// 既定は null = Helix 利用不可(一覧セクションを表示しない)とし、
+// 一覧を検証するテストだけ mockResolvedValue で配信データを注入する
+const mockFetchLanguagePairStreams = vi.fn();
+
+vi.mock("@/lib/twitch/stream-list", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/twitch/stream-list")>()),
+  fetchLanguagePairStreams: (...args: unknown[]) => mockFetchLanguagePairStreams(...args),
+}));
+
 import Home from "./page";
 
 const サンプル発言: TwitchChatMessage = {
@@ -103,6 +113,8 @@ beforeEach(() => {
   mockStopPickupPipeline.mockClear();
   mockWarmUpPickupPipeline.mockClear();
   mockAddManualPickup.mockClear();
+  mockFetchLanguagePairStreams.mockReset();
+  mockFetchLanguagePairStreams.mockResolvedValue(null);
   // 多くのテストは接続中(embed + 3カラム)の画面を検証するため、既定で接続済み(open)にする。
   // 未接続の接続画面を検証するテストは、テスト内で idle / closed に戻す
   useChatConnectionStore.setState({ connectionState: "open", channel: "example" });
@@ -1099,6 +1111,37 @@ describe("Home(未接続のウェルカム画面)", () => {
 
     expect(screen.getByText("Status:")).toBeInTheDocument();
     expect(screen.getByText("Idle")).toBeInTheDocument();
+  });
+
+  it("チャンネル接続UIの下に、言語ペアの両タグを含む配信一覧(issue #90)を表示する", async () => {
+    // Learning en · explained in ja(デフォルト)の両タグを含む配信が1件見つかった状態を注入する
+    mockFetchLanguagePairStreams.mockResolvedValue([
+      {
+        login: "eigo_sensei",
+        displayName: "英語の先生",
+        title: "English & Japanese chatting stream",
+        category: "Just Chatting",
+        viewerCount: 321,
+        thumbnailUrl: "",
+        tags: ["English", "日本語"],
+      },
+    ]);
+    render(<Home />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Live streams tagged English · 日本語" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("English & Japanese chatting stream")).toBeInTheDocument();
+  });
+
+  it("配信一覧の取得に失敗した場合(Helix 利用不可)は、一覧セクションを表示しない", async () => {
+    render(<Home />);
+
+    // 既定のモック(null)が解決されるのを待ってから、セクションが無いことを確認する
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("heading", { name: /Live streams tagged/ })).not.toBeInTheDocument();
   });
 
   it("切断(closed)後もウェルカム画面に戻る", () => {
