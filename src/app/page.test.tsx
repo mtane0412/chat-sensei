@@ -127,7 +127,7 @@ describe("Home(3カラム構成)", () => {
   it("生IRC・翻訳・Pick upの3列を見出し付きで表示する", () => {
     render(<Home />);
 
-    expect(screen.getByRole("region", { name: "Raw IRC" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Raw Chat" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Translation" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Pick up" })).toBeInTheDocument();
   });
@@ -137,7 +137,7 @@ describe("Home(3カラム構成)", () => {
 
     render(<Home />);
 
-    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const rawColumn = screen.getByRole("region", { name: "Raw Chat" });
     expect(within(rawColumn).getByText("viewer_taro")).toBeInTheDocument();
     expect(within(rawColumn).getByText("gg no re chat")).toBeInTheDocument();
   });
@@ -149,7 +149,7 @@ describe("Home(3カラム構成)", () => {
 
     render(<Home />);
 
-    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const rawColumn = screen.getByRole("region", { name: "Raw Chat" });
     const avatar = rawColumn.querySelector('img[src="https://cdn.example/taro.png"]');
     expect(avatar).not.toBeNull();
   });
@@ -159,7 +159,7 @@ describe("Home(3カラム構成)", () => {
 
     render(<Home />);
 
-    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const rawColumn = screen.getByRole("region", { name: "Raw Chat" });
     expect(within(rawColumn).getByText("viewer_taro")).toBeInTheDocument();
     expect(rawColumn.querySelector('img[src="https://cdn.example/taro.png"]')).toBeNull();
   });
@@ -186,7 +186,7 @@ describe("Home(3カラム構成)", () => {
 
     render(<Home />);
 
-    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const rawColumn = screen.getByRole("region", { name: "Raw Chat" });
     expect(rawColumn.querySelector('img[src="https://cdn.example/moderator/1/2x.png"]')).not.toBeNull();
     expect(rawColumn.querySelector('img[src="https://cdn.example/channel/subscriber/3/2x.png"]')).not.toBeNull();
   });
@@ -199,7 +199,7 @@ describe("Home(3カラム構成)", () => {
 
     render(<Home />);
 
-    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const rawColumn = screen.getByRole("region", { name: "Raw Chat" });
     expect(within(rawColumn).getByText("viewer_taro")).toBeInTheDocument();
     expect(rawColumn.querySelector('img[alt="moderator"]')).toBeNull();
   });
@@ -320,7 +320,7 @@ describe("Home(翻訳列)", () => {
 
     render(<Home />);
 
-    const rawRow = within(screen.getByRole("region", { name: "Raw IRC" })).getByRole("listitem");
+    const rawRow = within(screen.getByRole("region", { name: "Raw Chat" })).getByRole("listitem");
     const translationRow = within(screen.getByRole("region", { name: "Translation" })).getByRole("listitem");
     expect(rawRow).toHaveAttribute("data-message-id", "msg-1");
     expect(translationRow).toHaveAttribute("data-message-id", "msg-1");
@@ -431,13 +431,13 @@ describe("Home(Pick up列)", () => {
     expect(rows[1]).toHaveTextContent("激しく同意");
   });
 
-  it("該当する表現が無い行は「なし」と控えめに表示する", () => {
+  it("該当する表現が無い行は何も表示しない(「None」を出さない)", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
     usePickupStore.setState({ entries: { "msg-1": { status: "done", terms: [] } } });
 
     render(<Home />);
 
-    expect(within(screen.getByRole("region", { name: "Pick up" })).getByText("None")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Pick up" })).queryByText("None")).not.toBeInTheDocument();
   });
 
   it("生成中の行は「抽出中」と表示する", () => {
@@ -540,7 +540,7 @@ describe("Home(Pick up列)", () => {
     expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
   });
 
-  it("すべての語句を削除した行は「None」と表示する", async () => {
+  it("すべての語句を削除した行は何も表示しない(「None」を出さない)", async () => {
     const user = userEvent.setup();
     useChatConnectionStore.setState({ messages: [サンプル発言] });
     usePickupStore.setState({
@@ -553,7 +553,7 @@ describe("Home(Pick up列)", () => {
     await user.click(within(pickupColumn).getByRole("button", { name: 'Remove "gg"' }));
 
     expect(within(pickupColumn).queryByText("gg")).not.toBeInTheDocument();
-    expect(within(pickupColumn).getByText("None")).toBeInTheDocument();
+    expect(within(pickupColumn).queryByText("None")).not.toBeInTheDocument();
   });
 
 
@@ -692,7 +692,7 @@ describe("Home(新着への追従)", () => {
   it("生IRC列の見出しに追従トグルがあり、初期状態でオンになっている", () => {
     render(<Home />);
 
-    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const rawColumn = screen.getByRole("region", { name: "Raw Chat" });
     const toggle = within(rawColumn).getByRole("switch", { name: "Follow new messages" });
     expect(toggle).toHaveAttribute("aria-checked", "true");
     expect(toggle.querySelector(".lucide-chevrons-down")).not.toBeNull();
@@ -772,7 +772,7 @@ describe("Home(bot除外設定)", () => {
     useBotFilterStore.getState().setPatterns(["nightbot", "*trans"]);
     render(<Home />);
 
-    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const rawColumn = screen.getByRole("region", { name: "Raw Chat" });
     await user.click(within(rawColumn).getByRole("button", { name: "Bot filter" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Bot filter" });
@@ -920,7 +920,7 @@ describe("Home(言語ペアの設定)", () => {
   it("列見出しには言語設定のダイアログを置かない(接続フォーム横のセレクトに一本化)", () => {
     render(<Home />);
 
-    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const rawColumn = screen.getByRole("region", { name: "Raw Chat" });
     const translationColumn = screen.getByRole("region", { name: "Translation" });
     expect(within(rawColumn).queryByRole("button", { name: "Learning languages" })).not.toBeInTheDocument();
     expect(within(translationColumn).queryByRole("button", { name: "Explanation language" })).not.toBeInTheDocument();
@@ -1025,7 +1025,7 @@ describe("Home(手動Pick up。issue #72)", () => {
     useChatConnectionStore.setState({ messages: [サンプル発言] });
     render(<Home />);
 
-    const rawColumn = screen.getByRole("region", { name: "Raw IRC" });
+    const rawColumn = screen.getByRole("region", { name: "Raw Chat" });
     const textNode = within(rawColumn).getByText("gg no re chat").firstChild;
     if (!textNode) throw new Error("発言本文のテキストノードが見つかりません");
     const range = document.createRange();
@@ -1053,7 +1053,7 @@ describe("Home(未接続の接続画面)", () => {
 
     expect(screen.getByLabelText("Channel")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Raw IRC" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Raw Chat" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Translation" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Pick up" })).not.toBeInTheDocument();
     expect(screen.queryByTitle(/Twitch player/)).not.toBeInTheDocument();
@@ -1072,7 +1072,7 @@ describe("Home(未接続の接続画面)", () => {
     render(<Home />);
 
     expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Raw IRC" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Raw Chat" })).not.toBeInTheDocument();
   });
 });
 

@@ -257,7 +257,7 @@ export default function Home() {
               style={{ gridTemplateRows: `auto repeat(${messages.length}, auto) 1fr` }}
             >
           <Column
-            title="Raw IRC"
+            title="Raw Chat"
             blurred={false}
             dataColumn={RAW_IRC_COLUMN_NAME}
             headerAction={
@@ -514,7 +514,7 @@ function PipelineCellContent<TDone extends object>({
 }
 
 /**
- * Pick up列の完了した結果。該当する表現が無い場合は「None」と控えめに表示する。
+ * Pick up列の完了した結果。該当する表現が無い場合は何も表示しない(「None」が並ぶと見栄えが悪いため)。
  *
  * ユーザーが削除した語句(hidden-pickups ストア。issue #71)は表示から除外する。
  * 削除ボタンは語句の hover 時(またはフォーカス時)に表示する × アイコンで、押すと
@@ -533,12 +533,10 @@ const PickupTerms = memo(function PickupTerms({
   terms: PickupDone["terms"];
 }) {
   const hiddenTerms = useHiddenPickupStore((state) => state.hiddenTerms[messageId]);
-  // 手動Pick up(issue #72)がある行では、自動抽出が空でも「None」を出さない(手動分は ManualPickupTerms が表示する)
-  const hasManualPickups = useManualPickupStore((state) => (state.entries[messageId] ?? []).length > 0);
   const visibleTerms =
     hiddenTerms === undefined ? terms : terms.filter((term) => !isPickupTermHidden(hiddenTerms, term.term));
   if (visibleTerms.length === 0) {
-    return hasManualPickups ? null : <span className="text-muted-foreground">None</span>;
+    return null;
   }
   return (
     <dl className="flex flex-col gap-0.5">

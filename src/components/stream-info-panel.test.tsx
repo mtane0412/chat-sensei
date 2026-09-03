@@ -71,10 +71,13 @@ describe("StreamInfoPanel(配信情報あり)", () => {
     expect(screen.getByText("World of Warcraft")).toBeInTheDocument();
   });
 
-  it("同時視聴者数を桁区切りで表示する", () => {
+  it("同時視聴者数を、Twitch と同様の赤色の人アイコン + 桁区切りの数字で表示する", () => {
     render(<StreamInfoPanel />);
 
-    expect(screen.getByText("4,321 viewers")).toBeInTheDocument();
+    // 数字のみを表示し、スクリーンリーダー向けに aria-label で「viewers」を補う
+    const viewerCount = screen.getByLabelText("4,321 viewers");
+    expect(viewerCount).toHaveTextContent("4,321");
+    expect(viewerCount.className).toContain("text-red-500");
   });
 
   it("配信者のアバター取得を要求し、取得済みならアバター画像を表示する", () => {
@@ -119,7 +122,7 @@ describe("StreamInfoPanel(配信情報なし = オフライン・Helix 利用不
     render(<StreamInfoPanel />);
 
     expect(screen.getByText("zackrawrr")).toBeInTheDocument();
-    expect(screen.queryByText(/viewers/)).toBeNull();
+    expect(screen.queryByLabelText(/viewers/)).toBeNull();
   });
 
   it("ゲームIDが無いためボックスアートの取得を要求しない", () => {
