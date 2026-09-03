@@ -31,7 +31,7 @@ import { isExcludedFromChat } from "@/lib/bot-filter";
 import { isExcludedByBotFilter, useBotFilterStore } from "./bot-filter";
 import { clearAvatarLoadFailures, requestAvatar } from "./avatars";
 import { clearBadges, loadBadges } from "./badges";
-import { clearStreamInfo, loadStreamInfo } from "./stream-info";
+import { clearStreamInfo, loadStreamInfo, startStreamInfoRefresh, stopStreamInfoRefresh } from "./stream-info";
 import { clearThirdPartyEmotes, getThirdPartyEmoteMap, loadThirdPartyEmotes } from "./third-party-emotes";
 import { clearCheermotes, getCheermoteSet, loadCheermotes } from "./cheermotes";
 import { clearHiddenPickupTerms } from "./hidden-pickups";
@@ -128,11 +128,14 @@ export const useChatConnectionStore = create<ChatConnectionState>((set) => ({
     // 配信情報(タイトル・カテゴリ。issue #54)はチャンネル名(user_login)だけで取得できるため、
     // ROOMSTATE を待たず接続開始と同時に読み込む
     void loadStreamInfo(normalized);
+    // 視聴者数・カテゴリの変化と配信終了に追従するため、接続中は定期的に再取得する(issue #85)
+    startStreamInfoRefresh(normalized);
     getClient().connect(channel);
   },
   disconnect: () => {
     set({ channel: null });
-    // 切断中に古い配信の文脈を残さない
+    // 切断中に古い配信の文脈を残さない(定期リフレッシュも止める)
+    stopStreamInfoRefresh();
     clearStreamInfo();
     getClient().disconnect();
   },

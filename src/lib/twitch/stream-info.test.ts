@@ -7,7 +7,7 @@
  * 実際の API 呼び出しは行わず、フェイクの fetch を注入する。
  */
 import { describe, expect, it, vi } from "vitest";
-import { fetchStreamInfo, parseStreamInfo } from "./stream-info";
+import { fetchStreamInfo, fetchStreamInfoResult, parseStreamInfo } from "./stream-info";
 
 /** Helix Get Streams API のライブ配信 1 件ぶんのレスポンス(検証に使う部分のみ) */
 function createHelixStreamsJson(overrides: Record<string, unknown> = {}): unknown {
@@ -89,6 +89,37 @@ describe("parseStreamInfo", () => {
     expect(parseStreamInfo({})).toBeNull();
     expect(parseStreamInfo({ data: "not-an-array" })).toBeNull();
     expect(parseStreamInfo({ data: [{ title: 123, game_name: 456 }] })).toBeNull();
+  });
+});
+
+describe("fetchStreamInfoResult", () => {
+  it("ライブ配信中は live ステータスと解析した配信情報を返す", async () => {
+    const fetchFn = vi.fn(async () => Response.json(createHelixStreamsJson()));
+
+    const result = await fetchStreamInfoResult("zackrawrr", fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/streams?user_login=zackrawrr", { signal: undefined });
+    expect(result).toEqual({ status: "live", info: 期待する配信情報 });
+  });
+
+  it("オフライン(data が空)の場合は offline ステータスを返す(配信終了の検知に使う)", async () => {
+    const fetchFn = vi.fn(async () => Response.json({ data: [] }));
+
+    expect(await fetchStreamInfoResult("zackrawrr", fetchFn)).toEqual({ status: "offline" });
+  });
+
+  it("HTTP エラー(503: Helix 未設定など)の場合は unavailable ステータスを返す(オフラインと区別する)", async () => {
+    const fetchFn = vi.fn(async () => Response.json({ error: "Helix API が設定されていません" }, { status: 503 }));
+
+    expect(await fetchStreamInfoResult("zackrawrr", fetchFn)).toEqual({ status: "unavailable" });
+  });
+
+  it("ネットワークエラーの場合は unavailable ステータスを返す", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error("network down");
+    });
+
+    expect(await fetchStreamInfoResult("zackrawrr", fetchFn)).toEqual({ status: "unavailable" });
   });
 });
 

@@ -14,9 +14,19 @@
  *   文脈なしの現行プロンプトで動作する(意図したフォールバック)
  * - チャンネル切り替え(`connect()`)・切断時は `clearStreamInfo` で破棄し、
  *   読み込み途中だった前チャンネルの結果は世代番号の比較で捨てる
+ * - 接続中は定期リフレッシュ(issue #85)で視聴者数・タイトル・カテゴリの変化と
+ *   配信終了(オフライン → クリア)に追従する。API 失敗時は既存の情報を保持する
  */
 import { create } from "zustand";
-import { fetchStreamInfo, type StreamInfo } from "@/lib/twitch/stream-info";
+import {
+  fetchStreamInfo,
+  fetchStreamInfoResult,
+  type StreamInfo,
+  type StreamInfoFetchResult,
+} from "@/lib/twitch/stream-info";
+
+/** 定期リフレッシュ(issue #85)の実行間隔。視聴者数・カテゴリの変化をこの間隔で追従する */
+const STREAM_INFO_REFRESH_INTERVAL_MS = 60_000;
 
 interface StreamInfoState {
   /** 接続中チャンネルの配信情報。未読み込み・オフライン・取得失敗時は null(文脈なしで動作) */
@@ -51,13 +61,61 @@ export async function loadStreamInfo(
   useStreamInfoStore.setState({ streamInfo: info });
 }
 
+/**
+ * 保持中の配信情報を最新の取得結果で更新する(定期リフレッシュ。issue #85)。
+ *
+ * - live: 配信情報を置き換える(視聴者数・タイトル・カテゴリの変化を反映する)
+ * - offline: 配信情報をクリアする(配信終了後にライブ風の視聴者数を残さない)
+ * - unavailable(API 失敗): 既存の配信情報を保持する(リフレッシュの失敗で文脈を失わない)
+ *
+ * 世代番号は進めず取得開始時点の値を控えるだけとし、取得中にチャンネル切り替え・切断
+ * (= クリア・読み込み開始で世代が進む)があった場合は、遅れて届いた結果を破棄する。
+ */
+export async function refreshStreamInfo(fetchResult: () => Promise<StreamInfoFetchResult>): Promise<void> {
+  const requestGeneration = generation;
+
+  const result = await fetchResult();
+
+  if (generation !== requestGeneration) return;
+  if (result.status === "unavailable") return;
+  useStreamInfoStore.setState({ streamInfo: result.status === "live" ? result.info : null });
+}
+
+/** 定期リフレッシュのタイマー。未開始・停止中は null */
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * 指定したチャンネル(正規化済みの user_login)の配信情報の定期リフレッシュを開始する。
+ * `chat-connection.ts` の connect() から呼ぶ。既に動いているタイマーがあれば止めて
+ * 新しいチャンネルで開始する(チャンネル切り替え)。初回の取得は `loadStreamInfo` が
+ * 担うため、ここでは1周期後から更新を始める。
+ */
+export function startStreamInfoRefresh(
+  channelLogin: string,
+  fetchResult: (userLogin: string) => Promise<StreamInfoFetchResult> = fetchStreamInfoResult,
+): void {
+  stopStreamInfoRefresh();
+  refreshTimer = setInterval(() => {
+    void refreshStreamInfo(() => fetchResult(channelLogin));
+  }, STREAM_INFO_REFRESH_INTERVAL_MS);
+}
+
+/** 配信情報の定期リフレッシュを停止する。`chat-connection.ts` の disconnect() から呼ぶ */
+export function stopStreamInfoRefresh(): void {
+  if (refreshTimer !== null) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+}
+
 /** 配信情報を破棄して null に戻す。チャンネル切り替え・切断時に呼ぶ */
 export function clearStreamInfo(): void {
   generation += 1;
   useStreamInfoStore.setState({ streamInfo: null });
 }
 
-/** テスト専用: モジュールスコープの状態を初期状態に戻す。各テストの afterEach で呼び出すこと */
+/** テスト専用: モジュールスコープの状態(保持中の配信情報・定期リフレッシュのタイマー)を初期状態に戻す。各テストの afterEach で呼び出すこと */
 export function resetStreamInfoForTests(): void {
+  stopStreamInfoRefresh();
   clearStreamInfo();
 }

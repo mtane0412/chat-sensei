@@ -62,6 +62,41 @@ export function parseStreamInfo(json: unknown): StreamInfo | null {
 }
 
 /**
+ * 配信情報の取得結果。定期リフレッシュ(issue #85)が「配信終了(オフライン)」と
+ * 「取得失敗(API 障害など)」を区別して扱えるようにステータス付きで返す。
+ *
+ * - live: ライブ配信中。解析済みの配信情報を持つ
+ * - offline: 取得は成功したが配信していない(レスポンスの `data` が空)。
+ *   タイトル・カテゴリの両方が空など、文脈として意味の無いレスポンスもここに含める
+ * - unavailable: 取得に失敗した(Helix 未設定の 503・レート制限・障害・ネットワークエラー)。
+ *   配信が終了したとは判断できないため、呼び出し側は既存の情報を保持してよい
+ */
+export type StreamInfoFetchResult =
+  | { status: "live"; info: StreamInfo }
+  | { status: "offline" }
+  | { status: "unavailable" };
+
+/**
+ * Helix プロキシ(`/api/twitch/streams`)から、指定したチャンネル(user_login)の
+ * ライブ配信の情報をステータス付きで取得する。オフラインと取得失敗を区別する必要がある
+ * 定期リフレッシュ(issue #85)から使う。
+ */
+export async function fetchStreamInfoResult(
+  userLogin: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<StreamInfoFetchResult> {
+  const json = await fetchHelixJson("streams", {
+    params: new URLSearchParams({ user_login: userLogin }),
+    fetchFn,
+    failureLog: { subject: "配信情報", fallback: "文脈なしで動作します" },
+  });
+  if (json === null) return { status: "unavailable" };
+  const info = parseStreamInfo(json);
+  if (info === null) return { status: "offline" };
+  return { status: "live", info };
+}
+
+/**
  * Helix プロキシ(`/api/twitch/streams`)から、指定したチャンネル(user_login)の
  * ライブ配信のタイトル・カテゴリを取得する。
  *
@@ -74,11 +109,6 @@ export async function fetchStreamInfo(
   userLogin: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<StreamInfo | null> {
-  const json = await fetchHelixJson("streams", {
-    params: new URLSearchParams({ user_login: userLogin }),
-    fetchFn,
-    failureLog: { subject: "配信情報", fallback: "文脈なしで動作します" },
-  });
-  if (json === null) return null;
-  return parseStreamInfo(json);
+  const result = await fetchStreamInfoResult(userLogin, fetchFn);
+  return result.status === "live" ? result.info : null;
 }
