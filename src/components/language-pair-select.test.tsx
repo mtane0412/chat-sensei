@@ -1,9 +1,9 @@
 /**
  * src/components/language-pair-select.tsx(言語ペアの常時表示セレクト)のテスト。
  *
- * チャンネル接続フォームの横に常時表示する「学ぶ言語」「解説言語」の2つのセレクトを検証する。
- * ファーストビューで「どのチャンネルに接続して、何の言語をどの言語で学んでいるか」が
- * 見えるようにするため、ダイアログではなくインラインのセレクトにしている。
+ * ヘッダーに常時表示する「学ぶ言語」「解説言語」の2つのセレクトを検証する。
+ * 「Learning [学ぶ言語] · explained in [解説言語]」という文章の中にセレクトを埋め込む
+ * 文章型レイアウトで、各セレクトが何を意味するかをラベルなしでも読み取れるようにしている。
  *
  * - 変更は即座に `useSettingsStore.setSettings`(→ LocalStorage)へ保存される
  * - 学ぶ言語と解説言語が同じペアはスキーマで禁止されているため、もう一方と同じ言語を
@@ -36,10 +36,20 @@ describe("LanguagePairSelect", () => {
     expect(screen.getByRole("combobox", { name: "Explanation language" })).toHaveValue("en");
   });
 
-  it("compact 指定時はラベルを視覚的に隠す(sr-only)が、アクセシブル名としては保持する(ヘッダー配置用)", () => {
+  it("「Learning [学ぶ言語] · explained in [解説言語]」という文章型レイアウトで表示する", () => {
     hydrateSettingsStore();
 
-    render(<LanguagePairSelect compact />);
+    render(<LanguagePairSelect />);
+
+    // セレクトの意味を伝えるつなぎのテキストが見えていること
+    expect(screen.getByText("Learning")).toBeInTheDocument();
+    expect(screen.getByText("explained in")).toBeInTheDocument();
+  });
+
+  it("ラベルは視覚的に隠す(sr-only)が、アクセシブル名としては保持する", () => {
+    hydrateSettingsStore();
+
+    render(<LanguagePairSelect />);
 
     const learningSelect = screen.getByRole("combobox", { name: "Learning language" });
     expect(learningSelect).toBeInTheDocument();

@@ -1,8 +1,10 @@
 /**
- * チャンネル接続フォームの横に常時表示する、言語ペア(学ぶ言語 / 解説言語)のセレクト。
+ * ヘッダーに常時表示する、言語ペア(学ぶ言語 / 解説言語)のセレクト。
  *
- * ファーストビューで「どのチャンネルに接続して、何の言語をどの言語で学んでいるか」が
- * 見えるように、ダイアログではなくインラインのセレクトで置く(列見出しのダイアログは廃止した)。
+ * 「Learning [学ぶ言語] · explained in [解説言語]」という文章の中にセレクトを埋め込む
+ * 文章型レイアウトにすることで、各セレクトが何を意味するか(何の言語を学び、どの言語で
+ * 解説が出るか)をラベルなしでも読み取れるようにしている。ラベルは sr-only で保持し、
+ * スクリーンリーダー向けのアクセシブル名は維持する。
  *
  * - 変更は即座に `useSettingsStore.setSettings` が LocalStorage へ永続化し、ホーム画面が
  *   設定変更を購読して翻訳・Pick up のパイプラインを新しい言語ペアで再起動する
@@ -28,11 +30,10 @@ const languageSchema = z.enum(SUPPORTED_LANGUAGES);
 const SELECT_CLASS_NAME = "h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm dark:bg-input/30";
 
 /**
- * 学ぶ言語・解説言語の2つのセレクト。
- * `compact` を指定するとラベルを視覚的に隠し(sr-only)、ヘッダーなど 高さの限られた場所に置ける
- * (アクセシブル名としてのラベルは保持する)。
+ * 学ぶ言語・解説言語の2つのセレクトを「Learning [X] · explained in [Y]」という
+ * 文章の中に埋め込んで表示する。
  */
-export function LanguagePairSelect({ compact = false }: { compact?: boolean } = {}) {
+export function LanguagePairSelect() {
   const settings = useSettingsStore((state) => state.settings);
   const hydrated = useSettingsStore((state) => state.hydrated);
   const setSettings = useSettingsStore((state) => state.setSettings);
@@ -54,29 +55,28 @@ export function LanguagePairSelect({ compact = false }: { compact?: boolean } = 
   };
 
   return (
-    <div className="flex items-end gap-3">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={LEARNING_SELECT_ID} className={compact ? "sr-only" : undefined}>
-          Learning language
-        </Label>
-        <LanguageSelect
-          id={LEARNING_SELECT_ID}
-          value={settings.learningLang}
-          disabled={!hydrated}
-          onChange={handleChange("learningLang")}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={EXPLANATION_SELECT_ID} className={compact ? "sr-only" : undefined}>
-          Explanation language
-        </Label>
-        <LanguageSelect
-          id={EXPLANATION_SELECT_ID}
-          value={settings.explainLang}
-          disabled={!hydrated}
-          onChange={handleChange("explainLang")}
-        />
-      </div>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm text-muted-foreground">
+      <Label htmlFor={LEARNING_SELECT_ID} className="sr-only">
+        Learning language
+      </Label>
+      <span aria-hidden="true">Learning</span>
+      <LanguageSelect
+        id={LEARNING_SELECT_ID}
+        value={settings.learningLang}
+        disabled={!hydrated}
+        onChange={handleChange("learningLang")}
+      />
+      <Label htmlFor={EXPLANATION_SELECT_ID} className="sr-only">
+        Explanation language
+      </Label>
+      <span aria-hidden="true">·</span>
+      <span aria-hidden="true">explained in</span>
+      <LanguageSelect
+        id={EXPLANATION_SELECT_ID}
+        value={settings.explainLang}
+        disabled={!hydrated}
+        onChange={handleChange("explainLang")}
+      />
     </div>
   );
 }

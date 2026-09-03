@@ -1,7 +1,7 @@
 /**
  * 全ページ共通のヘッダー。
  *
- * 左側にアプリ名のリンク、右側に言語ペアのセレクト(コンパクト表示)と
+ * 左側にアプリ名のリンク、右側に言語ペアのセレクト(文章型レイアウト)と
  * 設定ダイアログのトリガーを表示する。言語設定・アプリ設定は接続前後の
  * どちらの画面(接続フォーム / embed + 3カラム)でも変更したくなるため、
  * 画面の状態に依存しないヘッダーに常時置く。
@@ -18,7 +18,7 @@ export function SiteHeader() {
           chat-sensei
         </Link>
         <div className="flex items-center gap-2">
-          <LanguagePairSelect compact />
+          <LanguagePairSelect />
           <SettingsDialog />
         </div>
       </nav>
