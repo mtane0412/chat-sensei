@@ -6,8 +6,12 @@
  * Next.js プロキシ(`/api/twitch/streams`)経由の取得を検証する。
  * 実際の API 呼び出しは行わず、フェイクの fetch を注入する。
  */
-import { describe, expect, it, vi } from "vitest";
-import { fetchStreamInfo, fetchStreamInfoResult, parseStreamInfo } from "./stream-info";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fetchStreamInfoResult, parseStreamInfo, streamInfoPromptKey } from "./stream-info";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 /** Helix Get Streams API のライブ配信 1 件ぶんのレスポンス(検証に使う部分のみ) */
 function createHelixStreamsJson(overrides: Record<string, unknown> = {}): unknown {
@@ -121,35 +125,49 @@ describe("fetchStreamInfoResult", () => {
 
     expect(await fetchStreamInfoResult("zackrawrr", fetchFn)).toEqual({ status: "unavailable" });
   });
-});
 
-describe("fetchStreamInfo", () => {
-  it("Helix プロキシに user_login 付きで GET し、解析した配信情報を返す", async () => {
-    const fetchFn = vi.fn(async () => Response.json(createHelixStreamsJson()));
+  it("200 だが形式が不正なボディ(data が無い・配列でない・要素が解析できない)は unavailable を返す(配信終了と誤判定しない)", async () => {
+    const 不正なボディ一覧 = [{}, { data: "not-an-array" }, { data: [{ title: 123, game_name: 456 }] }];
+    for (const body of 不正なボディ一覧) {
+      const fetchFn = vi.fn(async () => Response.json(body));
 
-    const info = await fetchStreamInfo("zackrawrr", fetchFn);
-
-    expect(fetchFn).toHaveBeenCalledWith("/api/twitch/streams?user_login=zackrawrr", { signal: undefined });
-    expect(info).toEqual(期待する配信情報);
+      expect(await fetchStreamInfoResult("zackrawrr", fetchFn)).toEqual({ status: "unavailable" });
+    }
   });
 
-  it("オフライン(data が空)の場合は null を返す", async () => {
-    const fetchFn = vi.fn(async () => Response.json({ data: [] }));
-
-    expect(await fetchStreamInfo("zackrawrr", fetchFn)).toBeNull();
-  });
-
-  it("HTTP エラー(503: Helix 未設定など)の場合は null を返す(文脈なしで動作を続けるため)", async () => {
+  it("failureLog を渡さない場合、取得失敗しても console.warn を出さない(定期リフレッシュで毎分警告を出さないため)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetchFn = vi.fn(async () => Response.json({ error: "Helix API が設定されていません" }, { status: 503 }));
 
-    expect(await fetchStreamInfo("zackrawrr", fetchFn)).toBeNull();
+    await fetchStreamInfoResult("zackrawrr", fetchFn);
+
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("ネットワークエラーの場合は null を返す", async () => {
-    const fetchFn = vi.fn(async () => {
-      throw new Error("network down");
-    });
+  it("failureLog を渡した場合、取得失敗時に console.warn を出す(初回読み込みでの利用)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchFn = vi.fn(async () => Response.json({ error: "Helix API が設定されていません" }, { status: 503 }));
 
-    expect(await fetchStreamInfo("zackrawrr", fetchFn)).toBeNull();
+    await fetchStreamInfoResult("zackrawrr", fetchFn, { subject: "配信情報", fallback: "文脈なしで動作します" });
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("streamInfoPromptKey", () => {
+  it("システムプロンプトに焼き込むフィールド(タイトル・カテゴリ・配信者名)だけからキーを作る", () => {
+    expect(streamInfoPromptKey(期待する配信情報)).toBe(
+      "Mythic raid progression! !drops|World of Warcraft|zackrawrr|ZackRawrr",
+    );
+  });
+
+  it("視聴者数だけが変わってもキーは変わらない(定期リフレッシュでパイプラインを再起動しないため)", () => {
+    expect(streamInfoPromptKey({ ...期待する配信情報, viewerCount: 9999 })).toBe(
+      streamInfoPromptKey(期待する配信情報),
+    );
+  });
+
+  it("null(未読み込み・オフライン)の場合は空文字を返す", () => {
+    expect(streamInfoPromptKey(null)).toBe("");
   });
 });

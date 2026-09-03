@@ -21,6 +21,7 @@ import { sharedPromptJobQueue } from "./auto-pipeline";
 import { normalizePickupTerm } from "./hidden-pickups";
 import { usePromptApiStore, type PromptApiStatus } from "./prompt-api";
 import { useSettingsStore } from "./settings";
+import { streamInfoPromptKey } from "@/lib/twitch/stream-info";
 import { getStreamInfo } from "./stream-info";
 
 /** 手動Pick upした語句1件ぶんの状態 */
@@ -66,9 +67,10 @@ function getDefineTermPool(): SessionPool {
   // このメッセージは失敗理由として画面に表示され得るため、UIの言語(英語)で書く
   if (!hydrated) throw new Error("Settings are not restored yet. Call hydrateSettingsStore() first");
   const streamInfo = getStreamInfo();
-  // フィールドを手動列挙すると設定項目の追加時に漏れやすく、区切り文字がタイトル中の文字と衝突し得るため、
-  // 構造ごと JSON にして比較する(設定・配信情報はどちらも小さな平坦オブジェクト)
-  const key = JSON.stringify([settings, streamInfo]);
+  // 設定はフィールドを手動列挙すると項目追加時に漏れやすいため構造ごと JSON にして比較する。
+  // 配信情報はシステムプロンプトに焼き込むフィールドだけのキー(streamInfoPromptKey)を使い、
+  // 定期リフレッシュ(issue #85)による視聴者数だけの変化でウォームアップ済みプールを作り直さない
+  const key = JSON.stringify([settings, streamInfoPromptKey(streamInfo)]);
   if (cachedPool === null || cachedPool.key !== key) {
     // 旧プールに残っていたジョブは SessionPoolDisposedError で failed になり、
     // addManualPickup が再試行を促す理由に差し替える

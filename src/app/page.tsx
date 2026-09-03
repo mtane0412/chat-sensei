@@ -68,6 +68,7 @@ import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupD
 import { usePromptApiStore, type PromptApiStatus } from "@/store/prompt-api";
 import { hydrateSettingsStore, useSettingsStore } from "@/store/settings";
 import { useStreamInfoStore } from "@/store/stream-info";
+import { streamInfoPromptKey } from "@/lib/twitch/stream-info";
 import {
   startTranslationPipeline,
   useTranslationStore,
@@ -171,10 +172,8 @@ export default function Home() {
   // 読み込み完了・チャンネル切り替えで内容が変わったときもパイプラインを再起動して反映する
   // (言語設定の変更と同じ機構。生成済みの翻訳・Pick up は破棄され、表示中の発言は再生成される)
   const streamInfo = useStreamInfoStore((state) => state.streamInfo);
-  const streamInfoKey =
-    streamInfo === null
-      ? ""
-      : [streamInfo.title, streamInfo.category, streamInfo.broadcasterLogin, streamInfo.broadcasterName].join("|");
+  // viewerCount など、プロンプトに焼き込まないフィールドの定期リフレッシュ(issue #85)では再起動しない
+  const streamInfoKey = streamInfoPromptKey(streamInfo);
 
   // 受信した発言を自動で翻訳・抽出ジョブに流す。言語設定の復元後に開始し、言語設定が変わるたびに
   // 停止 → 開始し直す(セッションプールのシステムプロンプトに言語ペアを含むため)。
