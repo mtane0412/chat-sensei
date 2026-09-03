@@ -16,14 +16,18 @@
  *   訳文の誤訳・幻覚に由来しやすい固有名詞的な語句を落とす
  * - `filterForeignScriptMeaningTerms`: 意味テキストに解説言語で使わない文字種(キリル文字など)が
  *   混ざった語句を落とす(issue #98)
+ * - `filterProperNounPhraseTerms`: 順方向 Pick up 用の後段フィルタ。文中(先頭以外)に固有名詞的な語を
+ *   含む語句を落とす(issue #100)
+ * - `filterQuestionSentenceTerms`: 末尾が疑問符の複数語の語句(疑問文まるごとの抽出)を落とす(issue #100)
  *
  * 翻訳列は「emote 名はそのまま残す」設計のため、この処理は Pick up 専用である。
  */
 import { splitMessageIntoSegments } from "@/lib/twitch/emotes";
 import type { EmotePosition } from "@/lib/twitch/irc-parser";
+import { isListedExpression } from "./pickup-ordinary-filter";
 import type { SupportedLanguage } from "./prompts";
 import type { PickupTerm } from "./schemas";
-import { collapseRepeatedLetters } from "./stem";
+import { collapseRepeatedLetters, splitIntoMatchWords } from "./stem";
 
 /** `preparePickupInput` の結果。LLM に渡す本文と、後段フィルタの照合に使う情報 */
 export interface PreparedPickupInput {
@@ -184,6 +188,75 @@ export function filterTranslationArtifactTerms(terms: PickupTerm[], learningLang
 /** 単語の前後の記号(括弧・引用符など)を外したうえで、大文字始まりのハイフン語かを判定する */
 function hasCapitalizedHyphenatedForm(word: string): boolean {
   return CAPITALIZED_HYPHENATED_WORD_PATTERN.test(word.replace(SURROUNDING_NON_LETTERS_PATTERN, ""));
+}
+
+/** 大文字で始まる語(どの言語の大文字でもよい) */
+const CAPITALIZED_WORD_PATTERN = /^\p{Lu}/u;
+/** 一人称の I とその短縮形(I'm / I'll / I've / I'd。曲がった引用符も許容する) */
+const FIRST_PERSON_I_PATTERN = /^I['’]/;
+
+/**
+ * 順方向 Pick up(実際のチャット本文からの抽出)用の後段フィルタ(issue #100)。
+ *
+ * 固有名詞(ブランド名・人名など)は高頻度語リストに無いため、「非高頻度語を含む複数語句」として
+ * ハイブリッドフィルタ(issue #95 の `filterOrdinaryTerms`)を通過してしまう(実例: ブランド名を含む
+ * 疑問文がまるごと抽出された)。固有名詞は Pick up の対象外にしたい語のため、綴りの形で決定的に落とす。
+ * 逆方向 Pick up には、より厳しい語句全体での判定(`filterTranslationArtifactTerms`。issue #94)が
+ * 既に適用されるため、このフィルタは順方向専用である。
+ *
+ * 落とす条件: 文中(先頭以外)の語に「大文字で始まり、かつ小文字を含む語」がある語句。
+ * ただし表現リスト(issue #95)に一致する語句は正当な定型表現とみなして残す。
+ * - 先頭の語は文頭に置かれただけの表現("Toss it!")と区別できないため対象にしない
+ * - 全大文字の語("LOL" / "big W" の "W")は略語・強調であり固有名詞とみなさない
+ * - 一人称の "I" 単独は小文字を含まず対象外。"I'm" のような短縮形は明示的に除外する
+ *
+ * 学ぶ言語がドイツ語の場合は名詞が常に大文字で書かれ、正当な表現まで落としてしまうため何も落とさない
+ * (issue #94 と同じ扱い)。
+ *
+ * 既知のトレードオフ: 先頭の1語だけの固有名詞("Snickers")は文頭と区別できず残る。また
+ * チャット全体がタイトルケースで書かれた場合、表現リスト外の正当な表現も落ちる(固有名詞を
+ * 学習者に見せないこと(精度)を優先して許容する)。
+ */
+export function filterProperNounPhraseTerms(terms: PickupTerm[], learningLang: SupportedLanguage): PickupTerm[] {
+  if (learningLang === "de") return terms;
+  return terms.filter((item) => {
+    const words = splitIntoMatchWords(item.term);
+    const hasProperNounLikeWord = words
+      .slice(1)
+      .some(
+        (word) =>
+          CAPITALIZED_WORD_PATTERN.test(word) &&
+          LOWERCASE_LETTER_PATTERN.test(word) &&
+          !FIRST_PERSON_I_PATTERN.test(word),
+      );
+    if (!hasProperNounLikeWord) return true;
+    return isListedExpression(item.term);
+  });
+}
+
+/** 半角・全角の疑問符で終わる語句にマッチする(全角は機械翻訳の訳文に残ることがある) */
+const TRAILING_QUESTION_MARK_PATTERN = /[?？]$/;
+
+/**
+ * 疑問文がまるごと1つの「表現」として抽出されたと判別できる語句を落とす後段フィルタ(issue #100)。
+ *
+ * Gemini Nano は発言ほぼ全体(疑問文など)を1つの表現として返すことがある。文まるごとの抽出は
+ * 学ぶべき「特殊な表現」ではないため、末尾が疑問符の複数語の語句を落とす。
+ * ただし表現リスト(issue #95)に一致する語句("what's up?" など)は疑問形の定型表現とみなして残す。
+ * 1語の語句("Pardon?")は単語の聞き返しとして学習価値があるため対象にしない。
+ *
+ * 既知のトレードオフ:
+ * - 表現リストは全語が高頻度語の表現に枝刈りされているため、非高頻度語を含む疑問形の定型表現は
+ *   救済できず落ちる(文まるごとの抽出を学習者に見せないこと(精度)を優先して許容する)
+ * - 語の分割は空白基準のため、空白を使わない言語(日本語)の疑問文は1語扱いになり落とせない
+ */
+export function filterQuestionSentenceTerms(terms: PickupTerm[]): PickupTerm[] {
+  return terms.filter((item) => {
+    const trimmed = item.term.trim();
+    if (!TRAILING_QUESTION_MARK_PATTERN.test(trimmed)) return true;
+    if (splitIntoMatchWords(trimmed).length < 2) return true;
+    return isListedExpression(trimmed);
+  });
 }
 
 /**

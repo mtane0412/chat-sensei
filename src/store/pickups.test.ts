@@ -135,6 +135,35 @@ describe("startPickupPipeline", () => {
     stop();
   });
 
+  it("文中に固有名詞を含む句と、疑問文まるごとの抽出(issue #100)を結果から落とす", async () => {
+    const { deps, emit } = createDeps({
+      promptResults: [
+        Promise.resolve(
+          JSON.stringify({
+            terms: [
+              // ブランド名(固有名詞)を含む疑問文がまるごと抽出されたケース(issue #100 の観測例に相当)
+              { term: "Do you mean Snickers?", meaning: "スニッカーズのこと?" },
+              // 固有名詞を含まない疑問文まるごとの抽出
+              { term: "are you malding right now?", meaning: "今キレてるの?" },
+              { term: "malding", meaning: "ハゲるほどキレること" },
+            ],
+          }),
+        ),
+      ],
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "Do you mean Snickers? are you malding right now?" }));
+    await flush();
+
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "malding", meaning: "ハゲるほどキレること" }],
+    });
+    stop();
+  });
+
   it("抽出ジョブが失敗した場合は理由付きで failed として保持する(暗黙のフォールバックはしない)", async () => {
     const { deps, emit } = createDeps({ promptResults: [Promise.reject(new Error("モデルがクラッシュしました"))] });
 
@@ -330,6 +359,39 @@ describe("startPickupPipeline(逆方向: 翻訳パイプラインの訳文を再
     const stop = startPickupPipeline(deps);
     await flush();
     emit(createMessage({ id: "msg-1", text: "こんとめー！エオルゼアは終わりや、マジで" }));
+    await flush();
+
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "no cap", meaning: "嘘じゃない、マジで" }],
+    });
+    stop();
+  });
+
+  it("逆方向でも疑問文まるごとの抽出(issue #100)を結果から落とす", async () => {
+    const { deps, emit } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [
+        Promise.resolve(
+          JSON.stringify({
+            terms: [
+              // 訳文(疑問文)ほぼ全体が1つの「表現」として返ったケース
+              { term: "are you malding right now?", meaning: "今キレてるの?" },
+              { term: "no cap", meaning: "嘘じゃない、マジで" },
+            ],
+          }),
+        ),
+      ],
+    });
+    useTranslationStore.setState({
+      entries: {
+        "msg-1": { status: "done", segments: [{ type: "text", text: "are you malding right now? no cap" }] },
+      },
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "今キレてるん？マジで" }));
     await flush();
 
     expect(usePickupStore.getState().entries["msg-1"]).toEqual({

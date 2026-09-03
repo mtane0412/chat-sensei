@@ -12,7 +12,7 @@
  * 回帰テストとして固定する。
  */
 import { describe, expect, it } from "vitest";
-import { filterOrdinaryTerms } from "./pickup-ordinary-filter";
+import { filterOrdinaryTerms, isListedExpression } from "./pickup-ordinary-filter";
 import type { PickupTerm } from "./schemas";
 
 /** テストデータ組み立てヘルパー。意味の文字列は判定に影響しない */
@@ -153,5 +153,24 @@ describe("filterOrdinaryTerms", () => {
   it("学ぶ言語が en 以外の場合はリスト未整備のため何も落とさない", () => {
     expect(survivingTerms(["rare", "main quests"], "ja")).toEqual(["rare", "main quests"]);
     expect(survivingTerms(["rare", "main quests"], "fr")).toEqual(["rare", "main quests"]);
+  });
+});
+
+describe("isListedExpression", () => {
+  it("Wiktionary 由来の表現リストにある語句は、大文字・語形変化・前後の記号があっても一致する", () => {
+    // "give up" が表現リストにあるため、タイトルケース・進行形・末尾の疑問符でも同じ照合キーになる
+    expect(isListedExpression("give up")).toBe(true);
+    expect(isListedExpression("Giving Up")).toBe(true);
+    expect(isListedExpression("what's up?")).toBe(true);
+  });
+
+  it("手動補完リスト(CURATED_EXPRESSIONS)の表現にも一致する", () => {
+    expect(isListedExpression("let him cook")).toBe(true);
+    expect(isListedExpression("even though")).toBe(true);
+  });
+
+  it("リストに無い語句(普通の句・文まるごとの抽出)には一致しない", () => {
+    expect(isListedExpression("main quests")).toBe(false);
+    expect(isListedExpression("are you coming to the party tonight?")).toBe(false);
   });
 });
