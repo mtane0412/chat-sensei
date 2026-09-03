@@ -5,9 +5,11 @@
  * - `preparePickupInput`: emote・@メンション・URL を本文から除き、LLM に渡す本文を組み立てる
  * - `filterPickupTerms`: LLM が返した語句のうち emote 名・@メンション・文字を含まない語句・笑い声(issue #30)・
  *   相槌・感嘆詞(issue #33)を落とす
+ * - `filterTranslationArtifactTerms`: 逆方向 Pick up(機械翻訳の訳文からの抽出)専用。訳文の誤訳・幻覚に
+ *   由来しやすい固有名詞的な語句(大文字小文字の混在・大文字始まりのハイフン語)を落とす
  */
 import { describe, expect, it } from "vitest";
-import { filterPickupTerms, preparePickupInput } from "./pickup-filter";
+import { filterPickupTerms, filterTranslationArtifactTerms, preparePickupInput } from "./pickup-filter";
 import type { EmotePosition } from "@/lib/twitch/irc-parser";
 
 describe("preparePickupInput", () => {
@@ -243,5 +245,83 @@ describe("filterPickupTerms", () => {
     const terms = [{ term: "sticky", meaning: "スタン状態にする" }];
 
     expect(filterPickupTerms(terms, 前処理済み)).toEqual(terms);
+  });
+});
+
+describe("filterTranslationArtifactTerms", () => {
+  // 実際に観測した誤り: 日本語チャット「エオルゼア」「タタルさんと遊んでた」を英訳した際に
+  // 機械翻訳が "EoR" という実在しない略記や固有名詞込みの句を作り、Pick up がそれを教材にしてしまった
+
+  it("2文字目以降に大文字を含み小文字も混在する語句(機械翻訳が作った固有名詞・偽の略記)を落とす", () => {
+    const terms = [
+      { term: "EoR", meaning: "Final Fantasy XIV略称(世界観)" },
+      { term: "juggling with Tataru", meaning: "タタルとのやり取りを繰り返していた" },
+      { term: "Becoming a Dragoon?!", meaning: "竜騎士になるの！？" },
+      { term: "no cap", meaning: "嘘じゃない、マジで" },
+    ];
+
+    expect(filterTranslationArtifactTerms(terms, "en")).toEqual([{ term: "no cap", meaning: "嘘じゃない、マジで" }]);
+  });
+
+  it("文頭だけが大文字の語句(文頭に置かれただけの普通の表現)は落とさない", () => {
+    const terms = [{ term: "Toss it!", meaning: "捨てる！" }];
+
+    expect(filterTranslationArtifactTerms(terms, "en")).toEqual(terms);
+  });
+
+  it("全大文字の略語(LOL / GG)は落とさない", () => {
+    const terms = [
+      { term: "LOL", meaning: "爆笑" },
+      { term: "GG", meaning: "good game の略、お疲れ" },
+    ];
+
+    expect(filterTranslationArtifactTerms(terms, "en")).toEqual(terms);
+  });
+
+  it("大文字で始まりハイフンを含む単語(訳文に残った音写・日本語の敬称)を含む語句を落とす", () => {
+    const terms = [
+      { term: "Conto-me", meaning: "話してくれ！(相槌の表現)" },
+      { term: "Twitch-san", meaning: "Twitchの配信者への敬称" },
+      { term: "uh-oh", meaning: "まずいことが起きたときの声" },
+    ];
+
+    expect(filterTranslationArtifactTerms(terms, "en")).toEqual([
+      { term: "uh-oh", meaning: "まずいことが起きたときの声" },
+    ]);
+  });
+
+  it("小文字だけの語句(通常のスラング・イディオム)は落とさない", () => {
+    const terms = [
+      { term: "no cap", meaning: "嘘じゃない、マジで" },
+      { term: "making a mountain out of a molehill", meaning: "些細な事を大げさに捉える" },
+    ];
+
+    expect(filterTranslationArtifactTerms(terms, "en")).toEqual(terms);
+  });
+
+  it("既知のトレードオフ: 実在する混在ケースの語(iPhone / eBay)や大文字始まりの複合語(T-shirt / X-ray)も落ちる(綴りの形だけで判定するため。幻覚を学習者に見せない精度を優先)", () => {
+    const terms = [
+      { term: "iPhone", meaning: "Appleのスマートフォン" },
+      { term: "eBay", meaning: "オークションサイト" },
+      { term: "T-shirt", meaning: "Tシャツ" },
+      { term: "X-ray", meaning: "レントゲン" },
+    ];
+
+    expect(filterTranslationArtifactTerms(terms, "en")).toEqual([]);
+  });
+
+  it("学ぶ言語がドイツ語の場合は名詞が常に大文字で書かれるため、何も落とさずそのまま返す", () => {
+    const terms = [
+      { term: "Feierabend machen", meaning: "仕事を切り上げる" },
+      { term: "auf dem Schlauch stehen", meaning: "ピンとこない、理解できない" },
+    ];
+
+    expect(filterTranslationArtifactTerms(terms, "de")).toEqual(terms);
+  });
+
+  it("学ぶ言語が日本語の場合、ラテン文字を含まない語句はそのまま残す", () => {
+    const terms = [{ term: "それな", meaning: "共感を表す相槌" }];
+
+    expect(filterTranslationArtifactTerms(terms, "ja")).toEqual(terms);
   });
 });

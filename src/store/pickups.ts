@@ -16,10 +16,12 @@
  *   `auto-pipeline.ts` が行う。ベースセッションは「学ぶ言語 × 解説言語」のペアから組み立てる
  * - 逆方向(解説言語の発言): 訳文を自前で生成せず、翻訳パイプライン(`translations.ts`)が生成した
  *   学ぶ言語の訳文(翻訳列に表示されるもの)を待って再利用し、その訳文に対して順方向と同じ抽出を行う
- *   (issue #68。訳文の二重生成と、照合対象と表示訳文の不整合を防ぐ)
+ *   (issue #68。訳文の二重生成と、照合対象と表示訳文の不整合を防ぐ)。抽出結果からは、機械翻訳の
+ *   誤訳・幻覚に由来しやすい固有名詞的な語句を `filterTranslationArtifactTerms` で決定的に落とす
  * - Prompt API の利用可否は `prompt-api.ts` の共有ストアを参照する(翻訳列と共通)
  */
 import { createPickupBaseSessionFactory, pickUpExpressions } from "@/lib/ai/pickup";
+import { filterTranslationArtifactTerms } from "@/lib/ai/pickup-filter";
 import { LowPriorityQueueOverflowError } from "@/lib/ai/session-pool";
 import type { MessageSegment } from "@/lib/twitch/emotes";
 import type { PickupTerm } from "@/lib/ai/schemas";
@@ -70,11 +72,14 @@ const pipeline = createAutoPipeline<PickupDone>({
     const segments = await waitForReverseTranslation(message.id, context.signal);
     const translationText = segments.map((segment) => (segment.type === "text" ? segment.text : " ")).join("");
     // 訳文は emote を空白化済みのため emotes は渡さない(順方向と異なり emote の位置情報も存在しない)
-    return pickUpExpressions(pool, translationText, {
+    const result = await pickUpExpressions(pool, translationText, {
       priority: "low",
       signal: context.signal,
       excludedNames: collectExcludedNames(context),
     });
+    // 訳文は機械翻訳のため、誤訳・幻覚に由来する固有名詞的な語句を決定的に落とす。
+    // 学ぶ言語はベースセッション生成時(createReverseBaseSession)と同じく生成時点のストアの値を読めばよい
+    return { terms: filterTranslationArtifactTerms(result.terms, useSettingsStore.getState().settings.learningLang) };
   },
 });
 

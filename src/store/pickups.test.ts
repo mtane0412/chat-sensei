@@ -242,4 +242,37 @@ describe("startPickupPipeline(逆方向: 翻訳パイプラインの訳文を再
     });
     stop();
   });
+
+  it("逆方向では機械翻訳が作った固有名詞的な語句(大文字小文字の混在・大文字始まりのハイフン語)を結果から落とす", async () => {
+    const { deps, emit } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [
+        Promise.resolve(
+          JSON.stringify({
+            terms: [
+              // 「エオルゼア」の誤訳として機械翻訳が作った実在しない略記
+              { term: "EoR", meaning: "Final Fantasy XIV略称(世界観)" },
+              // 挨拶「こんとめー」が音写のまま訳文に残ったもの
+              { term: "Conto-me", meaning: "話してくれ！(相槌の表現)" },
+              { term: "no cap", meaning: "嘘じゃない、マジで" },
+            ],
+          }),
+        ),
+      ],
+    });
+    useTranslationStore.setState({
+      entries: { "msg-1": { status: "done", segments: [{ type: "text", text: "Conto-me! EoR is done, no cap" }] } },
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "こんとめー！エオルゼアは終わりや、マジで" }));
+    await flush();
+
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "no cap", meaning: "嘘じゃない、マジで" }],
+    });
+    stop();
+  });
 });
