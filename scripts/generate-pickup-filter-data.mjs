@@ -214,11 +214,20 @@ async function main() {
       stemForMatch,
     ),
   );
+  /**
+   * 字幕頻度リストの語が除外対象かを判定する。字幕コーパスには "fuckin" のような
+   * g落ちの口語形が含まれるため、"g" を補った形("fucking" → ステム "fuck")でも照合する。
+   * g復元の照合は除外判定だけに使う点に注意: "somethin" / "gettin" のような普通語のg落ち形は
+   * 第2層に収録してこそ実行時に落とせる(g復元で第1層と重複扱いにすると取りこぼす)。
+   */
+  const isExcludedSubtitleWord = (word) =>
+    excludedStems.has(stemForMatch(word)) || (word.endsWith("in") && excludedStems.has(stemForMatch(`${word}g`)));
+
   const subtitleWords = [];
   const subtitleStems = new Set();
   for (const word of subtitleTopWords) {
     const stem = stemForMatch(word);
-    if (firstLayerStems.has(stem) || excludedStems.has(stem) || subtitleStems.has(stem)) continue;
+    if (firstLayerStems.has(stem) || subtitleStems.has(stem) || isExcludedSubtitleWord(word)) continue;
     subtitleStems.add(stem);
     subtitleWords.push(word);
   }

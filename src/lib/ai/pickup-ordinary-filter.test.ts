@@ -111,6 +111,12 @@ describe("filterOrdinaryTerms", () => {
     expect(survivingTerms(["lol", "shit"])).toEqual(["lol", "shit"]);
   });
 
+  it("卑語のg落ち口語形(fuckin)もg復元の照合により第2層から除外されて残す(issue #99 のレビュー指摘)", () => {
+    // 字幕頻度リストには "fuckin" のようなg落ちの口語形が含まれるが、"g" を補った形
+    // ("fucking"、swear words カテゴリ収録)のステムで照合して第2層から除外する
+    expect(survivingTerms(["fuckin"])).toEqual(["fuckin"]);
+  });
+
   it("広義スラングカテゴリにしか入らない超高頻度の口語は普通の語として落とす(issue #99 の設計判断)", () => {
     // "dude"(708位)/ "gonna"(96位)/ "damn"(396位)は広義の English slang / informal terms にしか
     // 入っていない(または未収載の)超高頻度の口語。広義カテゴリを除外に使うと "paradise" / "pimple" の
