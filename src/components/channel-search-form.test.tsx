@@ -2,15 +2,22 @@
  * src/components/channel-search-form.tsx のテスト。
  *
  * チャンネル検索 + 接続の共通フォーム(ウェルカム画面の hero / ヘッダー中央の navbar の2バリアント)が、
- * 入力値で chat-connection ストアの connect を呼ぶこと、接続クリックの延長で翻訳・Pick up の
- * セッションをウォームアップすること(モデルDLにユーザー操作が必要なため)、空入力では何もしないことを検証する。
- * 実際の IRC 接続(WebSocket)は行わず、connect をモックに差し替える。
+ * 入力値のチャンネルページ(/[channel])へ遷移すること(接続はチャンネルページ側がURLを起点に行う)、
+ * 送信クリックの延長で翻訳・Pick up のセッションをウォームアップすること(モデルDLにユーザー操作が必要なため)、
+ * 空入力では何もしないことを検証する。
+ * Next.js のルーティング(useRouter)はテスト環境に App Router が無いためモックする。
  * オートコンプリートの候補取得はネットワークに触れるためモックする(null = Helix 利用不可)。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
+import { resetChatConnectionStoreForTests } from "@/store/chat-connection";
+
+// チャンネルページ(/[channel])への遷移を検証するため useRouter をモックする
+const mockRouterPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockRouterPush, replace: vi.fn(), prefetch: vi.fn() }),
+}));
 
 const mockWarmUpTranslationPipeline = vi.fn();
 vi.mock("@/store/translations", async (importOriginal) => ({
@@ -34,6 +41,7 @@ vi.mock("@/lib/twitch/channel-search", async (importOriginal) => ({
 import { ChannelSearchForm } from "./channel-search-form";
 
 beforeEach(() => {
+  mockRouterPush.mockClear();
   mockWarmUpTranslationPipeline.mockClear();
   mockWarmUpPickupPipeline.mockClear();
 });
@@ -56,21 +64,19 @@ describe("ChannelSearchForm(hero: ウェルカム画面)", () => {
     expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
   });
 
-  it("チャンネル名を入力して Connect を押すと、前後の空白を除いた値で connect を呼ぶ", async () => {
+  it("チャンネル名を入力して Connect を押すと、前後の空白を除き正規化した値のチャンネルページへ遷移する", async () => {
     const user = userEvent.setup();
-    const connectMock = vi.fn();
-    useChatConnectionStore.setState({ connect: connectMock });
     render(<ChannelSearchForm variant="hero" />);
 
-    await user.type(screen.getByLabelText("Channel"), "  example_streamer  ");
+    // 大文字・先頭の # は正規化されてURLに入る(IRC 接続時の正規化と同じ規則)
+    await user.type(screen.getByLabelText("Channel"), "  #Example_Streamer  ");
     await user.click(screen.getByRole("button", { name: "Connect" }));
 
-    expect(connectMock).toHaveBeenCalledWith("example_streamer");
+    expect(mockRouterPush).toHaveBeenCalledWith("/example_streamer");
   });
 
   it("Connect クリック(ユーザー操作)の延長で翻訳・Pick upのセッションをウォームアップする", async () => {
     const user = userEvent.setup();
-    useChatConnectionStore.setState({ connect: vi.fn() });
     render(<ChannelSearchForm variant="hero" />);
 
     await user.type(screen.getByLabelText("Channel"), "example_streamer");
@@ -96,22 +102,19 @@ describe("ChannelSearchForm(navbar: ヘッダー中央)", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
-  it("チャンネル名を入力して Enter(フォーム送信)で connect を呼ぶ", async () => {
+  it("チャンネル名を入力して Enter(フォーム送信)でチャンネルページへ遷移し、ウォームアップも行う", async () => {
     const user = userEvent.setup();
-    const connectMock = vi.fn();
-    useChatConnectionStore.setState({ connect: connectMock });
     render(<ChannelSearchForm variant="navbar" />);
 
     await user.type(screen.getByLabelText("Search channel"), "example_streamer{Enter}");
 
-    expect(connectMock).toHaveBeenCalledWith("example_streamer");
+    expect(mockRouterPush).toHaveBeenCalledWith("/example_streamer");
     expect(mockWarmUpTranslationPipeline).toHaveBeenCalledTimes(1);
     expect(mockWarmUpPickupPipeline).toHaveBeenCalledTimes(1);
   });
 
-  it("フォーム送信後は入力欄を空に戻す(接続後に検索語を残さない)", async () => {
+  it("フォーム送信後は入力欄を空に戻す(遷移後に検索語を残さない)", async () => {
     const user = userEvent.setup();
-    useChatConnectionStore.setState({ connect: vi.fn() });
     render(<ChannelSearchForm variant="navbar" />);
 
     const input = screen.getByLabelText("Search channel");
@@ -120,15 +123,13 @@ describe("ChannelSearchForm(navbar: ヘッダー中央)", () => {
     expect(input).toHaveValue("");
   });
 
-  it("入力が空のままフォーム送信しても connect を呼ばない", async () => {
+  it("入力が空のままフォーム送信しても遷移しない", async () => {
     const user = userEvent.setup();
-    const connectMock = vi.fn();
-    useChatConnectionStore.setState({ connect: connectMock });
     render(<ChannelSearchForm variant="navbar" />);
 
     await user.click(screen.getByLabelText("Search channel"));
     await user.keyboard("{Enter}");
 
-    expect(connectMock).not.toHaveBeenCalled();
+    expect(mockRouterPush).not.toHaveBeenCalled();
   });
 });
