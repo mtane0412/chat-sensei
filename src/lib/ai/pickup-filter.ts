@@ -14,6 +14,8 @@
  *   呼び出し側が指定した除外名(表示中の発言者名など)を落とし、重複する語句は1件にまとめる
  * - `filterTranslationArtifactTerms`: 逆方向 Pick up(機械翻訳の訳文からの抽出)専用の後段フィルタ。
  *   訳文の誤訳・幻覚に由来しやすい固有名詞的な語句を落とす
+ * - `filterForeignScriptMeaningTerms`: 意味テキストに解説言語で使わない文字種(キリル文字など)が
+ *   混ざった語句を落とす(issue #98)
  *
  * 翻訳列は「emote 名はそのまま残す」設計のため、この処理は Pick up 専用である。
  */
@@ -182,4 +184,44 @@ export function filterTranslationArtifactTerms(terms: PickupTerm[], learningLang
 /** 単語の前後の記号(括弧・引用符など)を外したうえで、大文字始まりのハイフン語かを判定する */
 function hasCapitalizedHyphenatedForm(word: string): boolean {
   return CAPITALIZED_HYPHENATED_WORD_PATTERN.test(word.replace(SURROUNDING_NON_LETTERS_PATTERN, ""));
+}
+
+/**
+ * ラテン文字圏の意味テキストで許容しない文字にマッチする。
+ * 「文字(`\p{L}`)であり、かつ Script_Extensions がラテン文字でも Common(々 などの共用文字)でも
+ * Inherited(結合文字)でもない」文字を探す。数字・記号・絵文字は文字ではないため対象にならない。
+ * Script ではなく Script_Extensions(scx)で判定するのは、複数スクリプトで共用される文字
+ * (伸ばし棒 ー など)を取りこぼさないため。
+ */
+const NON_LATIN_LETTER_PATTERN = /(?=\p{L})[^\p{scx=Latin}\p{scx=Common}\p{scx=Inherited}]/u;
+/** 日本語を含む意味テキストで許容しない文字にマッチする。上記にひらがな・カタカナ・漢字を加えた許容集合 */
+const NON_JAPANESE_OR_LATIN_LETTER_PATTERN =
+  /(?=\p{L})[^\p{scx=Latin}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Han}\p{scx=Common}\p{scx=Inherited}]/u;
+
+/**
+ * 意味テキストに解説言語で使わない文字種が混ざった語句を落とす後段フィルタ(issue #98)。
+ *
+ * Gemini Nano が生成した意味テキストには、解説言語で使わないスクリプトの単語が混入することがある
+ * (実例: 解説言語が日本語の意味テキストにキリル文字の単語が混入する)。語句(term)側は原文照合
+ * (`pickup.ts`)で正当性を担保できるが、意味(meaning)側には照合対象が無いため、文字種で
+ * 決定的に検証する。壊れた意味を学習者に見せないことを優先し、再試行はせず落とすだけにする。
+ *
+ * 許容する文字種:
+ * - ラテン文字はどの解説言語でも許容する(原文の語句や "laughing out loud" のような展開を
+ *   意味に含めるため)
+ * - 日本語の文字(ひらがな・カタカナ・漢字)は、解説言語か学ぶ言語のどちらかが日本語の場合に許容する。
+ *   解説言語がラテン文字圏でも、意味テキストが原文の日本語の語句を引用するのは正当な出力のため
+ * - 数字・記号・絵文字は文字ではないため常に許容する(emote 名はラテン文字なので同様に通る)
+ *
+ * 対応言語(`SupportedLanguage`)は en/ja/es/de/fr の5つで、日本語以外はすべてラテン文字圏のため、
+ * 許容集合は「ラテン文字のみ」か「ラテン文字 + 日本語」の2通りで足りる。
+ */
+export function filterForeignScriptMeaningTerms(
+  terms: PickupTerm[],
+  explainLang: SupportedLanguage,
+  learningLang: SupportedLanguage,
+): PickupTerm[] {
+  const foreignLetterPattern =
+    explainLang === "ja" || learningLang === "ja" ? NON_JAPANESE_OR_LATIN_LETTER_PATTERN : NON_LATIN_LETTER_PATTERN;
+  return terms.filter((item) => !foreignLetterPattern.test(item.meaning));
 }

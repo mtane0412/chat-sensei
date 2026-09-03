@@ -7,9 +7,16 @@
  *   相槌・感嘆詞(issue #33)を落とす
  * - `filterTranslationArtifactTerms`: 逆方向 Pick up(機械翻訳の訳文からの抽出)専用。訳文の誤訳・幻覚に
  *   由来しやすい固有名詞的な語句(大文字小文字の混在・大文字始まりのハイフン語)を落とす
+ * - `filterForeignScriptMeaningTerms`: 意味テキストに解説言語で使わない文字種(キリル文字など)が
+ *   混ざった語句を落とす(issue #98)
  */
 import { describe, expect, it } from "vitest";
-import { filterPickupTerms, filterTranslationArtifactTerms, preparePickupInput } from "./pickup-filter";
+import {
+  filterForeignScriptMeaningTerms,
+  filterPickupTerms,
+  filterTranslationArtifactTerms,
+  preparePickupInput,
+} from "./pickup-filter";
 import type { EmotePosition } from "@/lib/twitch/irc-parser";
 
 describe("preparePickupInput", () => {
@@ -361,5 +368,68 @@ describe("filterTranslationArtifactTerms", () => {
     const terms = [{ term: "それな", meaning: "共感を表す相槌" }];
 
     expect(filterTranslationArtifactTerms(terms, "ja")).toEqual(terms);
+  });
+});
+
+describe("filterForeignScriptMeaningTerms", () => {
+  it("解説言語が日本語の場合、意味にキリル文字の単語が混入した語句を落とす(issue #98 の観測ケース)", () => {
+    const terms = [
+      { term: "clutch", meaning: "土壇場で決める направление こと" },
+      { term: "gg", meaning: "good game の略。対戦後の挨拶" },
+    ];
+
+    expect(filterForeignScriptMeaningTerms(terms, "ja", "en")).toEqual([
+      { term: "gg", meaning: "good game の略。対戦後の挨拶" },
+    ]);
+  });
+
+  it("解説言語が日本語の場合、ひらがな・カタカナ・漢字・ラテン文字・数字・記号だけの意味はそのまま残す", () => {
+    const terms = [
+      { term: "cooked", meaning: "「終わった・ダメだ」を表すスラング" },
+      { term: "W", meaning: "win(勝ち)の略。称賛にも使う" },
+      { term: "poggers", meaning: "興奮・驚きを表すミーム(PogChamp 由来)" },
+    ];
+
+    expect(filterForeignScriptMeaningTerms(terms, "ja", "en")).toEqual(terms);
+  });
+
+  it("解説言語が英語の場合、キリル文字・アラビア文字を含む意味の語句を落とす", () => {
+    const terms = [
+      { term: "no cap", meaning: "means нет serious exaggeration" },
+      { term: "based", meaning: "confident in one's own العربية views" },
+      { term: "sus", meaning: "short for suspicious" },
+    ];
+
+    expect(filterForeignScriptMeaningTerms(terms, "en", "ja")).toEqual([
+      { term: "sus", meaning: "short for suspicious" },
+    ]);
+  });
+
+  it("学ぶ言語が日本語の場合、解説言語がラテン文字圏でも意味に引用された日本語の文字は許容する", () => {
+    // 意味テキストが原文の語句(草 など)をそのまま引用するのは正当な出力のため落とさない
+    const terms = [{ term: "草", meaning: "means lol (草 = grass, from wwww)" }];
+
+    expect(filterForeignScriptMeaningTerms(terms, "en", "ja")).toEqual(terms);
+  });
+
+  it("解説言語・学ぶ言語のどちらにも日本語が無い場合、意味に日本語の文字が混ざった語句を落とす", () => {
+    const terms = [{ term: "banger", meaning: "a great song 素晴らしい曲" }];
+
+    expect(filterForeignScriptMeaningTerms(terms, "en", "es")).toEqual([]);
+  });
+
+  it("アクセント付きラテン文字・半角カタカナ・伸ばし棒・々などの記号的な文字は許容する", () => {
+    const terms = [
+      { term: "château", meaning: "フランス語由来の「城」。café のようなアクセント付き綴り" },
+      { term: "kusa", meaning: "ｸｻ(草)ー。時々使われる笑いの表現" },
+    ];
+
+    expect(filterForeignScriptMeaningTerms(terms, "ja", "fr")).toEqual(terms);
+  });
+
+  it("絵文字・数字・記号は文字種の判定対象にしない", () => {
+    const terms = [{ term: "7-2", meaning: "サッカーの大差スコア 😂 (7対2)" }];
+
+    expect(filterForeignScriptMeaningTerms(terms, "ja", "en")).toEqual(terms);
   });
 });
