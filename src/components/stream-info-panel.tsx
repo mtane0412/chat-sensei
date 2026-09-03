@@ -5,7 +5,8 @@
  *   (配信情報が無い間 = オフライン・Helix 利用不可・読み込み中は、接続中のチャンネル名で代用)
  * - 配信タイトル
  * - 配信カテゴリ(ゲーム名)。ゲームIDからボックスアート画像を取得できた場合は画像も表示する
- * - 同時視聴者数(Helix から取得できた場合のみ)
+ * - 同時視聴者数(Helix から取得できた場合のみ)。Twitch 本体と同様に、
+ *   配信者名の横へ赤色の人アイコン + 桁区切りの数字で表示する
  * - 接続状態のラベルと Disconnect ボタン
  *
  * 配信情報は stream-info ストア(接続時に読み込み済み)を購読して表示するだけで、
@@ -16,6 +17,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { UserIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import { fetchGameBoxArtUrl } from "@/lib/twitch/game-box-art";
@@ -88,6 +90,17 @@ export function StreamInfoPanel() {
             {CONNECTION_STATE_LABEL[connectionState]}
           </p>
         </div>
+        {streamInfo !== null && streamInfo.viewerCount !== null && (
+          // Twitch 本体と同様の「赤色の人アイコン + 数字」(色はライブ配信用トークン --live)。
+          // 画面には数字のみを表示し、スクリーンリーダーには sr-only の「viewers」で単位を補う
+          <span className="flex shrink-0 items-center gap-1 text-sm font-semibold text-live">
+            <UserIcon aria-hidden="true" className="size-4" />
+            <span>
+              {VIEWER_COUNT_FORMAT.format(streamInfo.viewerCount)}
+              <span className="sr-only"> viewers</span>
+            </span>
+          </span>
+        )}
         <Button onClick={disconnect} variant="outline" size="sm">
           Disconnect
         </Button>
@@ -101,11 +114,6 @@ export function StreamInfoPanel() {
           <div className="min-w-0 space-y-1">
             <p className="text-sm break-words">{streamInfo.title}</p>
             {streamInfo.category !== "" && <p className="text-sm text-muted-foreground">{streamInfo.category}</p>}
-            {streamInfo.viewerCount !== null && (
-              <p className="text-sm text-muted-foreground">
-                {VIEWER_COUNT_FORMAT.format(streamInfo.viewerCount)} viewers
-              </p>
-            )}
           </div>
         </div>
       )}

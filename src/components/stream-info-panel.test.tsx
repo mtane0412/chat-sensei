@@ -71,10 +71,17 @@ describe("StreamInfoPanel(配信情報あり)", () => {
     expect(screen.getByText("World of Warcraft")).toBeInTheDocument();
   });
 
-  it("同時視聴者数を桁区切りで表示する", () => {
+  it("同時視聴者数を、Twitch と同様の赤色の人アイコン + 桁区切りの数字で表示する", () => {
     render(<StreamInfoPanel />);
 
-    expect(screen.getByText("4,321 viewers")).toBeInTheDocument();
+    // 画面には数字のみを表示し、スクリーンリーダーには sr-only の「viewers」で単位を補う
+    const unit = screen.getByText("viewers");
+    expect(unit.className).toContain("sr-only");
+    expect(unit.parentElement).toHaveTextContent("4,321 viewers");
+    // 人アイコン(svg)を伴い、ライブ配信用の赤色トークン(text-live)で強調する
+    const badge = unit.parentElement?.parentElement;
+    expect(badge?.querySelector("svg")).not.toBeNull();
+    expect(badge?.className).toContain("text-live");
   });
 
   it("配信者のアバター取得を要求し、取得済みならアバター画像を表示する", () => {
