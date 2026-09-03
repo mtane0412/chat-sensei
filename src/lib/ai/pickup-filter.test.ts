@@ -299,6 +299,17 @@ describe("filterTranslationArtifactTerms", () => {
     expect(filterTranslationArtifactTerms(terms, "en")).toEqual(terms);
   });
 
+  it("既知のトレードオフ: 実在する混在ケースの語(iPhone / eBay)や大文字始まりの複合語(T-shirt / X-ray)も落ちる(綴りの形だけで判定するため。幻覚を学習者に見せない精度を優先)", () => {
+    const terms = [
+      { term: "iPhone", meaning: "Appleのスマートフォン" },
+      { term: "eBay", meaning: "オークションサイト" },
+      { term: "T-shirt", meaning: "Tシャツ" },
+      { term: "X-ray", meaning: "レントゲン" },
+    ];
+
+    expect(filterTranslationArtifactTerms(terms, "en")).toEqual([]);
+  });
+
   it("学ぶ言語がドイツ語の場合は名詞が常に大文字で書かれるため、何も落とさずそのまま返す", () => {
     const terms = [
       { term: "Feierabend machen", meaning: "仕事を切り上げる" },
