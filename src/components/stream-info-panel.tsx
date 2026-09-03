@@ -19,7 +19,7 @@
  */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { ClockIcon, UserIcon } from "lucide-react";
 import type { ConnectionState } from "@/lib/twitch/irc-client";
 import { fetchGameBoxArtUrl } from "@/lib/twitch/game-box-art";
@@ -41,6 +41,27 @@ const VIEWER_COUNT_FORMAT = new Intl.NumberFormat("en-US");
 
 /** 経過時間の再計算間隔。Twitch 本体の稼働時間表示と同様に秒単位で進める */
 const UPTIME_TICK_INTERVAL_MS = 1_000;
+
+/**
+ * 現在時刻(秒単位)を「外部ストア」として購読するための関数群。
+ * レンダー中の `Date.now()` 呼び出し(純粋性ルール違反)と effect 内の同期 setState を
+ * 避けるため、useSyncExternalStore で現在時刻を読む。
+ */
+/** 現在時刻のスナップショット(秒単位。ミリ秒のままだと毎レンダーで値が変わってしまうため丸める) */
+function getNowSecondsSnapshot(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+/** 1秒ごとに再読み取りを通知する購読関数(配信開始日時がある間だけ使う) */
+function subscribeUptimeTick(onTick: () => void): () => void {
+  const timerId = setInterval(onTick, UPTIME_TICK_INTERVAL_MS);
+  return () => clearInterval(timerId);
+}
+
+/** 何も通知しない購読関数(配信開始日時が無い間は tick を回さない) */
+function subscribeNothing(): () => void {
+  return () => {};
+}
 
 /**
  * 配信開始からの経過ミリ秒を `H:MM:SS` 形式(時は桁埋めなし)にする。
@@ -84,16 +105,16 @@ export function StreamInfoPanel() {
   }, [gameId]);
   const boxArtUrl = boxArt !== null && boxArt.gameId === gameId ? boxArt.url : null;
 
-  // 配信開始からの経過時間。startedAt がある間だけ、現在時刻を1秒ごとに更新して再計算する
-  // (初期値はマウント時の現在時刻。読み込み完了が遅れた場合も、最初の tick で最新に追従する)
+  // 配信開始からの経過時間。現在時刻(秒単位)を外部ストアとして購読し、
+  // startedAt がある間だけ1秒ごとに再読み取りする。読み込み完了が遅れた場合も、
+  // そのレンダーで最新のスナップショットを読むため表示直後から正しい値になる
   const startedAt = streamInfo?.startedAt ?? null;
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (startedAt === null) return;
-    const timerId = setInterval(() => setNow(Date.now()), UPTIME_TICK_INTERVAL_MS);
-    return () => clearInterval(timerId);
-  }, [startedAt]);
-  const uptimeText = startedAt !== null ? formatUptime(now - Date.parse(startedAt)) : null;
+  const nowSeconds = useSyncExternalStore(
+    startedAt !== null ? subscribeUptimeTick : subscribeNothing,
+    getNowSecondsSnapshot,
+    getNowSecondsSnapshot,
+  );
+  const uptimeText = startedAt !== null ? formatUptime(nowSeconds * 1000 - Date.parse(startedAt)) : null;
 
   // 配信情報が無い間(オフライン・Helix 利用不可・読み込み中)は接続中のチャンネル名で代用する
   const displayName =

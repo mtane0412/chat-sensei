@@ -169,6 +169,19 @@ describe("StreamInfoPanel(配信開始からの経過時間)", () => {
     expect(screen.getByText("uptime").parentElement).toHaveTextContent("1:02:04 uptime");
   });
 
+  it("マウント後に配信情報の読み込みが完了した場合も、表示直後から最新の経過時間を表示する", () => {
+    // 未読み込みの状態でマウントし、10秒後に読み込みが完了したケース
+    useStreamInfoStore.setState({ streamInfo: null });
+    render(<StreamInfoPanel />);
+
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+      useStreamInfoStore.setState({ streamInfo: サンプル配信情報 });
+    });
+
+    expect(screen.getByText("uptime").parentElement).toHaveTextContent("1:02:13 uptime");
+  });
+
   it("配信開始日時が取得できていない場合、経過時間を表示しない", () => {
     useStreamInfoStore.setState({ streamInfo: { ...サンプル配信情報, startedAt: null } });
 
