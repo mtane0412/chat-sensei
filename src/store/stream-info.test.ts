@@ -33,6 +33,8 @@ const FAKE_STREAM_INFO: StreamInfo = {
   broadcasterName: "ZackRawrr",
   gameId: "18122",
   viewerCount: 4321,
+  tags: ["English", "MMORPG"],
+  startedAt: "2026-09-03T10:00:00Z",
 };
 
 /** リフレッシュで受け取る更新後の配信情報(視聴者数・カテゴリが変化したケース) */
@@ -106,6 +108,8 @@ describe("loadStreamInfo", () => {
         broadcasterName: "OldChannel",
         gameId: "111",
         viewerCount: 10,
+        tags: [],
+        startedAt: null,
       },
     });
     await firstLoading;

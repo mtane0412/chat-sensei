@@ -1089,16 +1089,10 @@ describe("ChannelPage(接続中の配信embedと配信者情報)", () => {
     expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
   });
 
-  it("配信者情報パネルの Disconnect ボタンから切断できる", async () => {
-    const user = userEvent.setup();
-    const disconnectMock = vi.fn();
-    useChatConnectionStore.setState({ disconnect: disconnectMock });
-
+  it("配信者情報パネルに Disconnect ボタンは表示しない(切断はヘッダーのロゴクリックで行う)", () => {
     render(<ChannelPage />);
 
-    await user.click(screen.getByRole("button", { name: "Disconnect" }));
-
-    expect(disconnectMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Disconnect" })).toBeNull();
   });
 });
 
