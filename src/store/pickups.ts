@@ -18,10 +18,13 @@
  *   学ぶ言語の訳文(翻訳列に表示されるもの)を待って再利用し、その訳文に対して順方向と同じ抽出を行う
  *   (issue #68。訳文の二重生成と、照合対象と表示訳文の不整合を防ぐ)。抽出結果からは、機械翻訳の
  *   誤訳・幻覚に由来しやすい固有名詞的な語句を `filterTranslationArtifactTerms` で決定的に落とす
+ * - 順方向・逆方向とも、抽出結果からは普通の単語・字義通りの句(`filterOrdinaryTerms`。issue #95)と、
+ *   意味テキストに解説言語で使わない文字種が混ざった語句(`filterForeignScriptMeaningTerms`。issue #98)を
+ *   決定的に落とす
  * - Prompt API の利用可否は `prompt-api.ts` の共有ストアを参照する(翻訳列と共通)
  */
 import { createPickupBaseSessionFactory, pickUpExpressions } from "@/lib/ai/pickup";
-import { filterTranslationArtifactTerms } from "@/lib/ai/pickup-filter";
+import { filterForeignScriptMeaningTerms, filterTranslationArtifactTerms } from "@/lib/ai/pickup-filter";
 import { filterOrdinaryTerms } from "@/lib/ai/pickup-ordinary-filter";
 import { LowPriorityQueueOverflowError } from "@/lib/ai/session-pool";
 import type { MessageSegment } from "@/lib/twitch/emotes";
@@ -62,11 +65,15 @@ const pipeline = createAutoPipeline<PickupDone>({
     createPickupBaseSessionFactory(useSettingsStore.getState().settings, learningLang, explainLang, getStreamInfo()),
   resolveWithoutModel: (message) =>
     isTextlessMessage(message.text, message.emotes) || isChatCommandMessage(message.text) ? { terms: [] } : null,
-  // 抽出結果からは、普通の単語・字義通りの句を高頻度語リスト・表現リストで決定的に落とす(issue #95)。
-  // 学ぶ言語はベースセッション生成時(createBaseSession)と同じく生成時点のストアの値を読めばよい
+  // 抽出結果からは、普通の単語・字義通りの句を高頻度語リスト・表現リストで決定的に落とし(issue #95)、
+  // 意味テキストに解説言語で使わない文字種が混ざった語句も落とす(issue #98)。
+  // 言語設定はベースセッション生成時(createBaseSession)と同じく生成時点のストアの値を読めばよい
   runJob: async (pool, message, context) => {
     const result = await pickUpExpressions(pool, message.text, buildPickupJobOptions(message, context));
-    return { terms: filterOrdinaryTerms(result.terms, useSettingsStore.getState().settings.learningLang) };
+    const { learningLang, explainLang } = useSettingsStore.getState().settings;
+    return {
+      terms: filterForeignScriptMeaningTerms(filterOrdinaryTerms(result.terms, learningLang), explainLang, learningLang),
+    };
   },
   // 逆方向: 翻訳パイプラインの訳文(翻訳列に表示されるもの)を待って再利用し、訳文を二重生成しない(issue #68)。
   // 訳文は emote 復元済みのセグメント列なので、emote を空白に置き換えた本文に対して順方向と同じ抽出を行う
@@ -84,10 +91,17 @@ const pipeline = createAutoPipeline<PickupDone>({
       excludedNames: collectExcludedNames(context),
     });
     // 訳文は機械翻訳のため、誤訳・幻覚に由来する固有名詞的な語句を決定的に落とし(issue #94)、
-    // さらに普通の単語・字義通りの句も落とす(issue #95)。
-    // 学ぶ言語はベースセッション生成時(createReverseBaseSession)と同じく生成時点のストアの値を読めばよい
-    const learningLang = useSettingsStore.getState().settings.learningLang;
-    return { terms: filterOrdinaryTerms(filterTranslationArtifactTerms(result.terms, learningLang), learningLang) };
+    // 普通の単語・字義通りの句(issue #95)と、意味テキストに解説言語で使わない文字種が混ざった語句
+    // (issue #98)も落とす。言語設定はベースセッション生成時(createReverseBaseSession)と同じく
+    // 生成時点のストアの値を読めばよい
+    const { learningLang, explainLang } = useSettingsStore.getState().settings;
+    return {
+      terms: filterForeignScriptMeaningTerms(
+        filterOrdinaryTerms(filterTranslationArtifactTerms(result.terms, learningLang), learningLang),
+        explainLang,
+        learningLang,
+      ),
+    };
   },
 });
 
