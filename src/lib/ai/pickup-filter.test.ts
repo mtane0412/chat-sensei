@@ -9,11 +9,16 @@
  *   由来しやすい固有名詞的な語句(大文字小文字の混在・大文字始まりのハイフン語)を落とす
  * - `filterForeignScriptMeaningTerms`: 意味テキストに解説言語で使わない文字種(キリル文字など)が
  *   混ざった語句を落とす(issue #98)
+ * - `filterProperNounPhraseTerms`: 文中(先頭以外)に固有名詞的な語(大文字始まりかつ小文字を含む語)を
+ *   含む語句を落とす(issue #100)
+ * - `filterQuestionSentenceTerms`: 末尾が疑問符の複数語の語句(疑問文まるごとの抽出)を落とす(issue #100)
  */
 import { describe, expect, it } from "vitest";
 import {
   filterForeignScriptMeaningTerms,
   filterPickupTerms,
+  filterProperNounPhraseTerms,
+  filterQuestionSentenceTerms,
   filterTranslationArtifactTerms,
   preparePickupInput,
 } from "./pickup-filter";
@@ -431,5 +436,128 @@ describe("filterForeignScriptMeaningTerms", () => {
     const terms = [{ term: "7-2", meaning: "サッカーの大差スコア 😂 (7対2)" }];
 
     expect(filterForeignScriptMeaningTerms(terms, "ja", "en")).toEqual(terms);
+  });
+});
+
+describe("filterProperNounPhraseTerms", () => {
+  // issue #100 の観測ケース: 固有名詞(ブランド名・人名)は高頻度語リストに無いため
+  // 「非高頻度語を含む複数語句」としてハイブリッドフィルタ(issue #95)を通過してしまう
+
+  it("文中(先頭以外)に大文字始まりで小文字を含む語(固有名詞)がある語句を落とす", () => {
+    const terms = [
+      { term: "Do you mean Snickers?", meaning: "スニッカーズのこと?" },
+      { term: "playing with Tataru", meaning: "タタルと遊ぶ" },
+      { term: "no cap", meaning: "嘘じゃない、マジで" },
+    ];
+
+    expect(filterProperNounPhraseTerms(terms, "en")).toEqual([{ term: "no cap", meaning: "嘘じゃない、マジで" }]);
+  });
+
+  it("先頭の語だけが大文字始まりの語句(文頭に置かれただけの表現)は落とさない", () => {
+    const terms = [
+      { term: "Toss it!", meaning: "捨てる!" },
+      { term: "Nice try", meaning: "惜しかったね" },
+    ];
+
+    expect(filterProperNounPhraseTerms(terms, "en")).toEqual(terms);
+  });
+
+  it("文中の全大文字の語(略語・強調)は固有名詞とみなさず残す", () => {
+    const terms = [
+      { term: "big W", meaning: "大勝利" },
+      { term: "GG WP", meaning: "good game, well played の略" },
+      { term: "actual LOL moment", meaning: "本当に声が出た場面" },
+    ];
+
+    expect(filterProperNounPhraseTerms(terms, "en")).toEqual(terms);
+  });
+
+  it("文中の語中に大文字を含む語(iPhone / eBay のようなブランド名)がある語句も落とす(CodeRabbit の指摘)", () => {
+    const terms = [
+      { term: "grab the iPhone", meaning: "iPhoneを手に取る" },
+      { term: "selling on eBay", meaning: "eBayで売る" },
+    ];
+
+    expect(filterProperNounPhraseTerms(terms, "en")).toEqual([]);
+  });
+
+  it("一人称の I / I'm のような語は固有名詞とみなさず残す", () => {
+    const terms = [
+      { term: "what am I saying", meaning: "何を言ってるんだ俺は" },
+      { term: "and I'm dead", meaning: "笑いすぎて死んだ(ミーム的表現)" },
+    ];
+
+    expect(filterProperNounPhraseTerms(terms, "en")).toEqual(terms);
+  });
+
+  it("表現リストに一致する語句はタイトルケースで書かれていても残す(誤殺の救済)", () => {
+    // "what's up" は表現リスト収録。チャットがタイトルケースで書かれても落とさない
+    const terms = [{ term: "What's Up", meaning: "調子どう?(挨拶)" }];
+
+    expect(filterProperNounPhraseTerms(terms, "en")).toEqual(terms);
+  });
+
+  it("先頭の1語だけの語句は対象外として残す(文頭と固有名詞を区別できないため)", () => {
+    const terms = [{ term: "Snickers", meaning: "チョコバーのブランド" }];
+
+    expect(filterProperNounPhraseTerms(terms, "en")).toEqual(terms);
+  });
+
+  it("学ぶ言語がドイツ語の場合は名詞が常に大文字で書かれるため、何も落とさずそのまま返す", () => {
+    const terms = [
+      { term: "die Daumen drücken", meaning: "幸運を祈る" },
+      { term: "auf dem Schlauch stehen", meaning: "ピンとこない" },
+    ];
+
+    expect(filterProperNounPhraseTerms(terms, "de")).toEqual(terms);
+  });
+});
+
+describe("filterQuestionSentenceTerms", () => {
+  // issue #100 の観測ケース: 疑問文などの発言ほぼ全体が1つの「表現」として返る
+
+  it("末尾が疑問符でリスト外の複数語の語句(疑問文まるごとの抽出)を落とす", () => {
+    const terms = [
+      { term: "are you malding right now?", meaning: "今キレてるの?" },
+      { term: "malding", meaning: "ハゲるほどキレること" },
+    ];
+
+    expect(filterQuestionSentenceTerms(terms)).toEqual([{ term: "malding", meaning: "ハゲるほどキレること" }]);
+  });
+
+  it("全角の疑問符(？)で終わる複数語の語句も落とす(機械翻訳の訳文に残るケース)", () => {
+    const terms = [{ term: "do you like this game？", meaning: "このゲーム好き?" }];
+
+    expect(filterQuestionSentenceTerms(terms)).toEqual([]);
+  });
+
+  it("疑問符に感嘆符が続く形(?! / ？！)で終わる複数語の語句も落とす(CodeRabbit の指摘)", () => {
+    const terms = [
+      { term: "are you serious?!", meaning: "マジで言ってる!?" },
+      { term: "is this real？！", meaning: "これ現実!?" },
+    ];
+
+    expect(filterQuestionSentenceTerms(terms)).toEqual([]);
+  });
+
+  it("表現リストに一致する疑問形の定型表現は疑問符付きでも残す(誤殺の救済)", () => {
+    const terms = [{ term: "what's up?", meaning: "調子どう?(挨拶)" }];
+
+    expect(filterQuestionSentenceTerms(terms)).toEqual(terms);
+  });
+
+  it("1語の語句は疑問符付きでも残す(単語の聞き返しは学習価値があるため)", () => {
+    const terms = [{ term: "Pardon?", meaning: "もう一度言って?(聞き返し)" }];
+
+    expect(filterQuestionSentenceTerms(terms)).toEqual(terms);
+  });
+
+  it("疑問符で終わらない語句はそのまま残す", () => {
+    const terms = [
+      { term: "no cap", meaning: "嘘じゃない、マジで" },
+      { term: "let him cook", meaning: "彼にやらせておけ(ミーム)" },
+    ];
+
+    expect(filterQuestionSentenceTerms(terms)).toEqual(terms);
   });
 });
