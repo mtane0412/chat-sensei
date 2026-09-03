@@ -8,7 +8,7 @@
  *
  * - 1語の語句: 高頻度語リスト(NGSL 1.2 約2800レンマ + 手動補完語)にあれば落とす。
  *   リストに無いスラング("lol" / "malding")や Twitch 用語("raid" / "emote")は残る。
- *   "sooo" のような伸ばし字は同一文字の連続を潰した形でも照合して落とす(issue #97)
+ *   "sooo" のような伸ばし字は同一文字の3連続以上を潰した形でも照合して落とす(issue #97)
  * - 複数語の語句: 表現リスト(Wiktionary の句動詞・イディオム・スラング + 手動補完の定型表現)に
  *   レンマ正規化して一致すれば残す。リスト外で全語が高頻度なら落とす("main quests")。
  *   非高頻度語を1語でも含めば残す(リストに無い新しいミーム表現の偽陰性を減らす)
@@ -24,7 +24,7 @@ import enExpressionList from "./data/en-expression-list.json";
 import enFrequentWords from "./data/en-frequent-words.json";
 import type { SupportedLanguage } from "./prompts";
 import type { PickupTerm } from "./schemas";
-import { collapseRepeatedLetters, splitIntoMatchWords, stemForMatch } from "./stem";
+import { collapseElongatedLetters, splitIntoMatchWords, stemForMatch } from "./stem";
 
 /**
  * Wiktionary のカテゴリに無い、学習価値のある定型表現の手動補完リスト。
@@ -59,12 +59,16 @@ const FREQUENT_STEMS: ReadonlySet<string> = new Set(
 
 /**
  * 語が高頻度語かを判定する。`sooo` のような伸ばし字が頻度照合を素通りしないよう、
- * 元の形に加えて同一文字の連続を1文字に潰した形(`sooo` → `so`)でも照合する(issue #97)。
- * 潰した形だけで判定すると `good` → `god` のような誤変換で衝突しうるため、
- * 「どちらかが高頻度語に一致したら普通の語」とみなす方式を採る。
+ * 元の形に加えて同一文字の3連続以上を1文字に潰した形(`sooo` → `so`)でも照合する(issue #97)。
+ * - 潰した形だけで判定すると誤変換で衝突しうるため、「どちらかが高頻度語に一致したら普通の語」とみなす
+ * - 2文字連続は `loot` / `yeet` / `weeb` のような正当なスラングを壊すため潰さない(`collapseElongatedLetters` 参照)
+ * - 潰しの後方参照が大小文字を区別するため、混在ケース(`SOoo`)に備えて先に小文字化する
  */
 function isFrequentWord(word: string): boolean {
-  return FREQUENT_STEMS.has(stemForMatch(word)) || FREQUENT_STEMS.has(stemForMatch(collapseRepeatedLetters(word)));
+  return (
+    FREQUENT_STEMS.has(stemForMatch(word)) ||
+    FREQUENT_STEMS.has(stemForMatch(collapseElongatedLetters(word.toLowerCase())))
+  );
 }
 
 /** 表現の照合キーを組み立てる。語ごとに正規化してから空白1つで連結する */

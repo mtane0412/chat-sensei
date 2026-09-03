@@ -104,6 +104,15 @@ describe("filterOrdinaryTerms", () => {
     expect(survivingTerms(["maldinggg"])).toEqual(["maldinggg"]);
   });
 
+  it("2文字連続を含む正当なスラング(loot / yeet / weeb)は潰しの対象にせず残す(issue #97 のレビュー指摘)", () => {
+    // 2文字連続まで潰すと lot / yet / web の高頻度語と誤衝突するため、3連続以上だけを伸ばし字とみなす
+    expect(survivingTerms(["loot", "yeet", "weeb", "free loot"])).toEqual(["loot", "yeet", "weeb", "free loot"]);
+  });
+
+  it("大小文字が混在した伸ばし字(SOoo)も潰した形の照合で落とす(issue #97 のレビュー指摘)", () => {
+    expect(survivingTerms(["SOoo"])).toEqual([]);
+  });
+
   it("学ぶ言語が en 以外の場合はリスト未整備のため何も落とさない", () => {
     expect(survivingTerms(["rare", "main quests"], "ja")).toEqual(["rare", "main quests"]);
     expect(survivingTerms(["rare", "main quests"], "fr")).toEqual(["rare", "main quests"]);

@@ -46,12 +46,13 @@ const NO_LETTER_PATTERN = /^[^\p{L}]*$/u;
  */
 const LAUGHTER_PATTERN = /^(ha|he)+h?$/i;
 /**
- * `www` / `wwww` のような日本語圏由来の笑い声にマッチする(issue #97)。
+ * `www` / `wwww` / 全角の `ｗｗｗ` のような日本語圏由来の笑い声にマッチする(issue #97)。
  * 単独の `W` は「勝ち」を意味するスラング(learnable)のため2文字以上に限る。
  * `collapseRepeatedLetters` を通すと `www` が `w` に潰れて単独の `W` と区別できなくなるため、
  * この照合だけは潰す前の形(記号除去のみ)に対して行う。
+ * 全角(`ｗ` U+FF57)は `i` フラグの simple case folding では半角に揃わないため文字クラスに明示する。
  */
-const JAPANESE_LAUGHTER_PATTERN = /^w{2,}$/i;
+const JAPANESE_LAUGHTER_PATTERN = /^[wｗ]{2,}$/i;
 /** 語句の先頭・末尾に連続する、文字以外の記号(`!` `(` `)` `...` など) */
 const SURROUNDING_NON_LETTERS_PATTERN = /^[^\p{L}]+|[^\p{L}]+$/gu;
 /**
