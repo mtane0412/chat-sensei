@@ -11,11 +11,14 @@
  *   `!` で始まるチャットコマンド・文字を1つも含まない語句(数字や記号だけ)・
  *   `haha` のような笑い声(issue #30)・`oh` / `wow` / `hmm` のような相槌・感嘆詞(issue #33)・
  *   呼び出し側が指定した除外名(表示中の発言者名など)を落とし、重複する語句は1件にまとめる
+ * - `filterTranslationArtifactTerms`: 逆方向 Pick up(機械翻訳の訳文からの抽出)専用の後段フィルタ。
+ *   訳文の誤訳・幻覚に由来しやすい固有名詞的な語句を落とす
  *
  * 翻訳列は「emote 名はそのまま残す」設計のため、この処理は Pick up 専用である。
  */
 import { splitMessageIntoSegments } from "@/lib/twitch/emotes";
 import type { EmotePosition } from "@/lib/twitch/irc-parser";
+import type { SupportedLanguage } from "./prompts";
 import type { PickupTerm } from "./schemas";
 
 /** `preparePickupInput` の結果。LLM に渡す本文と、後段フィルタの照合に使う情報 */
@@ -126,4 +129,42 @@ export function filterPickupTerms(
     seen.add(normalized);
     return true;
   });
+}
+
+/** 大文字(どの言語の大文字でもよい) */
+const UPPERCASE_LETTER_PATTERN = /\p{Lu}/u;
+/** 小文字(どの言語の小文字でもよい) */
+const LOWERCASE_LETTER_PATTERN = /\p{Ll}/u;
+/** 大文字で始まりハイフンを含む単語(`Conto-me` / `Twitch-san` のような音写・敬称の残骸) */
+const CAPITALIZED_HYPHENATED_WORD_PATTERN = /^\p{Lu}\S*-/u;
+
+/**
+ * 逆方向 Pick up(解説言語の発言を学ぶ言語へ機械翻訳した訳文からの抽出。issue #68)専用の後段フィルタ。
+ *
+ * 訳文は Gemini Nano が生成した機械翻訳であり、原文の固有名詞・挨拶・あだ名を誤訳・音写した
+ * 実在しない「表現」が混ざる(実例: 「エオルゼア」→ "EoR"、「こんとめー」→ "Conto-me")。
+ * 原文照合(`pickup.ts`)は訳文自体が壊れていると通過してしまうため、固有名詞的な形の語句を
+ * 決定的に落とす。順方向(実際のチャット本文からの抽出)には適用しないこと。
+ *
+ * 落とす条件(いずれかに該当):
+ * - 2文字目以降に大文字を含み、かつ小文字も含む語句("EoR" / "juggling with Tataru")。
+ *   文頭に置かれただけの表現("Toss it!")や全大文字の略語("LOL")は該当しない
+ * - 大文字で始まりハイフンを含む単語を含む語句("Conto-me" / "Twitch-san")。
+ *   小文字のハイフン語("uh-oh")は該当しない
+ *
+ * 学ぶ言語がドイツ語の場合は名詞が常に大文字で書かれ、正当な表現まで落としてしまうため何も落とさない。
+ */
+export function filterTranslationArtifactTerms(terms: PickupTerm[], learningLang: SupportedLanguage): PickupTerm[] {
+  if (learningLang === "de") return terms;
+  return terms.filter((item) => {
+    const trimmed = item.term.trim();
+    if (UPPERCASE_LETTER_PATTERN.test(trimmed.slice(1)) && LOWERCASE_LETTER_PATTERN.test(trimmed)) return false;
+    if (trimmed.split(/\s+/).some(hasCapitalizedHyphenatedForm)) return false;
+    return true;
+  });
+}
+
+/** 単語の前後の記号(括弧・引用符など)を外したうえで、大文字始まりのハイフン語かを判定する */
+function hasCapitalizedHyphenatedForm(word: string): boolean {
+  return CAPITALIZED_HYPHENATED_WORD_PATTERN.test(word.replace(SURROUNDING_NON_LETTERS_PATTERN, ""));
 }
