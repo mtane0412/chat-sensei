@@ -90,12 +90,14 @@ const EXPRESSION_KEYS: ReadonlySet<string> = new Set(
 /**
  * 語句が表現リスト(Wiktionary 由来 + 手動補完)に一致するかを判定する。
  * リスト側・語句側とも同じレンマ正規化(`stemForMatch`)を通すため、大文字・語形変化・
- * 前後の記号の揺れがあっても一致する。issue #100 のフィルタ(固有名詞・疑問文まるごとの足切り)が
- * 正当な定型表現を誤って落とさないための救済判定に使う。
+ * 前後の記号の揺れがあっても一致する。issue #100 / #104 のフィルタ(固有名詞・疑問文まるごと・
+ * 語数上限超の足切り)が正当な定型表現を誤って落とさないための救済判定に使う。
  *
- * 注意: 表現リストは「全語が高頻度語で構成される表現」に枝刈りして生成している
+ * 注意: 表現リストは「全語が高頻度語で構成される表現、または語数が上限
+ * (`pickup-term-limits.ts`)超の表現」に枝刈りして生成している
  * (`scripts/generate-pickup-filter-data.mjs`)ため、"make a mountain out of a molehill" のような
- * 非高頻度語を含むイディオムには一致しない。
+ * 語数上限超のイディオムには非高頻度語を含んでいても一致するが、語数上限以下で非高頻度語を含む
+ * イディオムには一致しない。
  */
 export function isListedExpression(term: string): boolean {
   return EXPRESSION_KEYS.has(buildExpressionKey(splitIntoMatchWords(term)));

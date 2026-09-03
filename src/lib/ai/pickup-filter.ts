@@ -19,12 +19,15 @@
  * - `filterProperNounPhraseTerms`: 順方向 Pick up 用の後段フィルタ。文中(先頭以外)に固有名詞的な語を
  *   含む語句を落とす(issue #100)
  * - `filterQuestionSentenceTerms`: 末尾が疑問符の複数語の語句(疑問文まるごとの抽出)を落とす(issue #100)
+ * - `filterLongPhraseTerms`: 語数が上限(6語)を超え、かつ表現リストに無い語句(文まるごとの抽出)を
+ *   落とす(issue #104)
  *
  * 翻訳列は「emote 名はそのまま残す」設計のため、この処理は Pick up 専用である。
  */
 import { splitMessageIntoSegments } from "@/lib/twitch/emotes";
 import type { EmotePosition } from "@/lib/twitch/irc-parser";
 import { isListedExpression } from "./pickup-ordinary-filter";
+import { MAX_PICKUP_TERM_WORD_COUNT } from "./pickup-term-limits";
 import type { SupportedLanguage } from "./prompts";
 import type { PickupTerm } from "./schemas";
 import { collapseRepeatedLetters, splitIntoMatchWords } from "./stem";
@@ -249,8 +252,9 @@ const TRAILING_QUESTION_MARK_PATTERN = /[?？]+[!！]*$/;
  * 1語の語句("Pardon?")は単語の聞き返しとして学習価値があるため対象にしない。
  *
  * 既知のトレードオフ:
- * - 表現リストは全語が高頻度語の表現に枝刈りされているため、非高頻度語を含む疑問形の定型表現は
- *   救済できず落ちる(文まるごとの抽出を学習者に見せないこと(精度)を優先して許容する)
+ * - 表現リストは語数上限(issue #104)以下では全語が高頻度語の表現に枝刈りされているため、
+ *   語数上限以下で非高頻度語を含む疑問形の定型表現は救済できず落ちる
+ *   (文まるごとの抽出を学習者に見せないこと(精度)を優先して許容する)
  * - 語の分割は空白基準のため、空白を使わない言語(日本語)の疑問文は1語扱いになり落とせない
  */
 export function filterQuestionSentenceTerms(terms: PickupTerm[]): PickupTerm[] {
@@ -259,6 +263,30 @@ export function filterQuestionSentenceTerms(terms: PickupTerm[]): PickupTerm[] {
     if (!TRAILING_QUESTION_MARK_PATTERN.test(trimmed)) return true;
     if (splitIntoMatchWords(trimmed).length < 2) return true;
     return isListedExpression(trimmed);
+  });
+}
+
+/**
+ * 語数が上限(`MAX_PICKUP_TERM_WORD_COUNT`)を超える語句(文まるごとの抽出)を落とす後段フィルタ(issue #104)。
+ *
+ * Gemini Nano は疑問文以外でも発言ほぼ全体を1つの「表現」として返すことがある。固有名詞も疑問符も
+ * 含まない長い平叙文は既存のフィルタ(`filterProperNounPhraseTerms` / `filterQuestionSentenceTerms`)を
+ * 通過してしまうため、語数で決定的に落とす。
+ * ただし表現リスト(issue #95)に一致する語句("make a mountain out of a molehill" など)は
+ * 長い定型表現とみなして残す。この救済を成立させるため、表現リストの枝刈り
+ * (`scripts/generate-pickup-filter-data.mjs`)は語数が上限超の表現を非高頻度語を含んでいても
+ * 無条件で収録するよう変更している(issue #104)。
+ *
+ * 既知のトレードオフ:
+ * - 表現リストは英語のみのため、他言語の長い定型表現は救済できず落ちる
+ *   (文まるごとの抽出を学習者に見せないこと(精度)を優先して許容する)
+ * - 語の分割は空白基準のため、空白を使わない言語(日本語)の長文は1語扱いになり落とせない
+ *   (`filterQuestionSentenceTerms` と同じ制約)
+ */
+export function filterLongPhraseTerms(terms: PickupTerm[]): PickupTerm[] {
+  return terms.filter((item) => {
+    if (splitIntoMatchWords(item.term).length <= MAX_PICKUP_TERM_WORD_COUNT) return true;
+    return isListedExpression(item.term);
   });
 }
 
