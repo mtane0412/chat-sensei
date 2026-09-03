@@ -517,14 +517,19 @@ describe("チャットバッジ(Helix Chat Badges API)", () => {
 });
 
 // 配信情報(タイトル・カテゴリ)の読み込みも実 API(Helix プロキシ)を呼ぶため、ストア連携だけをモックで検証する
-const { mockLoadStreamInfo, mockClearStreamInfo } = vi.hoisted(() => ({
-  mockLoadStreamInfo: vi.fn(),
-  mockClearStreamInfo: vi.fn(),
-}));
+const { mockLoadStreamInfo, mockClearStreamInfo, mockStartStreamInfoRefresh, mockStopStreamInfoRefresh } =
+  vi.hoisted(() => ({
+    mockLoadStreamInfo: vi.fn(),
+    mockClearStreamInfo: vi.fn(),
+    mockStartStreamInfoRefresh: vi.fn(),
+    mockStopStreamInfoRefresh: vi.fn(),
+  }));
 
 vi.mock("./stream-info", () => ({
   loadStreamInfo: (channelLogin: string) => mockLoadStreamInfo(channelLogin),
   clearStreamInfo: () => mockClearStreamInfo(),
+  startStreamInfoRefresh: (channelLogin: string) => mockStartStreamInfoRefresh(channelLogin),
+  stopStreamInfoRefresh: () => mockStopStreamInfoRefresh(),
 }));
 
 describe("配信情報(タイトル・カテゴリ)との連携(issue #54)", () => {
@@ -532,6 +537,8 @@ describe("配信情報(タイトル・カテゴリ)との連携(issue #54)", () 
   beforeEach(() => {
     mockLoadStreamInfo.mockClear();
     mockClearStreamInfo.mockClear();
+    mockStartStreamInfoRefresh.mockClear();
+    mockStopStreamInfoRefresh.mockClear();
   });
 
   it("connect()を呼ぶと、前チャンネルの配信情報をクリアしてから正規化したチャンネル名で読み込む", () => {
@@ -548,5 +555,20 @@ describe("配信情報(タイトル・カテゴリ)との連携(issue #54)", () 
     useChatConnectionStore.getState().disconnect();
 
     expect(mockClearStreamInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it("connect()を呼ぶと、正規化したチャンネル名で配信情報の定期リフレッシュを開始する(issue #85)", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+
+    expect(mockStartStreamInfoRefresh).toHaveBeenCalledWith("zackrawrr");
+  });
+
+  it("disconnect()を呼ぶと、配信情報の定期リフレッシュを停止する(issue #85)", () => {
+    useChatConnectionStore.getState().connect("ZackRawrr");
+    mockStopStreamInfoRefresh.mockClear();
+
+    useChatConnectionStore.getState().disconnect();
+
+    expect(mockStopStreamInfoRefresh).toHaveBeenCalledTimes(1);
   });
 });
