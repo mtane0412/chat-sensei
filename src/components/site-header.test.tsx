@@ -8,11 +8,17 @@
  * (`src/app/page.tsx`)になるため、ヘッダーは何も描画しない。
  * 設定ダイアログの環境診断(`runBrowserDiagnosis`)はブラウザ API に触れるためモックする。
  * チャンネル検索のオートコンプリート候補取得もネットワークに触れるためモックする。
+ * Next.js のルーティング(useRouter。チャンネル検索フォームが遷移に使う)はテスト環境に
+ * App Router が無いためモックする。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetSettingsStoreForTests } from "@/store/settings";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
+}));
 
 vi.mock("@/lib/ai/runBrowserDiagnosis", () => ({
   runBrowserDiagnosis: () => new Promise(() => {}),

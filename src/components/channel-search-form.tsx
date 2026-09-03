@@ -2,7 +2,8 @@
  * チャンネル検索 + 接続の共通フォーム。
  *
  * オートコンプリート付きの入力欄(`ChannelAutocompleteInput`)にチャンネル名を入力し、
- * フォーム送信(Enter / ボタン)で chat-connection ストアの `connect` を呼ぶ。
+ * フォーム送信(Enter / ボタン)で正規化したチャンネル名のページ(/[channel])へ遷移する。
+ * IRC 接続はチャンネルページが URL を起点に開始する(このフォームは接続を直接開始しない)。
  * モデル未ダウンロード時の `LanguageModel.create()` にはユーザー操作が必要なため、
  * 送信操作の延長で翻訳・Pick up のセッションを先にウォームアップする。
  *
@@ -20,11 +21,13 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
 import { SearchIcon } from "lucide-react";
 import { ChannelAutocompleteInput } from "@/components/channel-autocomplete";
 import { CONNECTION_STATE_LABEL } from "@/components/stream-info-panel";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { normalizeChannelName } from "@/lib/twitch/irc-client";
 import { useChatConnectionStore } from "@/store/chat-connection";
 import { warmUpPickupPipeline } from "@/store/pickups";
 import { warmUpTranslationPipeline } from "@/store/translations";
@@ -34,7 +37,7 @@ const HERO_INPUT_ID = "channel-input";
 
 export function ChannelSearchForm({ variant }: { variant: "hero" | "navbar" }) {
   const [channelInput, setChannelInput] = useState("");
-  const connect = useChatConnectionStore((state) => state.connect);
+  const router = useRouter();
   const connectionState = useChatConnectionStore((state) => state.connectionState);
 
   const handleSubmit = useCallback(
@@ -45,11 +48,12 @@ export function ChannelSearchForm({ variant }: { variant: "hero" | "navbar" }) {
       // モデル未ダウンロード時の LanguageModel.create() にはユーザー操作が必要なため、送信の延長で先に生成する
       warmUpTranslationPipeline();
       warmUpPickupPipeline();
-      connect(channel);
-      // 接続後に検索語・候補ドロップダウンを残さない(オートコンプリート側が空値でドロップダウンを閉じる)
+      // 接続はチャンネルページ(/[channel])が URL を起点に開始する。URL は IRC 接続時と同じ規則で正規化する
+      router.push(`/${normalizeChannelName(channel)}`);
+      // 遷移後に検索語・候補ドロップダウンを残さない(オートコンプリート側が空値でドロップダウンを閉じる)
       setChannelInput("");
     },
-    [channelInput, connect],
+    [channelInput, router],
   );
 
   if (variant === "navbar") {
