@@ -12,10 +12,13 @@
  * - `filterProperNounPhraseTerms`: 文中(先頭以外)に固有名詞的な語(大文字始まりかつ小文字を含む語)を
  *   含む語句を落とす(issue #100)
  * - `filterQuestionSentenceTerms`: 末尾が疑問符の複数語の語句(疑問文まるごとの抽出)を落とす(issue #100)
+ * - `filterLongPhraseTerms`: 語数が上限(6語)を超え、かつ表現リストに無い語句(文まるごとの抽出)を
+ *   落とす(issue #104)
  */
 import { describe, expect, it } from "vitest";
 import {
   filterForeignScriptMeaningTerms,
+  filterLongPhraseTerms,
   filterPickupTerms,
   filterProperNounPhraseTerms,
   filterQuestionSentenceTerms,
@@ -559,5 +562,42 @@ describe("filterQuestionSentenceTerms", () => {
     ];
 
     expect(filterQuestionSentenceTerms(terms)).toEqual(terms);
+  });
+});
+
+describe("filterLongPhraseTerms", () => {
+  // issue #104 の対応ケース: 疑問符で終わらない発言ほぼ全体が1つの「表現」として返る
+
+  it("語数が上限(6語)を超えるリスト外の語句(文まるごとの抽出)を落とす", () => {
+    const terms = [
+      // 7語のリスト外の平叙文。固有名詞・疑問符が無いため既存フィルタでは落とせない
+      { term: "he found a molehill in the garden", meaning: "彼は庭でモグラ塚を見つけた" },
+      { term: "malding", meaning: "ハゲるほどキレること" },
+    ];
+
+    expect(filterLongPhraseTerms(terms)).toEqual([{ term: "malding", meaning: "ハゲるほどキレること" }]);
+  });
+
+  it("語数が上限(6語)ちょうどまでの語句は対象外として残す", () => {
+    const terms = [
+      // 6語だが非高頻度語(molehill)を含むため filterOrdinaryTerms でも落ちない語句
+      { term: "found a molehill in the garden", meaning: "庭でモグラ塚を見つけた" },
+    ];
+
+    expect(filterLongPhraseTerms(terms)).toEqual(terms);
+  });
+
+  it("表現リストに一致する語数上限超のイディオムは残す(誤殺の救済。issue #104 の枝刈り方針変更で救済可能になる)", () => {
+    // "make a mountain out of a molehill" は7語で "molehill" が非高頻度語のイディオム。
+    // 枝刈り条件の変更(語数上限超の表現を無条件で残す)により表現リストに収録される
+    const terms = [{ term: "make a mountain out of a molehill", meaning: "ささいなことを大げさに騒ぎ立てる" }];
+
+    expect(filterLongPhraseTerms(terms)).toEqual(terms);
+  });
+
+  it("語形変化・前後の記号があっても表現リストに一致するイディオムは残す(レンマ正規化の照合)", () => {
+    const terms = [{ term: "making a mountain out of a molehill!", meaning: "ささいなことを大げさに騒ぎ立てている" }];
+
+    expect(filterLongPhraseTerms(terms)).toEqual(terms);
   });
 });

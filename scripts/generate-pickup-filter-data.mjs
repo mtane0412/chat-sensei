@@ -16,10 +16,13 @@
  *      頻度リスト上位に混ざるスラング("lol" / "shit" など)を落とさないよう、
  *      Wiktionary の狭義スラングカテゴリの1語見出し語を「頻度リストから除外する側」に使う。
  *
- * 表現リストは「全語が高頻度語で構成される表現」だけに枝刈りして出力する。
- * 実行時フィルタ(pickup-ordinary-filter.ts)は非高頻度語を含む語句を表現リストの照合前に
- * 「残す」と判定するため、非高頻度語を含む表現はリストに入れても参照されず、
- * 枝刈りしても挙動は変わらない(クライアントバンドルのサイズ削減が目的)。
+ * 表現リストは「全語が高頻度語で構成される表現、または語数が上限(pickup-term-limits.ts)超の表現」
+ * に枝刈りして出力する(クライアントバンドルのサイズ削減が目的)。
+ * - 全語が高頻度語の表現: 実行時フィルタ(pickup-ordinary-filter.ts)の「リスト外で全語が高頻度なら
+ *   落とす」判定の救済に必要。非高頻度語を含む表現はこの判定の前に「残す」となるため収録不要
+ * - 語数が上限超の表現: 語数上限フィルタ(pickup-filter.ts の filterLongPhraseTerms。issue #104)の
+ *   救済に必要。"make a mountain out of a molehill" のような非高頻度語を含む長いイディオムも
+ *   無条件で収録する(枝刈り後の分布では7語以上は約280件で、バンドル増は小さい)
  * 枝刈りの判定は実行時と同じ `stem.ts` の正規化・分割を import して使い、基準のずれを防ぐ。
  *
  * 実行方法: `node scripts/generate-pickup-filter-data.mjs`
@@ -28,7 +31,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-// Node.js の型ストリッピング(Node 22.6+)で実行時フィルタと同じ正規化・分割を直接 import する
+// Node.js の型ストリッピング(Node 22.6+)で実行時フィルタと同じ正規化・分割・語数上限を直接 import する
+import { MAX_PICKUP_TERM_WORD_COUNT } from "../src/lib/ai/pickup-term-limits.ts";
 import { splitIntoMatchWords, stemForMatch } from "../src/lib/ai/stem.ts";
 
 const OUTPUT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "lib", "ai", "data");
@@ -241,10 +245,12 @@ async function main() {
         .map((title) => title.toLowerCase()),
     ),
   ].sort();
-  // 枝刈り: 全語が高頻度語で構成される表現だけを残す(冒頭コメントを参照)
-  const expressions = allExpressions.filter((expression) =>
-    splitIntoMatchWords(expression).every((word) => frequentStems.has(stemForMatch(word))),
-  );
+  // 枝刈り: 全語が高頻度語で構成される表現と、語数が上限超の表現を残す(冒頭コメントを参照)
+  const expressions = allExpressions.filter((expression) => {
+    const words = splitIntoMatchWords(expression);
+    if (words.length > MAX_PICKUP_TERM_WORD_COUNT) return true;
+    return words.every((word) => frequentStems.has(stemForMatch(word)));
+  });
 
   await mkdir(OUTPUT_DIR, { recursive: true });
   await writeFile(
@@ -254,7 +260,7 @@ async function main() {
         source: `English Wiktionary categories (headword titles only): ${EXPRESSION_CATEGORIES.map((category) => category.replace("Category:", "")).join(", ")}`,
         sourceUrl: "https://en.wiktionary.org/wiki/Category:English_phrasal_verbs",
         license: "CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)",
-        note: "Multi-word headwords only, pruned to expressions whose words are all in en-frequent-words.json (see scripts/generate-pickup-filter-data.mjs)",
+        note: "Multi-word headwords only, pruned to expressions whose words are all in en-frequent-words.json or whose word count exceeds MAX_PICKUP_TERM_WORD_COUNT (see scripts/generate-pickup-filter-data.mjs)",
         generatedAt: new Date().toISOString().slice(0, 10),
         expressions,
       },
