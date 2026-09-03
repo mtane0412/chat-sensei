@@ -103,6 +103,38 @@ describe("startPickupPipeline", () => {
     stop();
   });
 
+  it("普通の単語・字義通りの句(高頻度語リスト・表現リストによる判定。issue #95)を結果から落とす", async () => {
+    const { deps, emit } = createDeps({
+      promptResults: [
+        Promise.resolve(
+          JSON.stringify({
+            terms: [
+              // Gemini Nano が指示を守らず返した普通の単語(実際の配信で観測した実例)
+              { term: "rare", meaning: "珍しい" },
+              // 高頻度語だけで構成される句動詞は表現リストにあるため残る
+              { term: "give up", meaning: "諦める" },
+              { term: "gg", meaning: "good game の略、お疲れ" },
+            ],
+          }),
+        ),
+      ],
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "rare drop! never give up, gg" }));
+    await flush();
+
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [
+        { term: "give up", meaning: "諦める" },
+        { term: "gg", meaning: "good game の略、お疲れ" },
+      ],
+    });
+    stop();
+  });
+
   it("抽出ジョブが失敗した場合は理由付きで failed として保持する(暗黙のフォールバックはしない)", async () => {
     const { deps, emit } = createDeps({ promptResults: [Promise.reject(new Error("モデルがクラッシュしました"))] });
 
@@ -234,6 +266,37 @@ describe("startPickupPipeline(逆方向: 翻訳パイプラインの訳文を再
     const stop = startPickupPipeline(deps);
     await flush();
     emit(createMessage({ id: "msg-1", text: "おかえりviewer_taro、マジだよ" }));
+    await flush();
+
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "no cap", meaning: "嘘じゃない、マジで" }],
+    });
+    stop();
+  });
+
+  it("逆方向でも普通の単語・字義通りの句(issue #95)を結果から落とす", async () => {
+    const { deps, emit } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [
+        Promise.resolve(
+          JSON.stringify({
+            terms: [
+              // 機械翻訳の訳文から Gemini Nano が拾った字義通りの句(実際の配信で観測した実例)
+              { term: "main quests", meaning: "メインクエスト" },
+              { term: "no cap", meaning: "嘘じゃない、マジで" },
+            ],
+          }),
+        ),
+      ],
+    });
+    useTranslationStore.setState({
+      entries: { "msg-1": { status: "done", segments: [{ type: "text", text: "did the main quests, no cap" }] } },
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "メインクエやったよ、マジで" }));
     await flush();
 
     expect(usePickupStore.getState().entries["msg-1"]).toEqual({

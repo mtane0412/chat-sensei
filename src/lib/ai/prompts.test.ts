@@ -257,7 +257,6 @@ describe("buildPickupSystemPrompt", () => {
 
     // 「複数語を優先」の直後に否定条件を置き、「複数語なら何でもよい」と解釈されないようにする
     expect(prompt).toMatch(/足しただけ/);
-    expect(prompt).toMatch(/推測できない/);
     expect(prompt).toContain('"sleep closest to"');
   });
 
@@ -265,7 +264,37 @@ describe("buildPickupSystemPrompt", () => {
     const prompt = buildPickupSystemPrompt("ja", "en");
 
     expect(prompt).toMatch(/adding up the meanings/i);
-    expect(prompt).toMatch(/cannot guess/i);
+  });
+
+  it("解説言語がjaのとき、スコープはスラングだけでなく定型表現を含む学習表現全般である(issue #95)", () => {
+    const prompt = buildPickupSystemPrompt("en", "ja");
+
+    // スラング辞典スコープ(「特殊な表現だけ」)から、基礎的だが学習価値のある定型表現も含むスコープへ拡大した
+    expect(prompt).toMatch(/学ぶ価値/);
+    expect(prompt).toMatch(/定型表現/);
+    expect(prompt).not.toMatch(/スラングの辞典/);
+  });
+
+  it("解説言語がenのとき、スコープはスラングだけでなく定型表現を含む学習表現全般である(issue #95)", () => {
+    const prompt = buildPickupSystemPrompt("ja", "en");
+
+    expect(prompt).toMatch(/worth learning/i);
+    expect(prompt).toMatch(/set phrases/i);
+    expect(prompt).not.toMatch(/dictionary of .* slang/i);
+  });
+
+  it("学ぶ言語が英語のとき、すべての解説言語で基礎的な定型表現の例として even though を示す(issue #95)", () => {
+    for (const explainLang of SUPPORTED_LANGUAGES) {
+      expect(buildPickupSystemPrompt("en", explainLang)).toContain('"even though"');
+    }
+  });
+
+  it("学ぶ言語が英語以外のとき、定型表現の例は学ぶ言語の表現になる(英語の例を混ぜない)(issue #95)", () => {
+    // 学ぶ言語が日本語なら日本語の定型表現を例示し、英語の "even though" は登場しない
+    const prompt = buildPickupSystemPrompt("ja", "en");
+
+    expect(prompt).toContain("とはいえ");
+    expect(prompt).not.toContain("even though");
   });
 
   it("学ぶ言語が英語のとき、すべての解説言語で除外する普通の句の例として sleep closest to を示す(issue #34)", () => {

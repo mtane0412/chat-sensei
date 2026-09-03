@@ -156,9 +156,11 @@ const CAPITALIZED_HYPHENATED_WORD_PATTERN = /^\p{Lu}\S*-/u;
  *
  * 既知のトレードオフ: 綴りの形だけで判定するため、実在する混在ケースの語("iPhone" / "eBay")や
  * 大文字始まりの複合語("T-shirt" / "X-ray")も落ちる。ブランド名は固有名詞として Pick up の対象外に
- * したい語であり、普通の複合語はスラング辞典としての抽出対象になりにくいため、機械翻訳の幻覚を
- * 学習者に見せないこと(精度)を優先して許容する。決定的処理のままこれらを救う手段は語彙リストの
- * 導入しかなく、必要になった時点で表現リスト方式(スコープ拡大の後続作業)と合わせて検討する。
+ * したい語であり、普通の複合語は学習表現としての抽出対象になりにくいため、機械翻訳の幻覚を
+ * 学習者に見せないこと(精度)を優先して許容する。issue #95 で導入した表現リスト
+ * (`pickup-ordinary-filter.ts`。Wiktionary の句動詞・イディオム・スラング)による救済も検討したが、
+ * リストは複数語の表現だけを収録しており "iPhone" / "T-shirt" のような1語の混在語を含まないため
+ * 救済できず、見送った。救済が必要になったら混在語の許可リストを別途用意する。
  */
 export function filterTranslationArtifactTerms(terms: PickupTerm[], learningLang: SupportedLanguage): PickupTerm[] {
   if (learningLang === "de") return terms;
