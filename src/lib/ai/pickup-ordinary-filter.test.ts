@@ -87,6 +87,32 @@ describe("filterOrdinaryTerms", () => {
     expect(survivingTerms(["quests", "streamers"])).toEqual([]);
   });
 
+  it("伸ばし字の1語(sooo / niceee)は同一文字の連続を潰した形でも照合して落とす(issue #97)", () => {
+    expect(survivingTerms(["sooo", "niceee", "yesss"])).toEqual([]);
+  });
+
+  it("伸ばし字を含む複数語句(sooo good)も潰した形の照合で全語が高頻度なら落とす(issue #97)", () => {
+    expect(survivingTerms(["sooo good"])).toEqual([]);
+  });
+
+  it("潰した形が高頻度語に一致しても、潰す前の形で高頻度語に一致する語は従来どおり落とす(good → god の誤変換で残さない)", () => {
+    // "good" を潰すと "god" になるが、元の形 "good" 自体が高頻度語のため落ちる
+    expect(survivingTerms(["good"])).toEqual([]);
+  });
+
+  it("潰しても高頻度語に一致しない伸ばしスラング(maldinggg)は残す(issue #97)", () => {
+    expect(survivingTerms(["maldinggg"])).toEqual(["maldinggg"]);
+  });
+
+  it("2文字連続を含む正当なスラング(loot / yeet / weeb)は潰しの対象にせず残す(issue #97 のレビュー指摘)", () => {
+    // 2文字連続まで潰すと lot / yet / web の高頻度語と誤衝突するため、3連続以上だけを伸ばし字とみなす
+    expect(survivingTerms(["loot", "yeet", "weeb", "free loot"])).toEqual(["loot", "yeet", "weeb", "free loot"]);
+  });
+
+  it("大小文字が混在した伸ばし字(SOoo)も潰した形の照合で落とす(issue #97 のレビュー指摘)", () => {
+    expect(survivingTerms(["SOoo"])).toEqual([]);
+  });
+
   it("学ぶ言語が en 以外の場合はリスト未整備のため何も落とさない", () => {
     expect(survivingTerms(["rare", "main quests"], "ja")).toEqual(["rare", "main quests"]);
     expect(survivingTerms(["rare", "main quests"], "fr")).toEqual(["rare", "main quests"]);

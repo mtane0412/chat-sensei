@@ -9,7 +9,8 @@
  *   LLM に渡す本文と、後段フィルタで照合するための emote 名・メンション名を返す
  * - `filterPickupTerms`: 後段フィルタ。返ってきた語句のうち emote 名・@メンション・
  *   `!` で始まるチャットコマンド・文字を1つも含まない語句(数字や記号だけ)・
- *   `haha` のような笑い声(issue #30)・`oh` / `wow` / `hmm` のような相槌・感嘆詞(issue #33)・
+ *   `haha` のような笑い声(issue #30)・`www` のような日本語型の笑い声(issue #97)・
+ *   `oh` / `wow` / `hmm` のような相槌・感嘆詞(issue #33)・
  *   呼び出し側が指定した除外名(表示中の発言者名など)を落とし、重複する語句は1件にまとめる
  * - `filterTranslationArtifactTerms`: 逆方向 Pick up(機械翻訳の訳文からの抽出)専用の後段フィルタ。
  *   訳文の誤訳・幻覚に由来しやすい固有名詞的な語句を落とす
@@ -20,6 +21,7 @@ import { splitMessageIntoSegments } from "@/lib/twitch/emotes";
 import type { EmotePosition } from "@/lib/twitch/irc-parser";
 import type { SupportedLanguage } from "./prompts";
 import type { PickupTerm } from "./schemas";
+import { collapseRepeatedLetters } from "./stem";
 
 /** `preparePickupInput` の結果。LLM に渡す本文と、後段フィルタの照合に使う情報 */
 export interface PreparedPickupInput {
@@ -43,14 +45,16 @@ const NO_LETTER_PATTERN = /^[^\p{L}]*$/u;
  * `haha!` / `(hehe)` のように前後に記号が付く形は、`SURROUNDING_NON_LETTERS_PATTERN` で記号を外してから照合する。
  */
 const LAUGHTER_PATTERN = /^(ha|he)+h?$/i;
+/**
+ * `www` / `wwww` / 全角の `ｗｗｗ` のような日本語圏由来の笑い声にマッチする(issue #97)。
+ * 単独の `W` は「勝ち」を意味するスラング(learnable)のため2文字以上に限る。
+ * `collapseRepeatedLetters` を通すと `www` が `w` に潰れて単独の `W` と区別できなくなるため、
+ * この照合だけは潰す前の形(記号除去のみ)に対して行う。
+ * 全角(`ｗ` U+FF57)は `i` フラグの simple case folding では半角に揃わないため文字クラスに明示する。
+ */
+const JAPANESE_LAUGHTER_PATTERN = /^[wｗ]{2,}$/i;
 /** 語句の先頭・末尾に連続する、文字以外の記号(`!` `(` `)` `...` など) */
 const SURROUNDING_NON_LETTERS_PATTERN = /^[^\p{L}]+|[^\p{L}]+$/gu;
-/** 同じ文字が2回以上連続する箇所(`ohhh` の `hhh` など) */
-const REPEATED_LETTER_PATTERN = /(\p{L})\1+/gu;
-/** `ohhh` / `hmmm` のように文字を伸ばした形を照合できるよう、同じ文字の連続を1文字にまとめる */
-function collapseRepeatedLetters(word: string): string {
-  return word.replace(REPEATED_LETTER_PATTERN, "$1");
-}
 /**
  * 言語を問わず普遍的に相槌・感嘆詞と判断できる語の除外辞書(issue #33)。
  * プロンプトで「相槌・感嘆詞は特殊な表現ではない」と指示しても Gemini Nano は `oh → 驚きを表す感嘆詞` のように返すため、
@@ -123,8 +127,11 @@ export function filterPickupTerms(
     if (excludedNames.has(normalized)) return false;
     if (NO_LETTER_PATTERN.test(normalized)) return false;
     // 笑い声・相槌は `haha!` / `ohhh` のように記号や伸ばしが付いても同じ語なので、揃えてから照合する
-    const collapsed = collapseRepeatedLetters(normalized.replace(SURROUNDING_NON_LETTERS_PATTERN, ""));
+    const stripped = normalized.replace(SURROUNDING_NON_LETTERS_PATTERN, "");
+    const collapsed = collapseRepeatedLetters(stripped);
     if (LAUGHTER_PATTERN.test(collapsed) || INTERJECTIONS.has(collapsed)) return false;
+    // 日本語型の笑い声(www)は潰すと単独の W(勝ちのスラング)と区別できないため、潰す前の形で照合する
+    if (JAPANESE_LAUGHTER_PATTERN.test(stripped)) return false;
     if (seen.has(normalized)) return false;
     seen.add(normalized);
     return true;

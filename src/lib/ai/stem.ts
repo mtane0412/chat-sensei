@@ -19,6 +19,33 @@
 /** 語の前後に連続する、文字以外の記号(引用符・括弧・`!` など) */
 const SURROUNDING_NON_LETTERS_PATTERN = /^[^\p{L}]+|[^\p{L}]+$/gu;
 
+/** 同じ文字が2回以上連続する箇所(`ohhh` の `hhh` など) */
+const REPEATED_LETTER_PATTERN = /(\p{L})\1+/gu;
+
+/**
+ * `ohhh` / `hmmm` のように文字を伸ばした形を照合できるよう、同じ文字の連続を1文字にまとめる。
+ * `good` → `god` のように正当な重ね字も潰れるため、この結果だけで判定せず、
+ * 必ず元の形と併用して照合すること(issue #97 の「どちらかが一致したら」方式)。
+ * 笑い声・相槌の照合(pickup-filter.ts)で使う。
+ */
+export function collapseRepeatedLetters(word: string): string {
+  return word.replace(REPEATED_LETTER_PATTERN, "$1");
+}
+
+/** 同じ文字が3回以上連続する箇所(`sooo` の `ooo` など) */
+const ELONGATED_LETTER_PATTERN = /(\p{L})\1{2,}/gu;
+
+/**
+ * 同じ文字が3回以上連続する箇所だけを1文字にまとめる(`sooo` → `so` / `niceee` → `nice`)。
+ * 高頻度語の照合(pickup-ordinary-filter.ts)で使う。2文字連続まで潰すと `loot` → `lot` /
+ * `yeet` → `yet` / `weeb` → `web` のように正当なスラングが高頻度語と誤衝突するため、
+ * 英語の正当な綴りにほぼ現れない3連続以上だけを伸ばし字とみなす(issue #97 のレビュー指摘)。
+ * 正規表現の後方参照は大小文字を区別するため、混在ケース(`SOoo`)は呼び出し側で小文字化してから渡すこと。
+ */
+export function collapseElongatedLetters(word: string): string {
+  return word.replace(ELONGATED_LETTER_PATTERN, "$1");
+}
+
 /**
  * 語句を照合用の語の配列に分割する。空白で区切り、各語の前後の記号を外す。
  * 語の内部のアポストロフィ・ハイフン("don't" / "uh-oh")は保持し、

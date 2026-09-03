@@ -232,6 +232,44 @@ describe("filterPickupTerms", () => {
     ]);
   });
 
+  it("日本語型の笑い声(www / wwww / WWW / www!)を落とす(issue #97)", () => {
+    const terms = [
+      { term: "www", meaning: "日本語圏の笑い声" },
+      { term: "wwww", meaning: "日本語圏の笑い声" },
+      { term: "WWW", meaning: "日本語圏の笑い声" },
+      { term: "www!", meaning: "日本語圏の笑い声" },
+      { term: "sticky", meaning: "スタン状態にする" },
+    ];
+
+    expect(filterPickupTerms(terms, { text: "www wwww WWW www! sticky", emoteNames: [], mentionNames: [] })).toEqual([
+      { term: "sticky", meaning: "スタン状態にする" },
+    ]);
+  });
+
+  it("全角の日本語型笑い声(ｗｗｗ / ＷＷＷ / 半角全角混在)も落とす(issue #97 のレビュー指摘)", () => {
+    const terms = [
+      { term: "ｗｗｗ", meaning: "日本語圏の笑い声" },
+      { term: "ＷＷＷ", meaning: "日本語圏の笑い声" },
+      { term: "wｗw", meaning: "日本語圏の笑い声" },
+      { term: "sticky", meaning: "スタン状態にする" },
+    ];
+
+    expect(filterPickupTerms(terms, { text: "ｗｗｗ ＷＷＷ wｗw sticky", emoteNames: [], mentionNames: [] })).toEqual([
+      { term: "sticky", meaning: "スタン状態にする" },
+    ]);
+  });
+
+  it("単独の W / ｗ(「勝ち」のスラング)や w を含む普通の語は落とさない(issue #97)", () => {
+    const terms = [
+      { term: "W", meaning: "勝利・最高" },
+      { term: "ｗ", meaning: "勝利・最高" },
+      { term: "wallow", meaning: "ふける" },
+      { term: "big W", meaning: "大勝利" },
+    ];
+
+    expect(filterPickupTerms(terms, { text: "W ｗ wallow big W", emoteNames: [], mentionNames: [] })).toEqual(terms);
+  });
+
   it("相槌・感嘆詞を含む複数語の表現(oh my god / wow factor)は落とさない(issue #33)", () => {
     const terms = [
       { term: "oh my god", meaning: "なんてこった" },
