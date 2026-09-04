@@ -24,6 +24,7 @@ import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filt
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetHiddenPickupStoreForTests } from "@/store/hidden-pickups";
 import { resetPickupAnnouncementStoreForTests } from "@/store/pickup-announcements";
+import { PICKUP_ENCOUNTER_STORAGE_KEY, resetPickupEncountersForTests } from "@/store/pickup-encounters";
 import { resetManualPickupStoreForTests, useManualPickupStore } from "@/store/manual-pickups";
 import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
 import { resetPromptApiStoreForTests, usePromptApiStore } from "@/store/prompt-api";
@@ -146,6 +147,7 @@ afterEach(() => {
   resetAvatarsForTests();
   resetBadgesForTests();
   window.localStorage.clear();
+  resetPickupEncountersForTests();
 });
 
 describe("ChannelPage(3カラム構成)", () => {
@@ -704,6 +706,86 @@ describe("ChannelPage(Pick up列)", () => {
 
     expect(within(pickupColumn).queryByText(/gg/i)).not.toBeInTheDocument();
     expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
+  });
+
+  it('「知っている」ボタンを押すと、その語句が表示から消え、ユーザー辞書に knownCount が記録される(issue #110)', async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: {
+        "msg-1": {
+          status: "done",
+          terms: [
+            { term: "gg", meaning: "good game の略、お疲れ" },
+            { term: "no re", meaning: "再戦なし" },
+          ],
+        },
+      },
+    });
+
+    render(<ChannelPage />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as known' }));
+
+    // 押した語句だけが表示から消える(削除ボタンと同じ非表示集合を使うため再生成でも復活しない)
+    expect(within(pickupColumn).queryByText("gg")).not.toBeInTheDocument();
+    expect(within(pickupColumn).getByText("no re")).toBeInTheDocument();
+
+    // ユーザー辞書(pickup-encounters)に「知っている」が記録される
+    const raw = window.localStorage.getItem(PICKUP_ENCOUNTER_STORAGE_KEY);
+    expect(raw).not.toBeNull();
+    const stored = JSON.parse(raw as string) as {
+      entries: Record<string, { knownCount: number; lastKnownAt: number | null }>;
+    };
+    const records = Object.values(stored.entries);
+    expect(records).toHaveLength(1);
+    expect(records[0].knownCount).toBe(1);
+    expect(records[0].lastKnownAt).not.toBeNull();
+  });
+
+  it('「知っている」を押すと、スクリーンリーダー向けの通知リージョンに「Marked "<語句>" as known」が表示される', async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ" }] } },
+    });
+
+    render(<ChannelPage />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as known' }));
+
+    expect(screen.getByRole("status", { name: "Pick up updates" })).toHaveTextContent('Marked "gg" as known');
+  });
+
+  it("最後の語句を「知っている」で消すと、行コンテナへフォーカスが移る(削除ボタンと同じフォーカス退避)", async () => {
+    const user = userEvent.setup();
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ" }] } },
+    });
+
+    render(<ChannelPage />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    const row = within(pickupColumn).getByRole("listitem");
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as known' }));
+
+    expect(row).toHaveFocus();
+  });
+
+  it("手動Pick upの行には「知っている」ボタンを出さない(調べた語句は「知っている」と矛盾するため)", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    useManualPickupStore.setState({
+      entries: { "msg-1": [{ status: "done", term: "no re", meaning: "リマッチは無しという挨拶" }] },
+    });
+
+    render(<ChannelPage />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    expect(within(pickupColumn).getByRole("button", { name: 'Remove "no re"' })).toBeInTheDocument();
+    expect(within(pickupColumn).queryByRole("button", { name: 'Mark "no re" as known' })).not.toBeInTheDocument();
   });
 });
 

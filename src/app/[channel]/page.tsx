@@ -48,7 +48,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ChevronsDownIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
+import { CheckIcon, ChevronsDownIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
 import { ManualPickupOverlay, MESSAGE_TEXT_ATTRIBUTE, RAW_IRC_COLUMN_NAME } from "@/components/manual-pickup";
 import { StreamInfoPanel } from "@/components/stream-info-panel";
@@ -65,7 +65,8 @@ import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { isConnectingOrConnected, useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
 import { hidePickupTerm, isPickupTermHidden, useHiddenPickupStore } from "@/store/hidden-pickups";
-import { announcePickupRemoval, usePickupAnnouncementStore } from "@/store/pickup-announcements";
+import { announcePickupKnown, announcePickupRemoval, usePickupAnnouncementStore } from "@/store/pickup-announcements";
+import { markPickupTermKnown } from "@/store/pickup-encounters";
 import { addManualPickup, removeManualPickup, useManualPickupStore } from "@/store/manual-pickups";
 import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupDone } from "@/store/pickups";
 import { usePromptApiStore, type PromptApiStatus } from "@/store/prompt-api";
@@ -519,7 +520,17 @@ const PickupTerms = memo(function PickupTerms({
   return (
     <dl className="flex flex-col gap-0.5">
       {visibleTerms.map((term) => (
-        <PickupTermRow key={term.term} term={term.term} onRemove={() => hidePickupTerm(messageId, term.term)}>
+        <PickupTermRow
+          key={term.term}
+          term={term.term}
+          onRemove={() => hidePickupTerm(messageId, term.term)}
+          // 「知っている」(issue #110): ユーザー辞書に記録して以後の自動Pick upを再表示間隔のあいだ抑制し、
+          // 押した行は削除ボタンと同じ非表示集合で消す(パイプライン再起動による再生成でも復活しない)
+          onMarkKnown={() => {
+            markPickupTermKnown(term.term);
+            hidePickupTerm(messageId, term.term);
+          }}
+        >
           <dd className="text-muted-foreground">{term.meaning}</dd>
         </PickupTermRow>
       ))}
@@ -527,35 +538,55 @@ const PickupTerms = memo(function PickupTerms({
   );
 });
 
+/** Pick up列の行内アクションボタン(✓・×)で共通の、hover時にだけ表示するスタイル */
+const PICKUP_ACTION_BUTTON_CLASS =
+  "ml-1 align-middle opacity-0 group-hover/term:opacity-100 focus:opacity-100 pointer-coarse:opacity-100";
+
 /**
- * Pick up列の語句1件の行(語句 + hover時の削除ボタン + 意味などの内容)。
- * 自動抽出分(PickupTerms)と手動Pick up分(ManualPickupTerms)で見た目・削除ボタンの挙動を揃えるための共通部品。
- * 削除ボタンは hover 時(またはフォーカス時)に表示し、hover が無いタッチ端末では常に表示する(issue #71 と同じ)。
- * `children` には意味(dd)や生成状態の表示を渡す。
+ * Pick up列の語句1件の行(語句 + hover時のアクションボタン + 意味などの内容)。
+ * 自動抽出分(PickupTerms)と手動Pick up分(ManualPickupTerms)で見た目・ボタンの挙動を揃えるための共通部品。
+ * ボタンは hover 時(またはフォーカス時)に表示し、hover が無いタッチ端末では常に表示する(issue #71 と同じ)。
+ * `onMarkKnown` を渡すと「知っている」ボタン(✓。issue #110)を削除ボタンの前に表示する
+ * (手動Pick upは「調べた=知らない」操作のため渡さない)。`children` には意味(dd)や生成状態の表示を渡す。
  */
 function PickupTermRow({
   term,
   onRemove,
+  onMarkKnown,
   children,
 }: {
   term: string;
   /** 削除ボタンが押されたときの処理(自動分は非表示集合へ追加、手動分はストアから削除) */
   onRemove: () => void;
+  /** 「知っている」ボタンが押されたときの処理(自動分のみ。ユーザー辞書への記録 + 非表示集合へ追加) */
+  onMarkKnown?: () => void;
   children: React.ReactNode;
 }) {
   return (
     <div className="group/term flex flex-wrap items-baseline gap-x-2">
       {/* 「チャットから拾い上げた語彙」が目に留まるよう、語句をゴールド + 破線下線で強調する(issue #87)。
-          破線下線は inline-flex の削除ボタンには波及しない */}
+          破線下線は inline-flex のアクションボタンには波及しない */}
       <dt className="font-semibold text-pickup underline decoration-dashed decoration-pickup/50 underline-offset-4">
         {term}
+        {onMarkKnown !== undefined && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Mark "${term}" as known`}
+            data-pickup-action="known"
+            className={PICKUP_ACTION_BUTTON_CLASS}
+            onClick={(event) => handlePickupActionClick(event, onMarkKnown, () => announcePickupKnown(term))}
+          >
+            <CheckIcon />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon-xs"
           aria-label={`Remove "${term}"`}
-          data-pickup-remove
-          className="ml-1 align-middle opacity-0 group-hover/term:opacity-100 focus:opacity-100 pointer-coarse:opacity-100"
-          onClick={(event) => handleRemoveClick(event, term, onRemove)}
+          data-pickup-action="remove"
+          className={PICKUP_ACTION_BUTTON_CLASS}
+          onClick={(event) => handlePickupActionClick(event, onRemove, () => announcePickupRemoval(term))}
         >
           <XIcon />
         </Button>
@@ -566,21 +597,28 @@ function PickupTermRow({
 }
 
 /**
- * Pick up列の削除ボタンが押されたときの共通処理(issue #73)。
- * 押されたボタン自身は unmount されてフォーカスが body に落ちるため、削除前に同じ発言の行
- * (`role="listitem"`)内の削除ボタン一覧から次(無ければ前)のボタンを探し、削除後にそこへ
+ * Pick up列のアクションボタン(削除・「知っている」)が押されたときの共通処理(issue #73 / #110)。
+ * 押された行のボタンは unmount されてフォーカスが body に落ちるため、実行前に同じ発言の行
+ * (`role="listitem"`)内のアクションボタン一覧から次(無ければ前)のボタンを探し、実行後にそこへ
  * フォーカスを移す。どちらも無ければ行コンテナ(tabIndex={-1})へ退避し、Tab 移動が
- * ページ先頭からやり直しになるのを防ぐ。あわせてスクリーンリーダーへ削除を通知する。
- * 移動先のボタン・行コンテナの DOM ノードは削除後も同一のまま残るため、削除前に取得した
- * 参照へそのままフォーカスしてよい。
+ * ページ先頭からやり直しになるのを防ぐ。あわせて `announce` でスクリーンリーダーへ通知する。
+ * 移動先のボタン・行コンテナの DOM ノードは実行後も同一のまま残るため、実行前に取得した
+ * 参照へそのままフォーカスしてよい。押した語句の✓と×は一緒に消えるため、移動先の候補は
+ * 同じ種類(data-pickup-action の値が同じ)のボタンに絞る(語句1件につき各種類1個なので、
+ * 隣は必ず別の語句の同種ボタンになる)。
  */
-function handleRemoveClick(event: React.MouseEvent<HTMLButtonElement>, term: string, onRemove: () => void): void {
+function handlePickupActionClick(
+  event: React.MouseEvent<HTMLButtonElement>,
+  action: () => void,
+  announce: () => void,
+): void {
   const row = event.currentTarget.closest<HTMLElement>('[role="listitem"]');
-  const buttons = row === null ? [] : Array.from(row.querySelectorAll<HTMLElement>("[data-pickup-remove]"));
+  const kind = event.currentTarget.getAttribute("data-pickup-action") ?? "";
+  const buttons = row === null ? [] : Array.from(row.querySelectorAll<HTMLElement>(`[data-pickup-action="${kind}"]`));
   const index = buttons.indexOf(event.currentTarget);
   const focusTarget = buttons[index + 1] ?? buttons[index - 1] ?? row;
-  onRemove();
-  announcePickupRemoval(term);
+  action();
+  announce();
   focusTarget?.focus();
 }
 

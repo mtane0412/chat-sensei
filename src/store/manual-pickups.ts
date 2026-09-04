@@ -19,6 +19,7 @@ import { createDefineTermBaseSessionFactory, defineTerm } from "@/lib/ai/define-
 import { createSessionPool, SessionPoolDisposedError, type SessionPool } from "@/lib/ai/session-pool";
 import { sharedPromptJobQueue } from "./auto-pipeline";
 import { normalizePickupTerm } from "./hidden-pickups";
+import { recordPickupMeaningChecked } from "./pickup-encounters";
 import { usePromptApiStore, type PromptApiStatus } from "./prompt-api";
 import { useSettingsStore } from "./settings";
 import { streamInfoPromptKey } from "@/lib/twitch/stream-info";
@@ -189,6 +190,9 @@ export async function addManualPickup(
   try {
     const meaning = await deps.generateMeaning(trimmed, messageText, controller.signal);
     replaceEntry(messageId, trimmed, { status: "done", term: trimmed, meaning });
+    // 意味の生成が完了した = ユーザーが意味を確認した、としてユーザー辞書に記録する(issue #110)。
+    // 失敗・中断時は意味を確認できていないため記録しない
+    recordPickupMeaningChecked(trimmed);
   } catch (error) {
     // 削除・クリアによる中断はエントリ自体が消えているため、replaceEntry のガードで何も反映されない。
     // プール差し替え(設定変更・配信情報の更新)で破棄されたジョブは、内部文言ではなく
