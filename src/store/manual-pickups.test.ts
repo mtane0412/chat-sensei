@@ -385,6 +385,24 @@ describe("意味を確認した回数の記録(issue #110)", () => {
     expect(records[0].knownCount).toBe(0);
   });
 
+  it("生成完了前に削除・クリアされた場合は記録しない(ユーザーは意味を見ていないため。CodeRabbit レビュー指摘)", async () => {
+    let resolveMeaning!: (meaning: string) => void;
+    const deps = createDeps({
+      generateMeaning: () =>
+        new Promise<string>((resolve) => {
+          resolveMeaning = resolve;
+        }),
+    });
+    const promise = addManualPickup("msg-1", "no re", "gg no re chat", deps);
+
+    // 生成中にチャンネル切替などでクリアされ、その後に結果が遅れて届く
+    clearManualPickups();
+    resolveMeaning("遅れて届いた意味");
+    await promise;
+
+    expect(window.localStorage.getItem(PICKUP_ENCOUNTER_STORAGE_KEY)).toBeNull();
+  });
+
   it("意味の生成に失敗した場合は記録しない(意味を確認できていないため)", async () => {
     const deps = createDeps({
       generateMeaning: vi.fn(async () => {
