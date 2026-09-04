@@ -10,7 +10,7 @@
  * - 複数形・三単現の -s / -es / -ies
  * - 進行形の -ing、過去形の -ed(子音の重複「running → run」と語末 e の脱落「making → make」を含む)
  * - 頻出の不規則動詞・不規則名詞複数形・否定の短縮形(変化形 → 基本形の対応表)
- * - 所有・短縮の 's
+ * - 所有・短縮の 's と主語+助動詞の短縮形('ll / 're / 've / 'd / 'm)
  *
  * 英語専用。他言語のリストが未整備の間はフィルタ自体を適用しないため(issue #95 の留意点)、
  * 多言語対応はリスト整備と合わせて拡張する。
@@ -111,6 +111,10 @@ export function stemForMatch(word: string): string {
   let stem = word.toLowerCase();
   stem = IRREGULAR_FORMS[stem] ?? stem;
   if (stem.endsWith("'s")) stem = stem.slice(0, -2);
+  // 主語+助動詞の短縮形("it'll" / "you're" / "they've" / "he'd" / "i'm")は助動詞側を外して
+  // 主語側の語に揃える(issue #115 の観測: "almost it'll be" のようなリスト外のフラグメントが
+  // "it'll" 1語のせいで高頻度判定に乗らず残るのを防ぐ)。否定の短縮形は上の対応表が先に処理する
+  stem = stem.replace(/'(?:ll|re|ve|d|m)$/, "");
 
   // 複数形・三単現: -ies は基本形の「子音 + y」側も後段の規則で i に揃うため -i に置き換える
   if (stem.endsWith("ies") && stem.length > 4) {

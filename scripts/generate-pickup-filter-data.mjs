@@ -154,6 +154,11 @@ const SUPPLEMENTARY_FREQUENT_WORDS = [
   "crossover",
   "remaster",
   "prequel",
+  // yes / no の綴り揺れ・相槌(issue #115 の観測。"yeah" / "nope" / "hmm" は字幕頻度リストに
+  // あるがこれらの変種は無い。"kk" は "lol" と同様に学習価値の判断が割れるため入れない)
+  "yea",
+  "nah",
+  "hm",
 ];
 
 /**

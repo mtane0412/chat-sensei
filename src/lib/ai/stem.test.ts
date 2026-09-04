@@ -87,6 +87,17 @@ describe("stemForMatch", () => {
     expectSameKey("streamer's", "streamer");
   });
 
+  it("主語+助動詞の短縮形('ll / 're / 've / 'd / 'm)を主語側の語と同じキーに揃える(issue #115 の観測)", () => {
+    // "almost it'll be" のようなリスト外のフラグメントが "it'll" 1語のせいで
+    // 高頻度判定に乗らず残る誤検出を実チャットで観測したため、短縮形を外して照合する
+    expectSameKey("it'll", "it");
+    expectSameKey("i'll", "i");
+    expectSameKey("you're", "you");
+    expectSameKey("they've", "they");
+    expectSameKey("he'd", "he");
+    expectSameKey("i'm", "i");
+  });
+
   it("三単現の -ies と基本形の -y を同じキーに揃える", () => {
     expectSameKey("tries", "try");
     expectSameKey("carries", "carry");

@@ -105,6 +105,16 @@ describe("filterOrdinaryTerms", () => {
     expect(survivingTerms(["crying at anime girls"])).toEqual([]);
   });
 
+  it("短縮形を含むリスト外のフラグメントを落とす(issue #115 の観測)", () => {
+    // "it'll" は 'll を外すと高頻度語 "it" のキーになるため、句全体が「全語高頻度・リスト外」で落ちる
+    expect(survivingTerms(["almost it'll be"])).toEqual([]);
+  });
+
+  it("yes / no の綴り揺れ・相槌の1語を手動補完で落とす(issue #115 の観測)", () => {
+    // "yea" / "nah" / "hm" は "yeah" / "nope" / "hmm" と違い字幕頻度リストに無いため、手動補完で落とす
+    expect(survivingTerms(["yea", "nah", "hm"])).toEqual([]);
+  });
+
   it("字幕頻度リストの上位に入るTwitch・ネット特有の意味を持つ語は手動除外により残す(issue #99)", () => {
     // "raid"(字幕4835位)や "troll"(10163位)等は頻度上位だが Twitch・ネット特有の意味を持ち
     // 学習価値があるため、第2層から手動で除外して残す
