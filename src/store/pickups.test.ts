@@ -6,6 +6,7 @@
  * 空の結果で確定させるか、発言者名を除外名として渡すか、語句一覧をどの形で保持するか ―― だけを検証する。
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { resetPickupEncountersForTests } from "./pickup-encounters";
 import { resetPickupStoreForTests, startPickupPipeline, usePickupStore } from "./pickups";
 import { createDeps, createMessage, flush } from "./pipeline-test-fixtures";
 import { resetPromptApiStoreForTests } from "./prompt-api";
@@ -18,6 +19,9 @@ afterEach(() => {
   resetPickupStoreForTests();
   resetTranslationStoreForTests();
   resetPromptApiStoreForTests();
+  // 既出管理(issue #108)の遭遇記録はテストをまたいで持ち越さない
+  window.localStorage.clear();
+  resetPickupEncountersForTests();
 });
 
 describe("startPickupPipeline", () => {
@@ -399,5 +403,112 @@ describe("startPickupPipeline(逆方向: 翻訳パイプラインの訳文を再
       terms: [{ term: "no cap", meaning: "嘘じゃない、マジで" }],
     });
     stop();
+  });
+});
+
+describe("startPickupPipeline(既出管理: クールダウン内の再表示抑制。issue #108)", () => {
+  it("順方向: 別の発言でクールダウン内に再抽出された同じ表現(語形変化を含む)を結果から落とす", async () => {
+    const { deps, emit } = createDeps({
+      promptResults: [
+        Promise.resolve(JSON.stringify({ terms: [{ term: "picked up", meaning: "拾った、覚えた" }] })),
+        Promise.resolve(
+          JSON.stringify({
+            terms: [
+              // 1件目の発言で表示済みの表現(語形違い)。クールダウン内のため抑制される
+              { term: "pick up", meaning: "拾う、覚える" },
+              { term: "malding", meaning: "ハゲるほどキレること" },
+            ],
+          }),
+        ),
+      ],
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "I picked up some slang" }));
+    await flush();
+    emit(createMessage({ id: "msg-2", text: "pick up the pace, malding already?" }));
+    await flush();
+
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "picked up", meaning: "拾った、覚えた" }],
+    });
+    expect(usePickupStore.getState().entries["msg-2"]).toEqual({
+      status: "done",
+      terms: [{ term: "malding", meaning: "ハゲるほどキレること" }],
+    });
+    stop();
+  });
+
+  it("逆方向: 別の発言の訳文からクールダウン内に再抽出された同じ表現を結果から落とす", async () => {
+    const { deps, emit } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [
+        Promise.resolve(JSON.stringify({ terms: [{ term: "no cap", meaning: "嘘じゃない、マジで" }] })),
+        Promise.resolve(
+          JSON.stringify({
+            terms: [
+              // 1件目の訳文で表示済みの表現。クールダウン内のため抑制される
+              { term: "no cap", meaning: "嘘じゃない、マジで" },
+              { term: "fr", meaning: "for real の略。マジで" },
+            ],
+          }),
+        ),
+      ],
+    });
+    useTranslationStore.setState({
+      entries: {
+        "msg-1": { status: "done", segments: [{ type: "text", text: "that was insane, no cap" }] },
+        "msg-2": { status: "done", segments: [{ type: "text", text: "no cap it was crazy fr" }] },
+      },
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "やばかった、マジで" }));
+    await flush();
+    emit(createMessage({ id: "msg-2", text: "マジでやばかったって" }));
+    await flush();
+
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "no cap", meaning: "嘘じゃない、マジで" }],
+    });
+    expect(usePickupStore.getState().entries["msg-2"]).toEqual({
+      status: "done",
+      terms: [{ term: "fr", meaning: "for real の略。マジで" }],
+    });
+    stop();
+  });
+
+  it("順方向で表示済みの表現は、パイプライン再起動(言語設定変更等)で同じ発言が再抽出されても消えない", async () => {
+    const promptResult = JSON.stringify({ terms: [{ term: "even though", meaning: "〜だけれども" }] });
+    const first = createDeps({ promptResults: [Promise.resolve(promptResult)] });
+
+    const stop1 = startPickupPipeline(first.deps);
+    await flush();
+    first.emit(createMessage({ id: "msg-1", text: "even though it rained we won" }));
+    await flush();
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "even though", meaning: "〜だけれども" }],
+    });
+    stop1();
+    resetPickupStoreForTests();
+
+    // 再起動後、同じ発言が再抽出される(hidden-pickups.ts に記載の再生成の挙動)。
+    // 最終表示と同じメッセージIDのため、クールダウン内でも抑制せずに表示する
+    const second = createDeps({ promptResults: [Promise.resolve(promptResult)] });
+    const stop2 = startPickupPipeline(second.deps);
+    await flush();
+    second.emit(createMessage({ id: "msg-1", text: "even though it rained we won" }));
+    await flush();
+
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "even though", meaning: "〜だけれども" }],
+    });
+    stop2();
   });
 });

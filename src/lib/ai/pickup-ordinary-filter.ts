@@ -80,6 +80,15 @@ function buildExpressionKey(words: string[]): string {
   return words.map(stemForMatch).join(" ");
 }
 
+/**
+ * 語句の表現キー(レンマ正規化キー)を組み立てる。大文字・語形変化・前後の記号の揺れを吸収し、
+ * "picked up" と "pick up" を同じキーに集約する。既出管理(issue #108。`store/pickup-encounters.ts`)が
+ * 遭遇記録のキーとして流用する。
+ */
+export function buildTermExpressionKey(term: string): string {
+  return buildExpressionKey(splitIntoMatchWords(term));
+}
+
 /** 表現リストの照合キー集合。Wiktionary 由来のリストと手動補完リストを正規化して持つ */
 const EXPRESSION_KEYS: ReadonlySet<string> = new Set(
   [...enExpressionList.expressions, ...CURATED_EXPRESSIONS].map((expression) =>

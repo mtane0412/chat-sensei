@@ -12,7 +12,7 @@
  * 回帰テストとして固定する。
  */
 import { describe, expect, it } from "vitest";
-import { filterOrdinaryTerms, isListedExpression } from "./pickup-ordinary-filter";
+import { buildTermExpressionKey, filterOrdinaryTerms, isListedExpression } from "./pickup-ordinary-filter";
 import type { PickupTerm } from "./schemas";
 
 /** テストデータ組み立てヘルパー。意味の文字列は判定に影響しない */
@@ -172,5 +172,17 @@ describe("isListedExpression", () => {
   it("リストに無い語句(普通の句・文まるごとの抽出)には一致しない", () => {
     expect(isListedExpression("main quests")).toBe(false);
     expect(isListedExpression("are you coming to the party tonight?")).toBe(false);
+  });
+});
+
+describe("buildTermExpressionKey", () => {
+  it("語形変化・大文字・前後の記号の揺れを吸収し、同じ表現には同じキーを返す(issue #108 の既出管理のキーに使う)", () => {
+    expect(buildTermExpressionKey("picked up")).toBe(buildTermExpressionKey("pick up"));
+    expect(buildTermExpressionKey("Even Though")).toBe(buildTermExpressionKey("even though"));
+    expect(buildTermExpressionKey("what's up?")).toBe(buildTermExpressionKey("what's up"));
+  });
+
+  it("異なる表現には異なるキーを返す", () => {
+    expect(buildTermExpressionKey("give up")).not.toBe(buildTermExpressionKey("pick up"));
   });
 });
