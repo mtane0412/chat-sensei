@@ -16,14 +16,10 @@
  *      頻度リスト上位に混ざるスラング("lol" / "shit" など)を落とさないよう、
  *      Wiktionary の狭義スラングカテゴリの1語見出し語を「頻度リストから除外する側」に使う。
  *
- * 表現リストは「全語が高頻度語で構成される表現、または語数が上限(pickup-term-limits.ts)超の表現」
- * に枝刈りして出力する(クライアントバンドルのサイズ削減が目的)。
- * - 全語が高頻度語の表現: 実行時フィルタ(pickup-ordinary-filter.ts)の「リスト外で全語が高頻度なら
- *   落とす」判定の救済に必要。非高頻度語を含む表現はこの判定の前に「残す」となるため収録不要
- * - 語数が上限超の表現: 語数上限フィルタ(pickup-filter.ts の filterLongPhraseTerms。issue #104)の
- *   救済に必要。"make a mountain out of a molehill" のような非高頻度語を含む長いイディオムも
- *   無条件で収録する(枝刈り後の分布では7語以上は約280件で、バンドル増は小さい)
- * 枝刈りの判定は実行時と同じ `stem.ts` の正規化・分割を import して使い、基準のずれを防ぐ。
+ * 表現リストは複数語の見出し語をすべて収録する(枝刈りしない)。issue #106 までは実行時フィルタの
+ * 救済判定にしか使わなかったため「全語が高頻度語 or 語数上限超」の表現に枝刈りしていたが、
+ * 候補生成(issue #115。本文がリストに合致したら自動 Pick up する経路)では非高頻度語を含む
+ * 語数上限内のイディオムにもマッチさせる必要があるため、枝刈りを撤廃した(#112 コメントの決定事項 2)。
  *
  * 実行方法: `node scripts/generate-pickup-filter-data.mjs`
  * 再生成すると取得時点のカテゴリ内容で上書きされる(Wiktionary は日々更新されるため差分が出る)。
@@ -31,9 +27,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-// Node.js の型ストリッピング(Node 22.6+)で実行時フィルタと同じ正規化・分割・語数上限を直接 import する
-import { MAX_PICKUP_TERM_WORD_COUNT } from "../src/lib/ai/pickup-term-limits.ts";
-import { splitIntoMatchWords, stemForMatch } from "../src/lib/ai/stem.ts";
+// Node.js の型ストリッピング(Node 22.6+)で実行時フィルタと同じ正規化を直接 import する
+import { stemForMatch } from "../src/lib/ai/stem.ts";
 
 const OUTPUT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "lib", "ai", "data");
 
@@ -44,6 +39,11 @@ const WIKTIONARY_API = "https://en.wiktionary.org/w/api.php";
  * 「English idioms」カテゴリに入っていないため、スラング系カテゴリからも拾う必要がある。
  * 卑語のカテゴリ(swear words)は issue #99 の除外リスト用に取得するため、複数語の卑語表現も
  * 表現リストに結合する。収録は複数語の見出し語だけなので、カテゴリ自体が大きくてもリストは肥大しない。
+ *
+ * 接続詞・前置詞句のカテゴリ(issue #115)は "even though" / "at least" / "in spite of" のような
+ * 教科書的な定型接続表現・前置詞句をカバーする。これらはイディオム・スラング系カテゴリの
+ * いずれにも入っておらず、従来は pickup-ordinary-filter.ts の CURATED_EXPRESSIONS で
+ * 1件ずつ手動補完していた(#112 コメントの決定事項 2)。
  */
 const EXPRESSION_CATEGORIES = [
   "Category:English phrasal verbs",
@@ -54,6 +54,8 @@ const EXPRESSION_CATEGORIES = [
   "Category:African-American Vernacular English",
   "Category:English Twitch-speak",
   "Category:English swear words",
+  "Category:English conjunctions",
+  "Category:English prepositional phrases",
 ];
 /**
  * 字幕頻度リスト(第2層)から除外する1語見出し語を取るカテゴリ(issue #99)。
@@ -105,13 +107,59 @@ const SUBTITLE_TOP_N = 25000;
 const TWITCH_MEANING_WORDS = ["raid", "sub", "clip", "lurk", "emote", "troll", "loot"];
 
 /**
- * NGSL に無いが、この用途では「普通の単語」として扱いたい語の手動補完リスト。
+ * NGSL・字幕頻度リストのどちらにも無いが、この用途では「普通の単語」として扱いたい語の手動補完リスト。
  * 配信チャットで頻出する字義通りの語のうち、学習者が容易に推測できるものに限る
  * (実例: "main quests" の "quest" は NGSL 圏外だが普通の単語。issue #95 のゴールデンセット)。
  * "raid" / "emote" / "sub" のような Twitch 特有の意味を持つ語は学習価値があるため入れない。
- * 表現リストの枝刈り基準にも使うため、変更したらこのスクリプトを再実行すること。
+ * 変更したらこのスクリプトを再実行すること。
+ *
+ * issue #115 の観測("crying at anime girls" が "anime" 1語のせいで残る誤検出)を受けて、
+ * 配信文化の字義通りの語を体系的に補完した(2026-09-04 のユーザー決定):
+ * - ネット外来語: 日本語由来・ネット文化の基本語で推測が容易("otaku" は英語では俗語寄りのため除外)
+ * - ゲームの字義通り複合語: "quest" と同様に構成要素から推測できる複合語
+ * - 配信・ネット一般語: "streamer" と同様の字義通りの配信関連語
+ * - ジャンル略語・その他: 略語は言語学習の対象ではなく、視聴者(ゲーマー)には推測が容易
  */
-const SUPPLEMENTARY_FREQUENT_WORDS = ["quest", "streamer", "gamer"];
+const SUPPLEMENTARY_FREQUENT_WORDS = [
+  "quest",
+  "streamer",
+  "gamer",
+  // ネット外来語(issue #115)
+  "anime",
+  "cosplay",
+  "emoji",
+  "meme",
+  // ゲームの字義通り複合語(issue #115)
+  "gameplay",
+  "respawn",
+  "minigame",
+  "speedrun",
+  "sidequest",
+  "loadout",
+  "multiplayer",
+  "singleplayer",
+  // 配信・ネット一般語(issue #115)
+  "livestream",
+  "youtuber",
+  "vlog",
+  "playlist",
+  "webcam",
+  "wifi",
+  // ジャンル略語・その他(issue #115)
+  "fps",
+  "rpg",
+  "mmo",
+  "dlc",
+  "esports",
+  "crossover",
+  "remaster",
+  "prequel",
+  // yes / no の綴り揺れ・相槌(issue #115 の観測。"yeah" / "nope" / "hmm" は字幕頻度リストに
+  // あるがこれらの変種は無い。"kk" は "lol" と同様に学習価値の判断が割れるため入れない)
+  "yea",
+  "nah",
+  "hm",
+];
 
 /**
  * 表現リストに収録する見出し語かを判定する。
@@ -236,8 +284,8 @@ async function main() {
     subtitleWords.push(word);
   }
 
-  const frequentStems = new Set([...firstLayerStems, ...subtitleStems]);
-  const allExpressions = [
+  // 複数語の見出し語をすべて収録する(枝刈りしない。冒頭コメントを参照)
+  const expressions = [
     ...new Set(
       memberLists
         .flat()
@@ -245,12 +293,6 @@ async function main() {
         .map((title) => title.toLowerCase()),
     ),
   ].sort();
-  // 枝刈り: 全語が高頻度語で構成される表現と、語数が上限超の表現を残す(冒頭コメントを参照)
-  const expressions = allExpressions.filter((expression) => {
-    const words = splitIntoMatchWords(expression);
-    if (words.length > MAX_PICKUP_TERM_WORD_COUNT) return true;
-    return words.every((word) => frequentStems.has(stemForMatch(word)));
-  });
 
   await mkdir(OUTPUT_DIR, { recursive: true });
   await writeFile(
@@ -260,7 +302,7 @@ async function main() {
         source: `English Wiktionary categories (headword titles only): ${EXPRESSION_CATEGORIES.map((category) => category.replace("Category:", "")).join(", ")}`,
         sourceUrl: "https://en.wiktionary.org/wiki/Category:English_phrasal_verbs",
         license: "CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)",
-        note: "Multi-word headwords only, pruned to expressions whose words are all in en-frequent-words.json or whose word count exceeds MAX_PICKUP_TERM_WORD_COUNT (see scripts/generate-pickup-filter-data.mjs)",
+        note: "Multi-word headwords only, unpruned (see scripts/generate-pickup-filter-data.mjs)",
         generatedAt: new Date().toISOString().slice(0, 10),
         expressions,
       },
@@ -289,7 +331,7 @@ async function main() {
     ),
   );
 
-  console.log(`en-expression-list.json: ${expressions.length} expressions (before pruning: ${allExpressions.length})`);
+  console.log(`en-expression-list.json: ${expressions.length} expressions`);
   console.log(
     `en-frequent-words.json: ${ngslLemmas.length} NGSL words + ${SUPPLEMENTARY_FREQUENT_WORDS.length} supplementary words + ${subtitleWords.length} subtitle words`,
   );
