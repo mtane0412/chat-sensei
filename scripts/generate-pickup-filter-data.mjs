@@ -16,14 +16,10 @@
  *      頻度リスト上位に混ざるスラング("lol" / "shit" など)を落とさないよう、
  *      Wiktionary の狭義スラングカテゴリの1語見出し語を「頻度リストから除外する側」に使う。
  *
- * 表現リストは「全語が高頻度語で構成される表現、または語数が上限(pickup-term-limits.ts)超の表現」
- * に枝刈りして出力する(クライアントバンドルのサイズ削減が目的)。
- * - 全語が高頻度語の表現: 実行時フィルタ(pickup-ordinary-filter.ts)の「リスト外で全語が高頻度なら
- *   落とす」判定の救済に必要。非高頻度語を含む表現はこの判定の前に「残す」となるため収録不要
- * - 語数が上限超の表現: 語数上限フィルタ(pickup-filter.ts の filterLongPhraseTerms。issue #104)の
- *   救済に必要。"make a mountain out of a molehill" のような非高頻度語を含む長いイディオムも
- *   無条件で収録する(枝刈り後の分布では7語以上は約280件で、バンドル増は小さい)
- * 枝刈りの判定は実行時と同じ `stem.ts` の正規化・分割を import して使い、基準のずれを防ぐ。
+ * 表現リストは複数語の見出し語をすべて収録する(枝刈りしない)。issue #106 までは実行時フィルタの
+ * 救済判定にしか使わなかったため「全語が高頻度語 or 語数上限超」の表現に枝刈りしていたが、
+ * 候補生成(issue #115。本文がリストに合致したら自動 Pick up する経路)では非高頻度語を含む
+ * 語数上限内のイディオムにもマッチさせる必要があるため、枝刈りを撤廃した(#112 コメントの決定事項 2)。
  *
  * 実行方法: `node scripts/generate-pickup-filter-data.mjs`
  * 再生成すると取得時点のカテゴリ内容で上書きされる(Wiktionary は日々更新されるため差分が出る)。
@@ -31,9 +27,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-// Node.js の型ストリッピング(Node 22.6+)で実行時フィルタと同じ正規化・分割・語数上限を直接 import する
-import { MAX_PICKUP_TERM_WORD_COUNT } from "../src/lib/ai/pickup-term-limits.ts";
-import { splitIntoMatchWords, stemForMatch } from "../src/lib/ai/stem.ts";
+// Node.js の型ストリッピング(Node 22.6+)で実行時フィルタと同じ正規化を直接 import する
+import { stemForMatch } from "../src/lib/ai/stem.ts";
 
 const OUTPUT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "lib", "ai", "data");
 
@@ -44,6 +39,11 @@ const WIKTIONARY_API = "https://en.wiktionary.org/w/api.php";
  * 「English idioms」カテゴリに入っていないため、スラング系カテゴリからも拾う必要がある。
  * 卑語のカテゴリ(swear words)は issue #99 の除外リスト用に取得するため、複数語の卑語表現も
  * 表現リストに結合する。収録は複数語の見出し語だけなので、カテゴリ自体が大きくてもリストは肥大しない。
+ *
+ * 接続詞・前置詞句のカテゴリ(issue #115)は "even though" / "at least" / "in spite of" のような
+ * 教科書的な定型接続表現・前置詞句をカバーする。これらはイディオム・スラング系カテゴリの
+ * いずれにも入っておらず、従来は pickup-ordinary-filter.ts の CURATED_EXPRESSIONS で
+ * 1件ずつ手動補完していた(#112 コメントの決定事項 2)。
  */
 const EXPRESSION_CATEGORIES = [
   "Category:English phrasal verbs",
@@ -54,6 +54,8 @@ const EXPRESSION_CATEGORIES = [
   "Category:African-American Vernacular English",
   "Category:English Twitch-speak",
   "Category:English swear words",
+  "Category:English conjunctions",
+  "Category:English prepositional phrases",
 ];
 /**
  * 字幕頻度リスト(第2層)から除外する1語見出し語を取るカテゴリ(issue #99)。
@@ -236,8 +238,8 @@ async function main() {
     subtitleWords.push(word);
   }
 
-  const frequentStems = new Set([...firstLayerStems, ...subtitleStems]);
-  const allExpressions = [
+  // 複数語の見出し語をすべて収録する(枝刈りしない。冒頭コメントを参照)
+  const expressions = [
     ...new Set(
       memberLists
         .flat()
@@ -245,12 +247,6 @@ async function main() {
         .map((title) => title.toLowerCase()),
     ),
   ].sort();
-  // 枝刈り: 全語が高頻度語で構成される表現と、語数が上限超の表現を残す(冒頭コメントを参照)
-  const expressions = allExpressions.filter((expression) => {
-    const words = splitIntoMatchWords(expression);
-    if (words.length > MAX_PICKUP_TERM_WORD_COUNT) return true;
-    return words.every((word) => frequentStems.has(stemForMatch(word)));
-  });
 
   await mkdir(OUTPUT_DIR, { recursive: true });
   await writeFile(
@@ -260,7 +256,7 @@ async function main() {
         source: `English Wiktionary categories (headword titles only): ${EXPRESSION_CATEGORIES.map((category) => category.replace("Category:", "")).join(", ")}`,
         sourceUrl: "https://en.wiktionary.org/wiki/Category:English_phrasal_verbs",
         license: "CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)",
-        note: "Multi-word headwords only, pruned to expressions whose words are all in en-frequent-words.json or whose word count exceeds MAX_PICKUP_TERM_WORD_COUNT (see scripts/generate-pickup-filter-data.mjs)",
+        note: "Multi-word headwords only, unpruned (see scripts/generate-pickup-filter-data.mjs)",
         generatedAt: new Date().toISOString().slice(0, 10),
         expressions,
       },
@@ -289,7 +285,7 @@ async function main() {
     ),
   );
 
-  console.log(`en-expression-list.json: ${expressions.length} expressions (before pruning: ${allExpressions.length})`);
+  console.log(`en-expression-list.json: ${expressions.length} expressions`);
   console.log(
     `en-frequent-words.json: ${ngslLemmas.length} NGSL words + ${SUPPLEMENTARY_FREQUENT_WORDS.length} supplementary words + ${subtitleWords.length} subtitle words`,
   );

@@ -75,8 +75,11 @@ function isFrequentWord(word: string): boolean {
   );
 }
 
-/** 表現の照合キーを組み立てる。語ごとに正規化してから空白1つで連結する */
-function buildExpressionKey(words: string[]): string {
+/**
+ * 表現の照合キーを組み立てる。語ごとに正規化してから空白1つで連結する。
+ * 候補生成器(`pickup-candidates.ts`。issue #115)も同じ規則でリスト側のキーを組み立てる。
+ */
+export function buildExpressionKey(words: string[]): string {
   return words.map(stemForMatch).join(" ");
 }
 
