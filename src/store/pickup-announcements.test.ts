@@ -7,6 +7,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  announcePickupKnown,
   announcePickupRemoval,
   resetPickupAnnouncementStoreForTests,
   usePickupAnnouncementStore,
@@ -40,5 +41,13 @@ describe("announcePickupRemoval", () => {
     resetPickupAnnouncementStoreForTests();
     expect(usePickupAnnouncementStore.getState().message).toBe("");
     expect(usePickupAnnouncementStore.getState().seq).toBe(0);
+  });
+});
+
+describe("announcePickupKnown", () => {
+  it('通知すると「Marked "<語句>" as known」のメッセージと通知番号の増加が反映される(issue #110)', () => {
+    announcePickupKnown("gg");
+    expect(usePickupAnnouncementStore.getState().message).toBe('Marked "gg" as known');
+    expect(usePickupAnnouncementStore.getState().seq).toBe(1);
   });
 });

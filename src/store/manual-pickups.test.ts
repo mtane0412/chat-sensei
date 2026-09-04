@@ -16,6 +16,7 @@ import {
   useManualPickupStore,
   type ManualPickupDeps,
 } from "./manual-pickups";
+import { PICKUP_ENCOUNTER_STORAGE_KEY, resetPickupEncountersForTests } from "./pickup-encounters";
 import { flush } from "./pipeline-test-fixtures";
 import { resetPromptApiStoreForTests, usePromptApiStore } from "./prompt-api";
 import { resetSettingsStoreForTests, useSettingsStore } from "./settings";
@@ -57,6 +58,9 @@ function createDeps(overrides: Partial<ManualPickupDeps> = {}): ManualPickupDeps
 
 afterEach(() => {
   resetManualPickupStoreForTests();
+  // 意味確認回数の記録(issue #110)はテストをまたいで持ち越さない
+  window.localStorage.clear();
+  resetPickupEncountersForTests();
 });
 
 describe("manual-pickups ストア", () => {
@@ -360,5 +364,54 @@ describe("getDefineTermPool: プール差し替え時の破棄(issue #75)", () =
     await flush();
 
     expect(defineTermMockState.createdBaseSessions[0].destroyCount).toBe(1);
+  });
+});
+
+describe("意味を確認した回数の記録(issue #110)", () => {
+  it("意味の生成が完了(done)したら、表現キーの meaningCheckedCount に記録する", async () => {
+    const deps = createDeps();
+
+    await addManualPickup("msg-1", "hold my beer", "hold my beer, watch this", deps);
+
+    const raw = window.localStorage.getItem(PICKUP_ENCOUNTER_STORAGE_KEY);
+    expect(raw).not.toBeNull();
+    const stored = JSON.parse(raw as string) as {
+      entries: Record<string, { meaningCheckedCount: number; knownCount: number }>;
+    };
+    const records = Object.values(stored.entries);
+    expect(records).toHaveLength(1);
+    expect(records[0].meaningCheckedCount).toBe(1);
+    // 意味を調べた操作は「知っている」の記録ではない
+    expect(records[0].knownCount).toBe(0);
+  });
+
+  it("生成完了前に削除・クリアされた場合は記録しない(ユーザーは意味を見ていないため。CodeRabbit レビュー指摘)", async () => {
+    let resolveMeaning!: (meaning: string) => void;
+    const deps = createDeps({
+      generateMeaning: () =>
+        new Promise<string>((resolve) => {
+          resolveMeaning = resolve;
+        }),
+    });
+    const promise = addManualPickup("msg-1", "no re", "gg no re chat", deps);
+
+    // 生成中にチャンネル切替などでクリアされ、その後に結果が遅れて届く
+    clearManualPickups();
+    resolveMeaning("遅れて届いた意味");
+    await promise;
+
+    expect(window.localStorage.getItem(PICKUP_ENCOUNTER_STORAGE_KEY)).toBeNull();
+  });
+
+  it("意味の生成に失敗した場合は記録しない(意味を確認できていないため)", async () => {
+    const deps = createDeps({
+      generateMeaning: vi.fn(async () => {
+        throw new Error("モデルがクラッシュしました");
+      }),
+    });
+
+    await addManualPickup("msg-1", "hold my beer", "hold my beer, watch this", deps);
+
+    expect(window.localStorage.getItem(PICKUP_ENCOUNTER_STORAGE_KEY)).toBeNull();
   });
 });

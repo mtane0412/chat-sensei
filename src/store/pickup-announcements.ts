@@ -26,6 +26,11 @@ export function announcePickupRemoval(term: string): void {
   usePickupAnnouncementStore.setState((state) => ({ message: `Removed "${term}"`, seq: state.seq + 1 }));
 }
 
+/** 語句への「知っている」マーク(issue #110)をスクリーンリーダーへ通知する。✓ボタンから呼ぶ */
+export function announcePickupKnown(term: string): void {
+  usePickupAnnouncementStore.setState((state) => ({ message: `Marked "${term}" as known`, seq: state.seq + 1 }));
+}
+
 /** テスト専用: ストアを初期状態に戻す。各テストの afterEach で呼び出すこと */
 export function resetPickupAnnouncementStoreForTests(): void {
   usePickupAnnouncementStore.setState({ message: "", seq: 0 });
