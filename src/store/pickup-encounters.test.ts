@@ -16,6 +16,7 @@ import { buildTermExpressionKey } from "@/lib/ai/pickup-ordinary-filter";
 import type { PickupTerm } from "@/lib/ai/schemas";
 import {
   MAX_PICKUP_ENCOUNTER_ENTRIES,
+  MAX_SHOWN_MESSAGE_IDS_PER_ENTRY,
   PICKUP_ENCOUNTER_COOLDOWN_MS,
   PICKUP_ENCOUNTER_STORAGE_KEY,
   resetPickupEncountersForTests,
@@ -33,10 +34,10 @@ function surviving(termTexts: string[], messageId: string): string[] {
 }
 
 /** localStorage に保存された遭遇記録を読み出すヘルパー */
-function storedEntries(): Record<string, { count: number; lastShownAt: number; lastShownMessageId: string }> {
+function storedEntries(): Record<string, { count: number; lastShownAt: number; shownMessageIds: string[] }> {
   const raw = window.localStorage.getItem(PICKUP_ENCOUNTER_STORAGE_KEY);
   if (raw === null) throw new Error("遭遇記録が localStorage に保存されていません");
-  return (JSON.parse(raw) as { entries: Record<string, { count: number; lastShownAt: number; lastShownMessageId: string }> })
+  return (JSON.parse(raw) as { entries: Record<string, { count: number; lastShownAt: number; shownMessageIds: string[] }> })
     .entries;
 }
 
@@ -52,7 +53,7 @@ afterEach(() => {
 });
 
 describe("suppressRecentPickupTerms", () => {
-  it("初回遭遇の表現は表示し、遭遇回数1・最終表示日時・最終表示メッセージIDを記録する", () => {
+  it("初回遭遇の表現は表示し、遭遇回数1・最終表示日時・表示したメッセージIDを記録する", () => {
     expect(surviving(["even though"], "msg-1")).toEqual(["even though"]);
 
     const entries = storedEntries();
@@ -61,7 +62,7 @@ describe("suppressRecentPickupTerms", () => {
     expect(entries[keys[0]]).toEqual({
       count: 1,
       lastShownAt: Date.now(),
-      lastShownMessageId: "msg-1",
+      shownMessageIds: ["msg-1"],
     });
   });
 
@@ -71,14 +72,14 @@ describe("suppressRecentPickupTerms", () => {
 
     expect(surviving(["even though"], "msg-2")).toEqual([]);
 
-    // 抑制時は遭遇回数だけ加算し、最終表示日時・メッセージIDは更新しない(表示していないため)
+    // 抑制時は遭遇回数だけ加算し、最終表示日時・表示したメッセージIDは更新しない(表示していないため)
     const entries = storedEntries();
     const record = entries[Object.keys(entries)[0]];
     expect(record.count).toBe(2);
-    expect(record.lastShownMessageId).toBe("msg-1");
+    expect(record.shownMessageIds).toEqual(["msg-1"]);
   });
 
-  it("最終表示からクールダウンが経過した表現は再び表示し、最終表示日時・メッセージIDを更新する", () => {
+  it("最終表示からクールダウンが経過した表現は再び表示し、最終表示日時を更新して表示したメッセージIDを追記する", () => {
     surviving(["even though"], "msg-1");
     vi.advanceTimersByTime(PICKUP_ENCOUNTER_COOLDOWN_MS);
 
@@ -86,10 +87,10 @@ describe("suppressRecentPickupTerms", () => {
 
     const entries = storedEntries();
     const record = entries[Object.keys(entries)[0]];
-    expect(record).toEqual({ count: 2, lastShownAt: Date.now(), lastShownMessageId: "msg-2" });
+    expect(record).toEqual({ count: 2, lastShownAt: Date.now(), shownMessageIds: ["msg-1", "msg-2"] });
   });
 
-  it("最終表示と同じメッセージIDからの再遭遇(パイプライン再起動による再抽出)は抑制せず、記録も変えない", () => {
+  it("表示済みと同じメッセージIDからの再遭遇(パイプライン再起動による再抽出)は抑制せず、記録も変えない", () => {
     surviving(["even though"], "msg-1");
     vi.advanceTimersByTime(1000);
 
@@ -102,8 +103,34 @@ describe("suppressRecentPickupTerms", () => {
     expect(record).toEqual({
       count: 1,
       lastShownAt: Date.now() - 1000,
-      lastShownMessageId: "msg-1",
+      shownMessageIds: ["msg-1"],
     });
+  });
+
+  it("クールダウンを挟んで複数の発言で表示した表現は、どの発言の再抽出(パイプライン再起動)でも抑制しない", () => {
+    // msg-1 で表示 → クールダウン経過後に msg-2 でも表示(CodeRabbit レビュー指摘の回帰テスト)
+    surviving(["even though"], "msg-1");
+    vi.advanceTimersByTime(PICKUP_ENCOUNTER_COOLDOWN_MS);
+    surviving(["even though"], "msg-2");
+
+    // パイプライン再起動で両方の発言が再抽出される。最新の msg-2 だけでなく msg-1 側も表示を維持する
+    expect(surviving(["even though"], "msg-1")).toEqual(["even though"]);
+    expect(surviving(["even though"], "msg-2")).toEqual(["even though"]);
+  });
+
+  it("表示したメッセージIDの保持数には上限があり、古いIDから追い出す", () => {
+    // 上限+1回、クールダウンを挟みながら別々の発言で表示する
+    for (let i = 0; i <= MAX_SHOWN_MESSAGE_IDS_PER_ENTRY; i += 1) {
+      surviving(["even though"], `msg-${String(i)}`);
+      vi.advanceTimersByTime(PICKUP_ENCOUNTER_COOLDOWN_MS);
+    }
+
+    const entries = storedEntries();
+    const record = entries[Object.keys(entries)[0]];
+    expect(record.shownMessageIds).toHaveLength(MAX_SHOWN_MESSAGE_IDS_PER_ENTRY);
+    // 最初の msg-0 は追い出され、以降の再抽出では(クールダウン経過後のため)通常規則で表示される
+    expect(record.shownMessageIds).not.toContain("msg-0");
+    expect(record.shownMessageIds).toContain(`msg-${String(MAX_SHOWN_MESSAGE_IDS_PER_ENTRY)}`);
   });
 
   it("語形変化した表現(picked up / pick up)は同一の表現キーとして抑制する", () => {

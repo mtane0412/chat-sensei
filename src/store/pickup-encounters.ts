@@ -7,8 +7,9 @@
  * - キー: `lib/ai/pickup-ordinary-filter.ts` の `buildTermExpressionKey`(`stemForMatch` による
  *   レンマ正規化キー)。語形変化("picked up" / "pick up")を同一表現として扱う
  * - 抑制規則: 最終表示からクールダウン内の再遭遇は表示しない(遭遇回数だけ加算する)。
- *   ただし最終表示と同じメッセージIDからの再遭遇は「パイプライン再起動による同じ発言の再抽出」
- *   (`hidden-pickups.ts` に記載の再生成問題)なので、同じ遭遇の再表示として抑制せず記録も変えない
+ *   ただし表示済みのメッセージID(上限付きで保持)からの再遭遇は「パイプライン再起動による
+ *   同じ発言の再抽出」(`hidden-pickups.ts` に記載の再生成問題)なので、同じ遭遇の再表示として
+ *   抑制せず記録も変えない
  * - 適用範囲: 自動Pick up(`pickups.ts`)の順方向・逆方向のみ。手動Pick up(`manual-pickups.ts`)は
  *   ユーザーが明示的に選択した操作のため対象外。翻訳列にも影響しない
  * - 永続化: localStorage(`lib/settings.ts` と同じパターン)。学習状態はユーザーに属するため
@@ -35,14 +36,25 @@ export const PICKUP_ENCOUNTER_COOLDOWN_MS = 30 * 60 * 1000;
  */
 export const MAX_PICKUP_ENCOUNTER_ENTRIES = 2000;
 
+/**
+ * 表現キー1件あたりで保持する、表示したメッセージIDの上限。パイプライン再起動時に再抽出されるのは
+ * 画面に表示中の発言だけのため、同じ表現を表示した直近の発言をこの件数まで覚えていれば足りる。
+ * 追い出された古いIDの発言が再抽出された場合は通常のクールダウン規則で判定される(最終表示から
+ * クールダウンが経過していれば表示される)
+ */
+export const MAX_SHOWN_MESSAGE_IDS_PER_ENTRY = 10;
+
 /** 表現キー1件ぶんの遭遇記録 */
 const encounterRecordSchema = z.object({
   /** 遭遇回数(抑制した遭遇も含む)。Phase 2 以降で習熟度の入力に使う */
   count: z.number(),
   /** 最終表示日時(エポックミリ秒)。抑制した遭遇では更新しない */
   lastShownAt: z.number(),
-  /** 最終表示したメッセージID。パイプライン再起動による同じ発言の再抽出を抑制対象から外すために持つ */
-  lastShownMessageId: z.string(),
+  /**
+   * 表示したメッセージID(古い順、`MAX_SHOWN_MESSAGE_IDS_PER_ENTRY` 件まで)。
+   * パイプライン再起動による同じ発言の再抽出を抑制対象から外すために持つ
+   */
+  shownMessageIds: z.array(z.string()),
 });
 
 /** 保存形式。Phase 2(習熟状態)・Phase 3(SRS)での拡張に備えて version を持つ */
@@ -105,17 +117,21 @@ export function suppressRecentPickupTerms(terms: PickupTerm[], messageId: string
     const record = loaded.get(key);
     if (record === undefined) {
       // 初回遭遇: 表示して記録を作る
-      loaded.set(key, { count: 1, lastShownAt: now, lastShownMessageId: messageId });
+      loaded.set(key, { count: 1, lastShownAt: now, shownMessageIds: [messageId] });
       shown.push(item);
-    } else if (record.lastShownMessageId === messageId) {
-      // 最終表示と同じ発言からの再抽出(パイプライン再起動): 同じ遭遇の再表示として扱い、記録は変えない
+    } else if (record.shownMessageIds.includes(messageId)) {
+      // 表示済みの発言からの再抽出(パイプライン再起動): 同じ遭遇の再表示として扱い、記録は変えない
       shown.push(item);
     } else if (now - record.lastShownAt < PICKUP_ENCOUNTER_COOLDOWN_MS) {
-      // クールダウン内の再遭遇: 抑制する。遭遇回数だけ加算し、最終表示日時・メッセージIDは表示していないので変えない
+      // クールダウン内の再遭遇: 抑制する。遭遇回数だけ加算し、最終表示日時・表示したメッセージIDは表示していないので変えない
       loaded.set(key, { ...record, count: record.count + 1 });
     } else {
-      // クールダウン経過後の再遭遇: 再び表示する
-      loaded.set(key, { count: record.count + 1, lastShownAt: now, lastShownMessageId: messageId });
+      // クールダウン経過後の再遭遇: 再び表示し、表示したメッセージIDを上限付きで追記する
+      loaded.set(key, {
+        count: record.count + 1,
+        lastShownAt: now,
+        shownMessageIds: [...record.shownMessageIds, messageId].slice(-MAX_SHOWN_MESSAGE_IDS_PER_ENTRY),
+      });
       shown.push(item);
     }
   }
