@@ -1,5 +1,5 @@
 /**
- * `pickup-encounters.ts`(Pick up の既出管理。issue #108)のテスト。
+ * `pickup-encounters.ts`(Pick up の既出管理。issue #108 / #110 / #113)のテスト。
  *
  * 自動Pick upは同じ定型表現がチャットに流れるたびに毎回表示するため、表現キーごとの
  * 遭遇記録を localStorage に持ち、最終表示からクールダウン期間内の再表示を決定的に抑制する。
@@ -9,14 +9,14 @@
  * - クールダウン経過後の再遭遇は再び表示する
  * - 同一メッセージIDからの再抽出(言語設定変更等によるパイプライン再起動)は抑制しない
  * - 語形変化("picked up" / "pick up")は同一の表現キーとして扱う
- * - localStorage への永続化・破損データの扱い・エントリ数上限の整理
+ * - 「知っている」マーク・意味確認がFSRSカード(issue #113)を更新し、復習期日前の再表示を抑制する
+ * - localStorage への永続化・破損データの扱い・エントリ数上限の整理・旧形式(version 1 / 2)からの移行
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildTermExpressionKey } from "@/lib/ai/pickup-ordinary-filter";
 import type { PickupTerm } from "@/lib/ai/schemas";
+import type { SrsCard } from "@/lib/srs";
 import {
-  KNOWN_REDISPLAY_BASE_MS,
-  KNOWN_REDISPLAY_MAX_MS,
   MAX_PICKUP_ENCOUNTER_ENTRIES,
   MAX_SHOWN_MESSAGE_IDS_PER_ENTRY,
   PICKUP_ENCOUNTER_COOLDOWN_MS,
@@ -37,7 +37,7 @@ function surviving(termTexts: string[], messageId: string): string[] {
   return suppressRecentPickupTerms(terms(...termTexts), messageId).map((item) => item.term);
 }
 
-/** 保存されている遭遇記録1件ぶんの形(version 2) */
+/** 保存されている遭遇記録1件ぶんの形(version 3) */
 interface StoredRecord {
   count: number;
   lastShownAt: number;
@@ -45,6 +45,7 @@ interface StoredRecord {
   knownCount: number;
   lastKnownAt: number | null;
   meaningCheckedCount: number;
+  srsCard: SrsCard | null;
 }
 
 /** localStorage に保存された遭遇記録を読み出すヘルパー */
@@ -60,6 +61,13 @@ function soleStoredRecord(): StoredRecord {
   const keys = Object.keys(entries);
   if (keys.length !== 1) throw new Error(`エントリが1件ではありません(${String(keys.length)}件)`);
   return entries[keys[0]];
+}
+
+/** 唯一のエントリのFSRSカードを取り出すヘルパー(カードが記録済みの前提で使う) */
+function soleSrsCard(): SrsCard {
+  const card = soleStoredRecord().srsCard;
+  if (card === null) throw new Error("FSRSカードが記録されていません");
+  return card;
 }
 
 beforeEach(() => {
@@ -84,6 +92,7 @@ describe("suppressRecentPickupTerms", () => {
       knownCount: 0,
       lastKnownAt: null,
       meaningCheckedCount: 0,
+      srsCard: null,
     });
   });
 
@@ -112,6 +121,7 @@ describe("suppressRecentPickupTerms", () => {
       knownCount: 0,
       lastKnownAt: null,
       meaningCheckedCount: 0,
+      srsCard: null,
     });
   });
 
@@ -130,6 +140,7 @@ describe("suppressRecentPickupTerms", () => {
       knownCount: 0,
       lastKnownAt: null,
       meaningCheckedCount: 0,
+      srsCard: null,
     });
   });
 
@@ -209,66 +220,55 @@ describe("suppressRecentPickupTerms", () => {
   });
 });
 
-describe("markPickupTermKnown(「知っている」マーク。issue #110)", () => {
-  it("マークすると knownCount と lastKnownAt を記録する(遭遇記録の他のフィールドは変えない)", () => {
+describe("markPickupTermKnown(「知っている」マーク。issue #110 / #113)", () => {
+  it("マークすると knownCount・lastKnownAt を記録し、Good評価のFSRSカードを作成する(遭遇記録の他のフィールドは変えない)", () => {
     surviving(["even though"], "msg-1");
     vi.advanceTimersByTime(1000);
 
     markPickupTermKnown("even though");
 
-    expect(soleStoredRecord()).toEqual({
-      count: 1,
-      lastShownAt: Date.now() - 1000,
-      shownMessageIds: ["msg-1"],
-      knownCount: 1,
-      lastKnownAt: Date.now(),
-      meaningCheckedCount: 0,
-    });
+    const record = soleStoredRecord();
+    expect(record.count).toBe(1);
+    expect(record.lastShownAt).toBe(Date.now() - 1000);
+    expect(record.shownMessageIds).toEqual(["msg-1"]);
+    expect(record.knownCount).toBe(1);
+    expect(record.lastKnownAt).toBe(Date.now());
+    expect(record.meaningCheckedCount).toBe(0);
+    // FSRSカードが作成され、復習期日はクールダウン(30分)より十分先の日単位になる
+    expect(soleSrsCard().due).toBeGreaterThan(Date.now() + PICKUP_ENCOUNTER_COOLDOWN_MS);
   });
 
-  it("マーク済みの表現は、クールダウンを過ぎていても再表示間隔(1回目は7日)内なら抑制し、遭遇回数だけ加算する", () => {
+  it("マーク済みの表現は、クールダウンを過ぎていても復習期日前なら抑制し、遭遇回数だけ加算する", () => {
     surviving(["even though"], "msg-1");
     markPickupTermKnown("even though");
-    // クールダウン(30分)はとうに過ぎているが、再表示間隔(7日)内
-    vi.advanceTimersByTime(KNOWN_REDISPLAY_BASE_MS - 1);
+    // クールダウン(30分)はとうに過ぎているが、復習期日の直前
+    vi.setSystemTime(soleSrsCard().due - 1);
 
     expect(surviving(["even though"], "msg-2")).toEqual([]);
     expect(soleStoredRecord().count).toBe(2);
   });
 
-  it("マークから再表示間隔が経過した表現は再び表示する(忘却チェックの機会)", () => {
+  it("復習期日が来た表現は再び表示する(忘却チェックの機会)", () => {
     surviving(["even though"], "msg-1");
     markPickupTermKnown("even though");
-    vi.advanceTimersByTime(KNOWN_REDISPLAY_BASE_MS);
+    vi.setSystemTime(soleSrsCard().due);
 
     expect(surviving(["even though"], "msg-2")).toEqual(["even though"]);
   });
 
-  it("再表示間隔はマーク回数で倍増する(2回目のマーク後は14日)", () => {
+  it("復習期日後に再マークすると、次の復習間隔が前回より伸びる(間隔反復)", () => {
     surviving(["even though"], "msg-1");
+    const firstMarkedAt = Date.now();
     markPickupTermKnown("even though");
-    vi.advanceTimersByTime(KNOWN_REDISPLAY_BASE_MS);
+    const firstDue = soleSrsCard().due;
+
+    // 復習期日に再表示された表現をもう一度マークする
+    vi.setSystemTime(firstDue);
     surviving(["even though"], "msg-2");
     markPickupTermKnown("even though");
 
-    // 2回目のマークから7日(1回目の間隔)では、まだ14日の間隔内のため抑制する
-    vi.advanceTimersByTime(KNOWN_REDISPLAY_BASE_MS);
-    expect(surviving(["even though"], "msg-3")).toEqual([]);
-
-    // 2回目のマークから14日経過で再表示する
-    vi.advanceTimersByTime(KNOWN_REDISPLAY_BASE_MS);
-    expect(surviving(["even though"], "msg-4")).toEqual(["even though"]);
-  });
-
-  it("再表示間隔には上限があり、何度マークしても上限を超えて延びない", () => {
-    surviving(["even though"], "msg-1");
-    // 上限(KNOWN_REDISPLAY_MAX_MS)を大きく超える回数マークする
-    for (let i = 0; i < 20; i += 1) {
-      markPickupTermKnown("even though");
-    }
-    vi.advanceTimersByTime(KNOWN_REDISPLAY_MAX_MS);
-
-    expect(surviving(["even though"], "msg-2")).toEqual(["even though"]);
+    expect(soleSrsCard().due - firstDue).toBeGreaterThan(firstDue - firstMarkedAt);
+    expect(soleStoredRecord().knownCount).toBe(2);
   });
 
   it("マーク済みでも、表示済みメッセージIDからの再抽出(パイプライン再起動)は抑制しない(画面の非表示は hidden-pickups が担う)", () => {
@@ -284,35 +284,37 @@ describe("markPickupTermKnown(「知っている」マーク。issue #110)", () 
     markPickupTermKnown("pick up");
     vi.advanceTimersByTime(PICKUP_ENCOUNTER_COOLDOWN_MS);
 
-    // クールダウンは過ぎたが再表示間隔(7日)内のため抑制される
+    // クールダウンは過ぎたが復習期日(日単位)前のため抑制される
     expect(surviving(["picked up"], "msg-2")).toEqual([]);
   });
 
   it("遭遇記録が無い表現へのマークは、自動表示の記録が空のエントリを作って記録する", () => {
     markPickupTermKnown("even though");
 
-    expect(soleStoredRecord()).toEqual({
-      count: 0,
-      lastShownAt: 0,
-      shownMessageIds: [],
-      knownCount: 1,
-      lastKnownAt: Date.now(),
-      meaningCheckedCount: 0,
-    });
+    const record = soleStoredRecord();
+    expect(record.count).toBe(0);
+    expect(record.lastShownAt).toBe(0);
+    expect(record.shownMessageIds).toEqual([]);
+    expect(record.knownCount).toBe(1);
+    expect(record.lastKnownAt).toBe(Date.now());
+    expect(record.meaningCheckedCount).toBe(0);
+    expect(record.srsCard).not.toBeNull();
   });
 });
 
-describe("recordPickupMeaningChecked(意味を確認した回数の記録。issue #110)", () => {
-  it("記録すると meaningCheckedCount を加算する(抑制の挙動には影響しない)", () => {
+describe("recordPickupMeaningChecked(意味を確認した回数の記録。issue #110 / #113)", () => {
+  it("FSRSカードが無い表現への記録は meaningCheckedCount の加算のみで、カードを作らず抑制の挙動にも影響しない", () => {
     surviving(["even though"], "msg-1");
 
     recordPickupMeaningChecked("even though");
     recordPickupMeaningChecked("even though");
 
+    // 意味確認だけでは新たな抑制期間を作らない(カードはマーク時に初めて作られる)
     const record = soleStoredRecord();
     expect(record.meaningCheckedCount).toBe(2);
     expect(record.count).toBe(1);
     expect(record.lastKnownAt).toBeNull();
+    expect(record.srsCard).toBeNull();
   });
 
   it("遭遇記録が無い表現(手動Pick upだけの表現)にも、自動表示の記録が空のエントリを作って記録する", () => {
@@ -325,11 +327,27 @@ describe("recordPickupMeaningChecked(意味を確認した回数の記録。issu
       knownCount: 0,
       lastKnownAt: null,
       meaningCheckedCount: 1,
+      srsCard: null,
     });
+  });
+
+  it("FSRSカードがある(マーク済みの)表現の意味確認は忘却シグナルとしてAgain評価を適用し、復習期日を近づける", () => {
+    surviving(["even though"], "msg-1");
+    markPickupTermKnown("even though");
+    const dueBeforeLapse = soleSrsCard().due;
+
+    // 復習期日の途中で意味を確認した = 「知っている」はずの表現を忘れていた
+    vi.advanceTimersByTime(PICKUP_ENCOUNTER_COOLDOWN_MS);
+    recordPickupMeaningChecked("even though");
+
+    const card = soleSrsCard();
+    expect(card.due).toBeLessThan(dueBeforeLapse);
+    expect(card.lapses).toBe(1);
+    expect(soleStoredRecord().meaningCheckedCount).toBe(1);
   });
 });
 
-describe("保存形式の移行(version 1 → 2)", () => {
+describe("保存形式の移行(version 1 / 2 → 3)", () => {
   it("version 1 の保存データは既存の遭遇記録を保持したまま新フィールドの既定値を補って読み込む", () => {
     // Phase 1(PR #109)が保存した version 1 形式
     window.localStorage.setItem(
@@ -343,10 +361,10 @@ describe("保存形式の移行(version 1 → 2)", () => {
     // クールダウン内のため v1 の記録に基づいて抑制される(記録が引き継がれている証拠)
     expect(surviving(["even though"], "msg-new")).toEqual([]);
 
-    // 書き戻しは version 2 形式で、新フィールドは既定値が補われている
+    // 書き戻しは version 3 形式で、新フィールドは既定値が補われている
     const raw = window.localStorage.getItem(PICKUP_ENCOUNTER_STORAGE_KEY);
     expect(raw).not.toBeNull();
-    expect((JSON.parse(raw as string) as { version: number }).version).toBe(2);
+    expect((JSON.parse(raw as string) as { version: number }).version).toBe(3);
     expect(storedEntries()["even though"]).toEqual({
       count: 4,
       lastShownAt: Date.now() - 1000,
@@ -354,6 +372,71 @@ describe("保存形式の移行(version 1 → 2)", () => {
       knownCount: 0,
       lastKnownAt: null,
       meaningCheckedCount: 0,
+      srsCard: null,
+    });
+  });
+
+  it("version 2 のマーク済みエントリは、マーク日時にGood評価を1回適用したFSRSカードを合成して抑制を引き継ぐ", () => {
+    // Phase 2(PR #111)が保存した version 2 形式。1時間前に「知っている」マーク済み
+    const markedAt = Date.now() - 60 * 60 * 1000;
+    window.localStorage.setItem(
+      PICKUP_ENCOUNTER_STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        entries: {
+          "even though": {
+            count: 3,
+            lastShownAt: markedAt,
+            shownMessageIds: ["msg-old"],
+            knownCount: 1,
+            lastKnownAt: markedAt,
+            meaningCheckedCount: 0,
+          },
+        },
+      }),
+    );
+
+    // 旧形式の再表示間隔(7日)相当の抑制が、合成したFSRSカードの復習期日として引き継がれる
+    expect(surviving(["even though"], "msg-new")).toEqual([]);
+
+    const raw = window.localStorage.getItem(PICKUP_ENCOUNTER_STORAGE_KEY);
+    expect(raw).not.toBeNull();
+    expect((JSON.parse(raw as string) as { version: number }).version).toBe(3);
+    const card = soleSrsCard();
+    // 合成カードの復習期日はマーク日時から日単位で先(クールダウンより長い抑制が維持される)
+    expect(card.due).toBeGreaterThan(markedAt + PICKUP_ENCOUNTER_COOLDOWN_MS);
+    expect(card.last_review).toBe(markedAt);
+  });
+
+  it("version 2 の未マークエントリはFSRSカードを合成せず、クールダウン規則だけを引き継ぐ", () => {
+    window.localStorage.setItem(
+      PICKUP_ENCOUNTER_STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        entries: {
+          "even though": {
+            count: 3,
+            lastShownAt: Date.now() - 1000,
+            shownMessageIds: ["msg-old"],
+            knownCount: 0,
+            lastKnownAt: null,
+            meaningCheckedCount: 2,
+          },
+        },
+      }),
+    );
+
+    // クールダウン内のため抑制される(v2の記録が引き継がれている証拠)
+    expect(surviving(["even though"], "msg-new")).toEqual([]);
+
+    expect(soleStoredRecord()).toEqual({
+      count: 4,
+      lastShownAt: Date.now() - 1000,
+      shownMessageIds: ["msg-old"],
+      knownCount: 0,
+      lastKnownAt: null,
+      meaningCheckedCount: 2,
+      srsCard: null,
     });
   });
 });
