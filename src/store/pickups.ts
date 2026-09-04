@@ -23,6 +23,8 @@
  *   語句(`filterLongPhraseTerms`。issue #104)、意味テキストに解説言語で使わない文字種が混ざった
  *   語句(`filterForeignScriptMeaningTerms`。issue #98)を決定的に落とす。
  *   順方向では文中に固有名詞的な語を含む句(`filterProperNounPhraseTerms`。issue #100)も落とす
+ * - 決定的フィルタの後、最終表示からクールダウン内の既出表現を既出管理(`pickup-encounters.ts`。
+ *   issue #108)で落とす(順方向・逆方向とも)。手動Pick up(`manual-pickups.ts`)は対象外
  * - Prompt API の利用可否は `prompt-api.ts` の共有ストアを参照する(翻訳列と共通)
  */
 import { createPickupBaseSessionFactory, pickUpExpressions } from "@/lib/ai/pickup";
@@ -46,6 +48,7 @@ import {
   type AutoPipelineJobContext,
   type PipelineEntry,
 } from "./auto-pipeline";
+import { suppressRecentPickupTerms } from "./pickup-encounters";
 import { useSettingsStore } from "./settings";
 import { getStreamInfo } from "./stream-info";
 import { useTranslationStore } from "./translations";
@@ -78,11 +81,18 @@ const pipeline = createAutoPipeline<PickupDone>({
   // 決定的に落とし(issue #95)、意味テキストに解説言語で使わない文字種が混ざった語句も落とす(issue #98)。
   // 言語設定はベースセッション生成時(createBaseSession)と同じく生成時点のストアの値を読めばよい
   runJob: async (pool, message, context) => {
+    if (message.id === null) {
+      // 共通ファクトリは ID の無い発言を投入しないため到達しない想定。暗黙に処理せず失敗させる(Fail-Fast)
+      throw new Error("ID の無い発言は Pick up の対象にできません");
+    }
     const result = await pickUpExpressions(pool, message.text, buildPickupJobOptions(message, context));
     const { learningLang, explainLang } = useSettingsStore.getState().settings;
     const terms = filterLongPhraseTerms(filterQuestionSentenceTerms(filterProperNounPhraseTerms(result.terms, learningLang)));
     return {
-      terms: filterForeignScriptMeaningTerms(filterOrdinaryTerms(terms, learningLang), explainLang, learningLang),
+      terms: suppressRecentPickupTerms(
+        filterForeignScriptMeaningTerms(filterOrdinaryTerms(terms, learningLang), explainLang, learningLang),
+        message.id,
+      ),
     };
   },
   // 逆方向: 翻訳パイプラインの訳文(翻訳列に表示されるもの)を待って再利用し、訳文を二重生成しない(issue #68)。
@@ -109,7 +119,10 @@ const pipeline = createAutoPipeline<PickupDone>({
     const { learningLang, explainLang } = useSettingsStore.getState().settings;
     const terms = filterLongPhraseTerms(filterQuestionSentenceTerms(filterTranslationArtifactTerms(result.terms, learningLang)));
     return {
-      terms: filterForeignScriptMeaningTerms(filterOrdinaryTerms(terms, learningLang), explainLang, learningLang),
+      terms: suppressRecentPickupTerms(
+        filterForeignScriptMeaningTerms(filterOrdinaryTerms(terms, learningLang), explainLang, learningLang),
+        message.id,
+      ),
     };
   },
 });
