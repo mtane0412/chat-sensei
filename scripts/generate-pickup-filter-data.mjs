@@ -107,13 +107,54 @@ const SUBTITLE_TOP_N = 25000;
 const TWITCH_MEANING_WORDS = ["raid", "sub", "clip", "lurk", "emote", "troll", "loot"];
 
 /**
- * NGSL に無いが、この用途では「普通の単語」として扱いたい語の手動補完リスト。
+ * NGSL・字幕頻度リストのどちらにも無いが、この用途では「普通の単語」として扱いたい語の手動補完リスト。
  * 配信チャットで頻出する字義通りの語のうち、学習者が容易に推測できるものに限る
  * (実例: "main quests" の "quest" は NGSL 圏外だが普通の単語。issue #95 のゴールデンセット)。
  * "raid" / "emote" / "sub" のような Twitch 特有の意味を持つ語は学習価値があるため入れない。
- * 表現リストの枝刈り基準にも使うため、変更したらこのスクリプトを再実行すること。
+ * 変更したらこのスクリプトを再実行すること。
+ *
+ * issue #115 の観測("crying at anime girls" が "anime" 1語のせいで残る誤検出)を受けて、
+ * 配信文化の字義通りの語を体系的に補完した(2026-09-04 のユーザー決定):
+ * - ネット外来語: 日本語由来・ネット文化の基本語で推測が容易("otaku" は英語では俗語寄りのため除外)
+ * - ゲームの字義通り複合語: "quest" と同様に構成要素から推測できる複合語
+ * - 配信・ネット一般語: "streamer" と同様の字義通りの配信関連語
+ * - ジャンル略語・その他: 略語は言語学習の対象ではなく、視聴者(ゲーマー)には推測が容易
  */
-const SUPPLEMENTARY_FREQUENT_WORDS = ["quest", "streamer", "gamer"];
+const SUPPLEMENTARY_FREQUENT_WORDS = [
+  "quest",
+  "streamer",
+  "gamer",
+  // ネット外来語(issue #115)
+  "anime",
+  "cosplay",
+  "emoji",
+  "meme",
+  // ゲームの字義通り複合語(issue #115)
+  "gameplay",
+  "respawn",
+  "minigame",
+  "speedrun",
+  "sidequest",
+  "loadout",
+  "multiplayer",
+  "singleplayer",
+  // 配信・ネット一般語(issue #115)
+  "livestream",
+  "youtuber",
+  "vlog",
+  "playlist",
+  "webcam",
+  "wifi",
+  // ジャンル略語・その他(issue #115)
+  "fps",
+  "rpg",
+  "mmo",
+  "dlc",
+  "esports",
+  "crossover",
+  "remaster",
+  "prequel",
+];
 
 /**
  * 表現リストに収録する見出し語かを判定する。

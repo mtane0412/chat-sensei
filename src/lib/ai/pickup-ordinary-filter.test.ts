@@ -92,6 +92,19 @@ describe("filterOrdinaryTerms", () => {
     expect(survivingTerms(["flavour", "paradise", "pimple"])).toEqual([]);
   });
 
+  it("NGSL・字幕頻度リストのどちらにも無い配信文化の字義通りの語を手動補完で落とす(issue #115 の観測)", () => {
+    // "anime" は NGSL にも字幕頻度リスト上位25000語にも無いため、従来は非高頻度語扱いだった。
+    // 実チャットで "crying at anime girls" のような字義通りの句が "anime" 1語のせいで
+    // 残る誤検出を観測したため、SUPPLEMENTARY_FREQUENT_WORDS に補完して落とす
+    expect(survivingTerms(["anime", "cosplay", "gameplay", "wifi", "esports"])).toEqual([]);
+  });
+
+  it("手動補完語しか非高頻度語を含まないリスト外の字義通りの句を落とす(issue #115 の観測)", () => {
+    // 実チャットの逆方向 Pick up で観測した誤抽出。"anime" が高頻度語扱いになることで
+    // 「リスト外で全語が高頻度なら落とす」の規則が効く
+    expect(survivingTerms(["crying at anime girls"])).toEqual([]);
+  });
+
   it("字幕頻度リストの上位に入るTwitch・ネット特有の意味を持つ語は手動除外により残す(issue #99)", () => {
     // "raid"(字幕4835位)や "troll"(10163位)等は頻度上位だが Twitch・ネット特有の意味を持ち
     // 学習価値があるため、第2層から手動で除外して残す
