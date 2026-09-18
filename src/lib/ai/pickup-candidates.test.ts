@@ -69,11 +69,18 @@ describe("createExpressionCandidateMatcher", () => {
 });
 
 describe("findExpressionCandidates", () => {
-  it("同梱の表現リストの表現(句動詞・手動補完の定型接続表現)にマッチする", () => {
-    // "give up" は Wiktionary 句動詞カテゴリ、"even though" は CURATED_EXPRESSIONS 由来
+  it("同梱の表現リストの表現(句動詞・定型接続表現)にマッチする", () => {
+    // "give up" は Wiktionary 句動詞カテゴリ、"even though" は Wiktionary 接続詞カテゴリ由来
     expect(findExpressionCandidates("I kept playing even though I wanted to give up", "en")).toEqual([
       { term: "even though", expressionKey: buildTermExpressionKey("even though") },
       { term: "give up", expressionKey: buildTermExpressionKey("give up") },
+    ]);
+  });
+
+  it("Wiktionary 未収載で手動補完リスト(CURATED_EXPRESSIONS)だけにある表現にもマッチする", () => {
+    // "let him cook" は Wiktionary 由来リストに無いため、手動補完リストとの結線が切れるとマッチしなくなる
+    expect(findExpressionCandidates("chat please let him cook", "en")).toEqual([
+      { term: "let him cook", expressionKey: buildTermExpressionKey("let him cook") },
     ]);
   });
 
