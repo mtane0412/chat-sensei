@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 実チャット評価用に収集したログ(issue #117)。実在ユーザーの発言を含むためコミットしない
+/eval-data/

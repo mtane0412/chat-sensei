@@ -9,7 +9,9 @@
     "lint": "eslint",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "eval:collect": "node scripts/run-ts-script.mjs scripts/collect-chat-log.ts",
+    "eval:candidates": "node scripts/run-ts-script.mjs scripts/evaluate-pickup-candidates.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -41,6 +43,7 @@
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^9",
     "eslint-config-next": "16.2.11",
+    "jiti": "^2.7.0",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4",
     "typescript": "^5",
