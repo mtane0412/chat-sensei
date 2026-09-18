@@ -363,6 +363,17 @@ describe("filterTranslationArtifactTerms", () => {
     expect(filterTranslationArtifactTerms(terms, "en")).toEqual([]);
   });
 
+  it("表現リストに一致する語句は、訳文がタイトルケースで書かれていても正当な定型表現として残す(issue #116。他の後段フィルタと同じ救済)", () => {
+    const terms = [
+      // 表現リスト収載の定型表現。2語目以降に大文字と小文字が混在するが落とさない
+      { term: "By The Way", meaning: "ところで" },
+      // リスト外の同じ形の語句は従来どおり落とす
+      { term: "juggling with Tataru", meaning: "タタルとジャグリング" },
+    ];
+
+    expect(filterTranslationArtifactTerms(terms, "en")).toEqual([{ term: "By The Way", meaning: "ところで" }]);
+  });
+
   it("学ぶ言語がドイツ語の場合は名詞が常に大文字で書かれるため、何も落とさずそのまま返す", () => {
     const terms = [
       { term: "Feierabend machen", meaning: "仕事を切り上げる" },

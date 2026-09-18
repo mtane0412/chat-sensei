@@ -183,6 +183,31 @@ function ensureRecord(loaded: Map<string, EncounterRecord>, key: string): Encoun
 }
 
 /**
+ * 記録済みの表現が、指定の発言に対して抑制期間中かを判定する。
+ * 表示済みの発言からの再抽出(パイプライン再起動)は同じ遭遇の再表示のため抑制しない。
+ * それ以外は、FSRSカードの復習期日前、または最終表示からクールダウン内なら抑制する
+ */
+function isRecordSuppressed(record: EncounterRecord, messageId: string, now: number): boolean {
+  if (record.shownMessageIds.includes(messageId)) return false;
+  return (
+    (record.srsCard !== null && now < record.srsCard.due) || now - record.lastShownAt < PICKUP_ENCOUNTER_COOLDOWN_MS
+  );
+}
+
+/**
+ * 表現キーが、指定の発言に対して抑制期間中かを判定する(読み取り専用。遭遇記録は変えない)。
+ * ハイブリッド抽出(issue #116)で、表現リスト候補を LLM に注入する前に抑制中の候補を除外するために
+ * `pickups.ts` から呼ぶ。判定規則は `suppressRecentPickupTerms` と同一
+ *
+ * @param expressionKey `buildTermExpressionKey` と同じ規則のレンマ正規化キー
+ * @param messageId 抽出元のメッセージID(逆方向では訳文の元になった発言のID)
+ */
+export function isPickupExpressionSuppressed(expressionKey: string, messageId: string): boolean {
+  const record = ensureLoaded().get(expressionKey);
+  return record !== undefined && isRecordSuppressed(record, messageId, Date.now());
+}
+
+/**
  * 抽出結果から、最終表示からクールダウン内の既出表現を落とし、遭遇記録を更新する。
  * `pickups.ts` の決定的後段フィルタの後(表示リストへの追加前)に順方向・逆方向の両方で呼ぶ。
  *
@@ -205,10 +230,7 @@ export function suppressRecentPickupTerms(terms: PickupTerm[], messageId: string
       // 表示済みの発言からの再抽出(パイプライン再起動): 同じ遭遇の再表示として扱い、記録は変えない。
       // マーク済みの表現でも同様に返す(押した行の画面上の非表示は hidden-pickups が担う)
       shown.push(item);
-    } else if (
-      (record.srsCard !== null && now < record.srsCard.due) ||
-      now - record.lastShownAt < PICKUP_ENCOUNTER_COOLDOWN_MS
-    ) {
+    } else if (isRecordSuppressed(record, messageId, now)) {
       // FSRSカードの復習期日前、またはクールダウン内の再遭遇: 抑制する。
       // 遭遇回数だけ加算し、最終表示日時・表示したメッセージIDは表示していないので変えない
       loaded.set(key, { ...record, count: record.count + 1 });

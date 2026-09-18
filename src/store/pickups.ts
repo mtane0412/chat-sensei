@@ -23,11 +23,16 @@
  *   語句(`filterLongPhraseTerms`。issue #104)、意味テキストに解説言語で使わない文字種が混ざった
  *   語句(`filterForeignScriptMeaningTerms`。issue #98)を決定的に落とす。
  *   順方向では文中に固有名詞的な語を含む句(`filterProperNounPhraseTerms`。issue #100)も落とす
+ * - ハイブリッド抽出(issue #116): 順方向・逆方向とも、抽出対象の本文(逆方向は訳文)から表現リスト候補を
+ *   決定的に生成し(`pickup-candidates.ts`)、既出管理で抑制中の表現キーを除いたうえで `pickUpExpressions` に
+ *   注入する。LLM は候補の採否・意味付けと、候補に無い自由発見を1回の呼び出しで返す。採用された候補は
+ *   表現リスト由来のため後段フィルタの表現リスト救済で残り、自由発見は従来どおり全フィルタで検査される
  * - 決定的フィルタの後、最終表示からクールダウン内の既出表現を既出管理(`pickup-encounters.ts`。
  *   issue #108)で落とす(順方向・逆方向とも)。手動Pick up(`manual-pickups.ts`)は対象外
  * - Prompt API の利用可否は `prompt-api.ts` の共有ストアを参照する(翻訳列と共通)
  */
 import { createPickupBaseSessionFactory, pickUpExpressions } from "@/lib/ai/pickup";
+import { findExpressionCandidates, type PickupCandidate } from "@/lib/ai/pickup-candidates";
 import {
   filterForeignScriptMeaningTerms,
   filterLongPhraseTerms,
@@ -36,6 +41,7 @@ import {
   filterTranslationArtifactTerms,
 } from "@/lib/ai/pickup-filter";
 import { filterOrdinaryTerms } from "@/lib/ai/pickup-ordinary-filter";
+import type { SupportedLanguage } from "@/lib/ai/prompts";
 import { LowPriorityQueueOverflowError } from "@/lib/ai/session-pool";
 import type { MessageSegment } from "@/lib/twitch/emotes";
 import type { PickupTerm } from "@/lib/ai/schemas";
@@ -48,7 +54,7 @@ import {
   type AutoPipelineJobContext,
   type PipelineEntry,
 } from "./auto-pipeline";
-import { suppressRecentPickupTerms } from "./pickup-encounters";
+import { isPickupExpressionSuppressed, suppressRecentPickupTerms } from "./pickup-encounters";
 import { useSettingsStore } from "./settings";
 import { getStreamInfo } from "./stream-info";
 import { useTranslationStore } from "./translations";
@@ -85,8 +91,11 @@ const pipeline = createAutoPipeline<PickupDone>({
       // 共通ファクトリは ID の無い発言を投入しないため到達しない想定。暗黙に処理せず失敗させる(Fail-Fast)
       throw new Error("ID の無い発言は Pick up の対象にできません");
     }
-    const result = await pickUpExpressions(pool, message.text, buildPickupJobOptions(message, context));
     const { learningLang, explainLang } = useSettingsStore.getState().settings;
+    const result = await pickUpExpressions(pool, message.text, {
+      ...buildPickupJobOptions(message, context),
+      findCandidates: createCandidateFinder(learningLang, message.id),
+    });
     const terms = filterLongPhraseTerms(filterQuestionSentenceTerms(filterProperNounPhraseTerms(result.terms, learningLang)));
     return {
       terms: suppressRecentPickupTerms(
@@ -104,19 +113,20 @@ const pipeline = createAutoPipeline<PickupDone>({
     }
     const segments = await waitForReverseTranslation(message.id, context.signal);
     const translationText = segments.map((segment) => (segment.type === "text" ? segment.text : " ")).join("");
+    // 言語設定はベースセッション生成時(createReverseBaseSession)と同じく生成時点のストアの値を読めばよい
+    const { learningLang, explainLang } = useSettingsStore.getState().settings;
     // 訳文は emote を空白化済みのため emotes は渡さない(順方向と異なり emote の位置情報も存在しない)
     const result = await pickUpExpressions(pool, translationText, {
       priority: "low",
       signal: context.signal,
       excludedNames: collectExcludedNames(context),
+      findCandidates: createCandidateFinder(learningLang, message.id),
     });
     // 訳文は機械翻訳のため、誤訳・幻覚に由来する固有名詞的な語句を決定的に落とし(issue #94)、
     // 疑問文まるごとの抽出(issue #100)、語数が上限を超えるリスト外の語句(issue #104)、
     // 普通の単語・字義通りの句(issue #95)、意味テキストに解説言語で使わない文字種が混ざった
     // 語句(issue #98)も落とす。順方向の固有名詞フィルタ(filterProperNounPhraseTerms)は
     // issue #94 のより厳しい判定に包含されるため適用しない。
-    // 言語設定はベースセッション生成時(createReverseBaseSession)と同じく生成時点のストアの値を読めばよい
-    const { learningLang, explainLang } = useSettingsStore.getState().settings;
     const terms = filterLongPhraseTerms(filterQuestionSentenceTerms(filterTranslationArtifactTerms(result.terms, learningLang)));
     return {
       terms: suppressRecentPickupTerms(
@@ -172,6 +182,22 @@ function waitForReverseTranslation(messageId: string, signal: AbortSignal): Prom
       { once: true },
     );
   });
+}
+
+/**
+ * 抽出対象の本文から表現リスト候補を列挙する関数を組み立てる(ハイブリッド抽出。issue #116)。
+ * 既出管理で抑制中の表現キーは LLM への注入前に除外する(採用されても最終の抑制で落ちるため、
+ * プロンプトを無駄に膨らませず、LLM の出力枠も消費させない)。
+ * 学ぶ言語が en 以外の場合は表現リスト未整備のため候補は空になる(`findExpressionCandidates`)
+ */
+function createCandidateFinder(
+  learningLang: SupportedLanguage,
+  messageId: string,
+): (preparedText: string) => PickupCandidate[] {
+  return (preparedText) =>
+    findExpressionCandidates(preparedText, learningLang).filter(
+      (candidate) => !isPickupExpressionSuppressed(candidate.expressionKey, messageId),
+    );
 }
 
 /**

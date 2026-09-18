@@ -5,7 +5,8 @@
  * 表現リスト(Wiktionary 由来の同梱リスト + `CURATED_EXPRESSIONS`)の照合キーに対して
  * 連続 n-gram で照合し、本文中に現れた学習表現の候補を列挙する。完全に決定的・低コスト
  * (Set 照合)で、LLM には依存しない。LLM 抽出だけでは拾い漏れる定型表現("even though" 等)を
- * 候補として救済する第2の経路であり、後続 Phase(issue #116)で LLM への注入・採否に使う。
+ * 候補として救済する第2の経路であり、`store/pickups.ts` が既出管理で抑制中の候補を除いたうえで
+ * `pickUpExpressions`(`pickup.ts`)に注入し、LLM に文脈での採否と意味付けをさせる(issue #116)。
  *
  * 規則:
  * - 複数語(2語以上)の表現だけを候補にする。1語は高頻度語リスト側の判定(`pickup-ordinary-filter.ts`)
