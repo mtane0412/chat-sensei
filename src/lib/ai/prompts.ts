@@ -199,9 +199,23 @@ export function buildPickupSystemPrompt(
 /**
  * 抽出対象のチャット本文からユーザープロンプトを組み立てる。
  * 解説用・翻訳用と同様に引用符で囲み、指示ではなくデータであることを明示する。
+ *
+ * `candidateTerms` には表現リストとの照合で本文中に見つかった候補(`pickup-candidates.ts`)の
+ * 表面形を渡す(ハイブリッド抽出。issue #116)。候補がある発言にだけ、候補の一覧・文脈での採否の指示・
+ * 候補外の自由発見の上限(`maxDiscoveries`)を追記する。候補の無い発言でモデルを惑わせないよう、
+ * 候補に関する説明はシステムプロンプトではなくユーザープロンプト側に限定する
+ * (`buildTranslateUserPrompt` の emote トークンの説明と同じ方針)。
+ * モデルが候補を返さないことは失敗ではなく文脈での不採用として扱うため、その旨も明示する。
  */
-export function buildPickupUserPrompt(chatMessageText: string): string {
-  return `Chat message to pick expressions from: "${chatMessageText}"`;
+export function buildPickupUserPrompt(
+  chatMessageText: string,
+  candidateTerms: readonly string[] = [],
+  maxDiscoveries = 0,
+): string {
+  const base = `Chat message to pick expressions from: "${chatMessageText}"`;
+  if (candidateTerms.length === 0) return base;
+  const candidateList = candidateTerms.map((term) => `"${term}"`).join(", ");
+  return `${base}\nCandidate expressions found in the message: ${candidateList}\nInclude a candidate in terms only if it is used as that set expression in this message and is worth learning, copying it exactly as written above. Leaving a candidate out is fine. You may also add at most ${String(maxDiscoveries)} other expressions worth learning that are not candidates.`;
 }
 
 /**

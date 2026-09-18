@@ -168,6 +168,10 @@ const CAPITALIZED_HYPHENATED_WORD_PATTERN = /^\p{Lu}\S*-/u;
  * - 大文字で始まりハイフンを含む単語を含む語句("Conto-me" / "Twitch-san")。
  *   小文字のハイフン語("uh-oh")は該当しない
  *
+ * ただし表現リスト(issue #95)に一致する語句は正当な定型表現とみなして残す(issue #116)。
+ * ハイブリッド抽出で採用された表現リスト候補が、タイトルケースの訳文("By The Way")でも
+ * このフィルタで落ちないようにするためで、他の後段フィルタ(固有名詞・疑問文・語数上限)と同じ救済である。
+ *
  * 学ぶ言語がドイツ語の場合は名詞が常に大文字で書かれ、正当な表現まで落としてしまうため何も落とさない。
  *
  * 既知のトレードオフ: 綴りの形だけで判定するため、実在する混在ケースの語("iPhone" / "eBay")や
@@ -182,9 +186,11 @@ export function filterTranslationArtifactTerms(terms: PickupTerm[], learningLang
   if (learningLang === "de") return terms;
   return terms.filter((item) => {
     const trimmed = item.term.trim();
-    if (UPPERCASE_LETTER_PATTERN.test(trimmed.slice(1)) && LOWERCASE_LETTER_PATTERN.test(trimmed)) return false;
-    if (trimmed.split(/\s+/).some(hasCapitalizedHyphenatedForm)) return false;
-    return true;
+    const looksLikeArtifact =
+      (UPPERCASE_LETTER_PATTERN.test(trimmed.slice(1)) && LOWERCASE_LETTER_PATTERN.test(trimmed)) ||
+      trimmed.split(/\s+/).some(hasCapitalizedHyphenatedForm);
+    if (!looksLikeArtifact) return true;
+    return isListedExpression(trimmed);
   });
 }
 

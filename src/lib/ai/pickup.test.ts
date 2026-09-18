@@ -4,13 +4,22 @@
  * `pickUpExpressions`: SessionPool 経由でチャット本文から注目の表現(語句と意味のペア)を
  * 抽出し、Gemini Nano が返したJSON文字列を zod でパース・検証するところまでを検証する
  * (共通処理 `runStructuredPrompt` に Pick up 用のプロンプト・スキーマが正しく渡ることの確認)。
+ * ハイブリッド抽出(issue #116)では、表現リスト候補のプロンプトへの注入と、応答を候補集合と
+ * 表現キーで照合する決定的検証(候補の採用 / 自由発見の仕分け・上限)を検証する。
  * `createPickupBaseSessionFactory`: 言語ペアから Pick up 専用のシステムプロンプトで
  * `LanguageModel.create()` を呼び出すセッションファクトリを組み立てられることを検証する
  * (`LanguageModel` はブラウザ組み込みAPIのため `vi.stubGlobal` でモックする)。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
-import { createPickupBaseSessionFactory, pickUpExpressions } from "./pickup";
+import {
+  createPickupBaseSessionFactory,
+  MAX_INJECTED_PICKUP_CANDIDATES,
+  MAX_PICKUP_DISCOVERIES,
+  pickUpExpressions,
+} from "./pickup";
+import type { PickupCandidate } from "./pickup-candidates";
+import { buildTermExpressionKey } from "./pickup-ordinary-filter";
 import { buildExplainSystemPrompt, buildTranslateSystemPrompt } from "./prompts";
 import type { SessionPool } from "./session-pool";
 import { STRUCTURED_PROMPT_MAX_ATTEMPTS } from "./structured-prompt";
@@ -217,6 +226,153 @@ describe("pickUpExpressions(決定的な足切りと後段フィルタ、issue #
     await pickUpExpressions(pool, "Kappa lol");
 
     expect(pool.prompt).toHaveBeenCalledWith(expect.stringContaining("Kappa lol"), expect.anything());
+  });
+});
+
+describe("pickUpExpressions(ハイブリッド抽出: 候補の注入と決定的検証、issue #116)", () => {
+  /** 本文に依らず固定の候補を返す候補生成関数のフェイク。渡された本文を記録する */
+  function createFakeFindCandidates(candidates: PickupCandidate[]) {
+    return vi.fn((text: string) => {
+      void text;
+      return candidates;
+    });
+  }
+
+  const 候補_even_though: PickupCandidate = { term: "even though", expressionKey: buildTermExpressionKey("even though") };
+  const 候補_kind_of: PickupCandidate = { term: "kind of", expressionKey: buildTermExpressionKey("kind of") };
+
+  it("候補生成関数には emote・@メンション・URL を除いた本文を渡し、得た候補をユーザープロンプトに注入する", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [] }));
+    const findCandidates = createFakeFindCandidates([候補_even_though, 候補_kind_of]);
+
+    await pickUpExpressions(pool, "@AUBREY even though it rained we kind of won", { findCandidates });
+
+    expect(findCandidates).toHaveBeenCalledWith("even though it rained we kind of won");
+    const [userPrompt] = pool.prompt.mock.calls[0] as unknown as [string];
+    expect(userPrompt).toContain('"even though", "kind of"');
+  });
+
+  it("候補が1件も無い発言では、候補に関する指示をユーザープロンプトに含めない", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [] }));
+
+    await pickUpExpressions(pool, "gg chat", { findCandidates: createFakeFindCandidates([]) });
+
+    const [userPrompt] = pool.prompt.mock.calls[0] as unknown as [string];
+    expect(userPrompt).not.toContain("Candidate");
+  });
+
+  it("注入する候補は暫定の上限件数までに絞る(本文中の出現順で先頭から)", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [] }));
+    // 上限より1件多い候補を用意する("expression 0" 〜)
+    const manyCandidates = Array.from({ length: MAX_INJECTED_PICKUP_CANDIDATES + 1 }, (_, index) => ({
+      term: `expression ${String(index)}`,
+      expressionKey: `expression ${String(index)}`,
+    }));
+
+    await pickUpExpressions(pool, "候補が多い発言の本文", { findCandidates: createFakeFindCandidates(manyCandidates) });
+
+    const [userPrompt] = pool.prompt.mock.calls[0] as unknown as [string];
+    expect(userPrompt).toContain(`"expression ${String(MAX_INJECTED_PICKUP_CANDIDATES - 1)}"`);
+    expect(userPrompt).not.toContain(`"expression ${String(MAX_INJECTED_PICKUP_CANDIDATES)}"`);
+  });
+
+  it("モデルが返さなかった候補は、失敗ではなく文脈での不採用として結果に含めない", async () => {
+    // "kind of" は「種類」の字義通りの用法としてモデルが不採用にした想定
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [{ term: "even though", meaning: "〜だけれども" }] }));
+
+    const result = await pickUpExpressions(pool, "even though it is a rare kind of bird", {
+      findCandidates: createFakeFindCandidates([候補_even_though, 候補_kind_of]),
+    });
+
+    expect(result.terms).toEqual([{ term: "even though", meaning: "〜だけれども" }]);
+  });
+
+  it("モデルが候補を語形違い・大文字違いで返しても、表現キーの照合で候補の採用とみなし、本文中の表面形で返す", async () => {
+    // 本文は "picked up"。モデルは原形 "Pick up" で返した(原文の部分文字列ではない)
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [{ term: "Pick up", meaning: "拾う、覚える" }] }));
+    const 候補_picked_up: PickupCandidate = { term: "picked up", expressionKey: buildTermExpressionKey("picked up") };
+
+    const result = await pickUpExpressions(pool, "I picked up some slang", {
+      findCandidates: createFakeFindCandidates([候補_picked_up]),
+    });
+
+    // 原文照合エラーにはならず、語句は候補(本文)の表面形になる
+    expect(result.terms).toEqual([{ term: "picked up", meaning: "拾う、覚える" }]);
+  });
+
+  it("モデルが同じ候補を重複して返した場合は最初の1件だけ残す", async () => {
+    const pool = createFakeSessionPool(
+      JSON.stringify({
+        terms: [
+          { term: "picked up", meaning: "拾った、覚えた" },
+          { term: "pick up", meaning: "拾う" },
+        ],
+      }),
+    );
+    const 候補_picked_up: PickupCandidate = { term: "picked up", expressionKey: buildTermExpressionKey("picked up") };
+
+    const result = await pickUpExpressions(pool, "I picked up some slang", {
+      findCandidates: createFakeFindCandidates([候補_picked_up]),
+    });
+
+    expect(result.terms).toEqual([{ term: "picked up", meaning: "拾った、覚えた" }]);
+  });
+
+  it("候補に無い語句は自由発見として扱い、上限件数を超えた分は結果から落とす(候補の採用は上限に数えない)", async () => {
+    const pool = createFakeSessionPool(
+      JSON.stringify({
+        terms: [
+          { term: "malding", meaning: "ハゲるほどキレること" },
+          { term: "even though", meaning: "〜だけれども" },
+          { term: "copium", meaning: "現実逃避の言い訳" },
+          { term: "ratio", meaning: "返信の方が伸びること" },
+        ],
+      }),
+    );
+
+    const result = await pickUpExpressions(pool, "even though he is malding it is pure copium ratio", {
+      findCandidates: createFakeFindCandidates([候補_even_though]),
+    });
+
+    // 自由発見は先頭から MAX_PICKUP_DISCOVERIES(2)件まで。モデルが返した順序は保つ
+    expect(MAX_PICKUP_DISCOVERIES).toBe(2);
+    expect(result.terms).toEqual([
+      { term: "malding", meaning: "ハゲるほどキレること" },
+      { term: "even though", meaning: "〜だけれども" },
+      { term: "copium", meaning: "現実逃避の言い訳" },
+    ]);
+  });
+
+  it("自由発見には従来どおり原文照合を課し、本文に無い語句が含まれる場合はエラーを投げる", async () => {
+    const pool = createFakeSessionPool(
+      JSON.stringify({
+        terms: [
+          { term: "even though", meaning: "〜だけれども" },
+          { term: "了解", meaning: "分かった" },
+        ],
+      }),
+    );
+
+    await expect(
+      pickUpExpressions(pool, "even though it rained we won", {
+        findCandidates: createFakeFindCandidates([候補_even_though]),
+      }),
+    ).rejects.toThrow(/does not appear in the message/);
+  });
+
+  it("候補が無い発言(他言語など)では自由発見の上限を課さず、従来どおりすべて返す", async () => {
+    const terms = [
+      { term: "malding", meaning: "ハゲるほどキレること" },
+      { term: "copium", meaning: "現実逃避の言い訳" },
+      { term: "ratio", meaning: "返信の方が伸びること" },
+    ];
+    const pool = createFakeSessionPool(JSON.stringify({ terms }));
+
+    const result = await pickUpExpressions(pool, "malding copium ratio", {
+      findCandidates: createFakeFindCandidates([]),
+    });
+
+    expect(result.terms).toEqual(terms);
   });
 });
 

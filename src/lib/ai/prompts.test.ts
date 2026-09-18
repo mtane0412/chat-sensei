@@ -339,6 +339,23 @@ describe("buildPickupUserPrompt", () => {
     expect(buildPickupUserPrompt("hello")).not.toBe(buildExplainUserPrompt("hello"));
     expect(buildPickupUserPrompt("hello")).not.toBe(buildTranslateUserPrompt("hello"));
   });
+
+  it("候補を渡さない場合は、候補に関する指示を含めない(候補の無い発言でモデルを惑わせないため)", () => {
+    expect(buildPickupUserPrompt("gg no re chat")).not.toContain("Candidate");
+    expect(buildPickupUserPrompt("gg no re chat", [])).toBe(buildPickupUserPrompt("gg no re chat"));
+  });
+
+  it("候補を渡すと、候補の一覧・採否の指示・候補外の自由発見の上限を追記する(issue #116)", () => {
+    const prompt = buildPickupUserPrompt("even though it rained we kind of won", ["even though", "kind of"], 2);
+
+    // 本文は従来どおり引用符付きで埋め込む
+    expect(prompt).toContain('"even though it rained we kind of won"');
+    // 候補は引用符付きで列挙する
+    expect(prompt).toContain('"even though", "kind of"');
+    // 候補を返さないことは採否判断として許容する旨と、自由発見の上限を伝える
+    expect(prompt).toContain("Leaving a candidate out is fine");
+    expect(prompt).toContain("at most 2");
+  });
 });
 
 describe("配信の文脈の注入(issue #54)", () => {

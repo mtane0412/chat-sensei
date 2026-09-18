@@ -21,6 +21,7 @@ import {
   MAX_SHOWN_MESSAGE_IDS_PER_ENTRY,
   PICKUP_ENCOUNTER_COOLDOWN_MS,
   PICKUP_ENCOUNTER_STORAGE_KEY,
+  isPickupExpressionSuppressed,
   markPickupTermKnown,
   recordPickupMeaningChecked,
   resetPickupEncountersForTests,
@@ -217,6 +218,44 @@ describe("suppressRecentPickupTerms", () => {
     expect(Object.keys(entries)).toHaveLength(MAX_PICKUP_ENCOUNTER_ENTRIES);
     expect(entries[buildTermExpressionKey(uniqueTerm(0))]).toBeUndefined();
     expect(entries[buildTermExpressionKey(uniqueTerm(1))]).toBeDefined();
+  });
+});
+
+describe("isPickupExpressionSuppressed(候補の注入前除外用の読み取り専用判定。issue #116)", () => {
+  it("遭遇記録が無い表現キーは抑制中ではない", () => {
+    expect(isPickupExpressionSuppressed(buildTermExpressionKey("even though"), "msg-1")).toBe(false);
+  });
+
+  it("クールダウン内に別メッセージで再遭遇した表現キーは抑制中と判定し、クールダウン経過後は抑制中ではなくなる", () => {
+    surviving(["even though"], "msg-1");
+    vi.advanceTimersByTime(PICKUP_ENCOUNTER_COOLDOWN_MS - 1);
+    expect(isPickupExpressionSuppressed(buildTermExpressionKey("even though"), "msg-2")).toBe(true);
+
+    vi.advanceTimersByTime(1);
+    expect(isPickupExpressionSuppressed(buildTermExpressionKey("even though"), "msg-2")).toBe(false);
+  });
+
+  it("表示済みのメッセージID(パイプライン再起動による再抽出)に対しては、クールダウン内でも抑制中ではない", () => {
+    surviving(["even though"], "msg-1");
+
+    expect(isPickupExpressionSuppressed(buildTermExpressionKey("even though"), "msg-1")).toBe(false);
+  });
+
+  it("「知っている」マーク済みの表現キーは、クールダウンを過ぎていても復習期日前なら抑制中と判定する", () => {
+    surviving(["even though"], "msg-1");
+    markPickupTermKnown("even though");
+    vi.setSystemTime(soleSrsCard().due - 1);
+
+    expect(isPickupExpressionSuppressed(buildTermExpressionKey("even though"), "msg-2")).toBe(true);
+  });
+
+  it("判定は読み取り専用で、遭遇記録(遭遇回数など)を変えない", () => {
+    surviving(["even though"], "msg-1");
+    const before = soleStoredRecord();
+
+    isPickupExpressionSuppressed(buildTermExpressionKey("even though"), "msg-2");
+
+    expect(soleStoredRecord()).toEqual(before);
   });
 });
 

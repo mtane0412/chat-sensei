@@ -512,3 +512,74 @@ describe("startPickupPipeline(既出管理: クールダウン内の再表示抑
     stop2();
   });
 });
+
+describe("startPickupPipeline(ハイブリッド抽出: 表現リスト候補の注入。issue #116)", () => {
+  it("順方向: 本文中の表現リスト候補をユーザープロンプトに注入し、モデルが採用した候補を結果に保持する", async () => {
+    const { deps, emit, prompt } = createDeps({
+      promptResults: [Promise.resolve(JSON.stringify({ terms: [{ term: "even though", meaning: "〜だけれども" }] }))],
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "even though it rained we won" }));
+    await flush();
+
+    const [userPrompt] = prompt.mock.calls[0] as unknown as [string];
+    expect(userPrompt).toContain("Candidate expressions");
+    expect(userPrompt).toContain('"even though"');
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "even though", meaning: "〜だけれども" }],
+    });
+    stop();
+  });
+
+  it("順方向: 既出管理で抑制中の表現は候補として注入しない(プロンプトと表示の両方から落とす)", async () => {
+    const { deps, emit, prompt } = createDeps({
+      promptResults: [
+        Promise.resolve(JSON.stringify({ terms: [{ term: "even though", meaning: "〜だけれども" }] })),
+        Promise.resolve(JSON.stringify({ terms: [] })),
+      ],
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "even though it rained we won" }));
+    await flush();
+    // 2件目の発言にも同じ表現が現れるが、1件目で表示済み(クールダウン内)のため候補にしない
+    emit(createMessage({ id: "msg-2", text: "even though he tried so hard" }));
+    await flush();
+
+    const [secondUserPrompt] = prompt.mock.calls[1] as unknown as [string];
+    expect(secondUserPrompt).not.toContain('"even though"');
+    expect(usePickupStore.getState().entries["msg-2"]).toEqual({ status: "done", terms: [] });
+    stop();
+  });
+
+  it("逆方向: 翻訳パイプラインの訳文(学ぶ言語)から候補を生成して注入する", async () => {
+    const { deps, emit, reversePrompt } = createDeps({
+      detectedLanguage: "ja",
+      reversePromptResults: [
+        Promise.resolve(JSON.stringify({ terms: [{ term: "even though", meaning: "〜だけれども" }] })),
+      ],
+    });
+    useTranslationStore.setState({
+      entries: {
+        "msg-1": { status: "done", segments: [{ type: "text", text: "even though it rained we won" }] },
+      },
+    });
+
+    const stop = startPickupPipeline(deps);
+    await flush();
+    emit(createMessage({ id: "msg-1", text: "雨だったけど勝った" }));
+    await flush();
+
+    const [userPrompt] = reversePrompt.mock.calls[0] as unknown as [string];
+    expect(userPrompt).toContain('"even though"');
+    expect(usePickupStore.getState().entries["msg-1"]).toEqual({
+      status: "done",
+      terms: [{ term: "even though", meaning: "〜だけれども" }],
+    });
+    stop();
+  });
+});
