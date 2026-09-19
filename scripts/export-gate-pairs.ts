@@ -19,6 +19,8 @@ import type { GatePair } from "./lib/labeled-gate-pair";
 
 /** 本文を含むファイルの置き場所(gitignore 済み) */
 const EVAL_DATA_DIRECTORY = "eval-data";
+/** 収集ログのファイル名の末尾に付く収集開始日時(例: `-2026-09-18T12-32-57-086Z.jsonl`) */
+const LOG_TIMESTAMP_SUFFIX = /-\d{4}-\d{2}-\d{2}T[\d-]+Z\.jsonl$/;
 
 const [outputPath, ...logPaths] = process.argv.slice(2);
 if (outputPath === undefined || logPaths.length === 0) {
@@ -32,8 +34,9 @@ if (relativeOutputPath.startsWith("..") || path.isAbsolute(relativeOutputPath)) 
 
 const pairs: GatePair[] = [];
 for (const logPath of logPaths) {
-  // 収集ログのファイル名は `<チャンネル名>-<日時>.jsonl` なので、先頭部分を収集元の名前にする
-  const source = path.basename(logPath).split("-")[0];
+  // 収集ログのファイル名は `<チャンネル名>-<日時>.jsonl` なので、末尾の日時だけを外して収集元の名前にする
+  // (名前にハイフンを含む収集元どうしが同じ名前に潰れないよう、最初のハイフンでは切らない)
+  const source = path.basename(logPath).replace(LOG_TIMESTAMP_SUFFIX, "");
   const lines = readFileSync(logPath, "utf8")
     .split("\n")
     .filter((line) => line.trim() !== "");

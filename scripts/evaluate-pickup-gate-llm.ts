@@ -28,7 +28,12 @@ const THRESHOLDS = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7];
 /** LLM の採否(採用 = 1、不採用 = 0)を除去率の集計関数に渡すための閾値。0 と 1 の間ならどの値でも同じ結果になる */
 const LLM_KEEP_THRESHOLD = 0.5;
 
-const jevResultSchema = z.object({ id: z.number(), idiomaticProbability: z.number() });
+const jevResultSchema = z.object({
+  id: z.number(),
+  expressionKey: z.string(),
+  label: labeledGatePairSchema.shape.label,
+  idiomaticProbability: z.number(),
+});
 
 const [model, pairsPath, jevResultsPath, llmResultsPath] = process.argv.slice(2);
 if (model === undefined || pairsPath === undefined || jevResultsPath === undefined || llmResultsPath === undefined) {
@@ -59,8 +64,17 @@ function readJsonLines<T>(filePath: string, schema: z.ZodType<T>): T[] {
 }
 
 const pairs: LabeledGatePair[] = readJsonLines(pairsPath, labeledGatePairSchema);
+const pairsById = new Map(pairs.map((pair) => [pair.id, pair]));
 const jevProbabilityById = new Map(
-  readJsonLines(jevResultsPath, jevResultSchema).map((result) => [result.id, result.idiomaticProbability]),
+  readJsonLines(jevResultsPath, jevResultSchema).map((result) => {
+    // 通し番号は書き出しのたびに振り直されるため、別の書き出しに対する判定結果を誤って結び付けないよう、
+    // 表現キーとラベルも一致することを確かめる
+    const pair = pairsById.get(result.id);
+    if (pair === undefined || pair.expressionKey !== result.expressionKey || pair.label !== result.label) {
+      throw new Error(`Jev の判定結果の候補 ${result.id} が、ラベル付きの組と一致しません(別の書き出しの結果の可能性があります)`);
+    }
+    return [result.id, result.idiomaticProbability];
+  }),
 );
 
 const pairsByMessage = new Map<string, LabeledGatePair[]>();
@@ -124,7 +138,8 @@ process.stdout.write(
       model,
       candidateCount: llmResults.length,
       failedMessageCount,
-      latencyPerMessage: summarizeLatencies(requestLatenciesMs),
+      // 全発言の抽出が失敗した場合も失敗件数を報告できるよう、計測値が無いときは null にする
+      latencyPerMessage: requestLatenciesMs.length === 0 ? null : summarizeLatencies(requestLatenciesMs),
       llmAlone: summarizeGateJudgments(
         llmResults.map((result) => ({ ...result, idiomaticProbability: result.llmKeeps ? 1 : 0 })),
         LLM_KEEP_THRESHOLD,

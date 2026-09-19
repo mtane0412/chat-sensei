@@ -21,6 +21,8 @@ import { type GateJudgment, summarizeGateJudgments, summarizeLatencies } from ".
 const TYPESAFE_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const TYPESAFE_MODEL = "jev-latest";
 const ENV_FILE_PATH = ".env.local";
+/** 1リクエストの待ち時間の上限。応答が返らないまま評価全体が止まり続けるのを防ぐ */
+const REQUEST_TIMEOUT_MS = 30_000;
 /** 比較する採否の閾値(確率がこの値未満の候補を除去する) */
 const THRESHOLDS = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7];
 /** 誤判定した表現キーの一覧を出すときに使う閾値 */
@@ -90,6 +92,8 @@ for (const messagePairs of pairsByMessage.values()) {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ state: { message: messagePairs[0].text }, model: TYPESAFE_MODEL, questions }),
+    // 時間切れは例外になり、下の API 失敗と同じく評価全体を即座に失敗させる
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) {
     // 途中までの結果で率を出すと誤解を招くため、リトライせず即座に失敗させる
