@@ -28,9 +28,12 @@ import type { JobPriority, PromptSessionLike, SessionPool } from "./session-pool
 import { runStructuredPrompt } from "./structured-prompt";
 
 /**
- * 1回の抽出で LLM に注入する候補の上限件数(暫定値)。候補が多い発言でプロンプトが膨らみ、
+ * 1回の抽出で LLM に注入する候補の上限件数。候補が多い発言でプロンプトが膨らみ、
  * 小型モデルの採否判断が崩れるのを防ぐ。超過分は本文中の出現順で後ろから切り捨てる。
- * 件数と優先順位付け(長い表現優先・頻度帯など)は実チャット評価(issue #117)で確定する
+ *
+ * 実チャット評価(issue #117。2配信・各45分・計2,483発言)で確定した値。1発言あたりの候補は最大6件で、
+ * 上限8〜12件のどれでも切り捨ては一度も発生しなかったため、安全弁として10件のままとする。
+ * 切り捨てが実際には起きないため、優先順位付け(長い表現優先・頻度帯など)は実装していない
  */
 export const MAX_INJECTED_PICKUP_CANDIDATES = 10;
 
