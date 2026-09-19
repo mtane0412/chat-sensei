@@ -200,6 +200,16 @@ describe("pickUpExpressions(原文との照合)", () => {
     expect(result.terms).toEqual([{ term: "cooked", meaning: "もうダメ、終わってる" }]);
   });
 
+  it("アクセント付き文字の表現方法(合成済み / 結合文字)が本文と語句で違っていても、同じ語句として照合する", async () => {
+    // 前提: 本文の "é" は「e + 結合アクセント」(NFD)、モデルが返した語句の "é" は合成済みの1文字(NFC)
+    const 本文 = "on va au cafe\u0301 ce soir";
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [{ term: "caf\u00e9", meaning: "喫茶店" }] }));
+
+    const result = await pickUpExpressions(pool, 本文);
+
+    expect(result.terms).toEqual([{ term: "caf\u00e9", meaning: "喫茶店" }]);
+  });
+
   it("分かち書きをしない言語の語句は、前後に文字が続いていても原文の語句とみなす", async () => {
     const pool = createFakeSessionPool(JSON.stringify({ terms: [{ term: "草生える", meaning: "laughing hard" }] }));
 

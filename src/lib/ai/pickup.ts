@@ -60,9 +60,10 @@ export interface PickupOptions {
 /**
  * 分かち書きをする文字体系(ラテン文字)の文字と数字。原文照合で「語句の端と、その外側の隣接文字が
  * ともにこれに該当する」場合は単語の途中とみなす。日本語のように分かち書きをしない文字は該当しないため、
- * 前後に文字が続いていても単語の途中とは扱わない
+ * 前後に文字が続いていても単語の途中とは扱わない。結合文字(`\p{M}`)は、NFC で合成済みの1文字にならない
+ * アクセント記号がラテン文字の直後に残った場合に、それを単語の一部として扱うために含める
  */
-const SPACED_SCRIPT_WORD_CHAR = /[\p{Script=Latin}\p{N}]/u;
+const SPACED_SCRIPT_WORD_CHAR = /[\p{Script=Latin}\p{N}\p{M}]/u;
 
 /**
  * チャット本文から注目の表現を抽出する。
@@ -99,11 +100,19 @@ export async function pickUpExpressions(
   });
 
   const filtered = filterPickupTerms(result.terms, prepared, options.excludedNames ?? []);
-  const { terms, unknownTerms } = verifyTerms(filtered, candidates, prepared.text.toLowerCase());
+  const { terms, unknownTerms } = verifyTerms(filtered, candidates, normalizeForSourceMatch(prepared.text));
   if (terms.length === 0 && unknownTerms.length > 0) {
     throw new Error(`The Prompt API returned a term that does not appear in the message: ${unknownTerms[0].term}`);
   }
   return { terms };
+}
+
+/**
+ * 原文照合のための正規化。大文字小文字を区別せず、アクセント付き文字の表現方法の違い
+ * (合成済みの1文字 / 基底文字 + 結合文字)を NFC に揃える
+ */
+function normalizeForSourceMatch(text: string): string {
+  return text.normalize("NFC").toLowerCase();
 }
 
 /**
@@ -112,10 +121,10 @@ export async function pickUpExpressions(
  * 単純な部分文字列の一致では、短い語句が別の単語の一部("wow" の中の "w")に一致してしまうため、
  * 一致箇所の両端が単語の途中でないことを確かめる。本文中のどこか1箇所でも条件を満たせば登場とみなす。
  *
- * @param normalizedText 小文字化済みの本文
+ * @param normalizedText `normalizeForSourceMatch` で正規化済みの本文
  */
 function appearsInText(normalizedText: string, term: string): boolean {
-  const needle = term.trim().toLowerCase();
+  const needle = normalizeForSourceMatch(term.trim());
   if (needle === "") return false;
 
   // 語句の端の文字と、その外側の隣接文字がともに分かち書きの文字なら単語の途中
@@ -149,7 +158,7 @@ function appearsInText(normalizedText: string, term: string): boolean {
  *   上限は候補を注入した(= プロンプトで上限を伝えた)場合にだけ課し、候補が無い発言では従来どおり全件を残す
  * - LLM が返さなかった候補は文脈での不採用であり、失敗として扱わない(結果に含めないだけ)
  *
- * @param normalizedText 小文字化済みの本文(自由発見の原文照合に使う)
+ * @param normalizedText `normalizeForSourceMatch` で正規化済みの本文(自由発見の原文照合に使う)
  * @returns `terms` は LLM が返した順序を保った仕分け後の全語句、`unknownTerms` は本文に無いため落とした語句
  *   (呼び出し側が「1件も残らなかった」場合の失敗判定に使う)
  */
