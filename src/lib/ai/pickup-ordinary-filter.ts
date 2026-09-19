@@ -34,24 +34,21 @@ import { collapseElongatedLetters, splitIntoMatchWords, stemForMatch } from "./s
  * プロンプトの例示にも使っているコロケーション、Wiktionary 未収載の新しいミーム表現を収録する。
  * 全語が高頻度語で構成される複数語表現だけがこのリストを必要とする
  * (非高頻度語を含む表現はリスト照合の前に「残す」判定になるため)。
+ *
+ * 注意: Wiktionary 由来の表現リスト(`data/en-expression-list.json`)に収録済みの表現はここに書かない。
+ * "even though" / "at least" / "on god" 等は English conjunctions / prepositional phrases の
+ * カテゴリ追加(issue #112)でリスト側に収録されたため、重複整理(issue #117)で外した。
+ * 重複は `pickup-ordinary-filter.test.ts` が照合キーで検出する。
  */
 export const CURATED_EXPRESSIONS: readonly string[] = [
   // 定型接続表現
-  "even though",
-  "even if",
-  "as though",
-  "as well as",
   "no matter what",
   "no matter how",
-  "at least",
-  "at most",
-  "sort of",
   // プロンプトの例示に使っているコロケーション(prompts.ts の PICKUP_MULTIWORD_EXAMPLES)
   "put effort into",
   // Wiktionary 未収載の新しいミーム表現(観測し次第追記する)
   "let him cook",
   "let her cook",
-  "on god",
 ];
 
 /** 高頻度語の照合キー集合。NGSL のレンマ・手動補完語・字幕頻度リスト(第2層)を `stemForMatch` で正規化して持つ */

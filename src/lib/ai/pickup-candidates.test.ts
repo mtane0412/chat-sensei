@@ -10,7 +10,12 @@
  * `CURATED_EXPRESSIONS`)から組み立てた既定のマッチャーで、同梱データとの結線を検証する。
  */
 import { describe, expect, it } from "vitest";
-import { createExpressionCandidateMatcher, findExpressionCandidates } from "./pickup-candidates";
+import enExpressionList from "./data/en-expression-list.json";
+import {
+  createExpressionCandidateMatcher,
+  EXCLUDED_CANDIDATE_EXPRESSIONS,
+  findExpressionCandidates,
+} from "./pickup-candidates";
 import { buildTermExpressionKey } from "./pickup-ordinary-filter";
 
 describe("createExpressionCandidateMatcher", () => {
@@ -69,12 +74,46 @@ describe("createExpressionCandidateMatcher", () => {
 });
 
 describe("findExpressionCandidates", () => {
-  it("同梱の表現リストの表現(句動詞・手動補完の定型接続表現)にマッチする", () => {
-    // "give up" は Wiktionary 句動詞カテゴリ、"even though" は CURATED_EXPRESSIONS 由来
+  it("同梱の表現リストの表現(句動詞・定型接続表現)にマッチする", () => {
+    // "give up" は Wiktionary 句動詞カテゴリ、"even though" は Wiktionary 接続詞カテゴリ由来
     expect(findExpressionCandidates("I kept playing even though I wanted to give up", "en")).toEqual([
       { term: "even though", expressionKey: buildTermExpressionKey("even though") },
       { term: "give up", expressionKey: buildTermExpressionKey("give up") },
     ]);
+  });
+
+  it("Wiktionary 未収載で手動補完リスト(CURATED_EXPRESSIONS)だけにある表現にもマッチする", () => {
+    // "let him cook" は Wiktionary 由来リストに無いため、手動補完リストとの結線が切れるとマッチしなくなる
+    expect(findExpressionCandidates("chat please let him cook", "en")).toEqual([
+      { term: "let him cook", expressionKey: buildTermExpressionKey("let him cook") },
+    ]);
+  });
+
+  it("機能語だけの断片の見出し語(of a / to the / and that 等)は候補にしない(issue #117 の実チャット評価)", () => {
+    // 前提: Wiktionary の前置詞句・接続詞カテゴリには "of a" / "to the" / "and that" のような断片が収録されている。
+    // 実チャットでは候補出現の約26%がこの種の断片で、学習価値が無いため候補生成の除外リストで落とす
+    expect(findExpressionCandidates("it was kind of a long walk to the store and that was fine", "en")).toEqual([
+      { term: "kind of", expressionKey: buildTermExpressionKey("kind of") },
+    ]);
+  });
+
+  it("短縮形の除去で別の表現と同じ照合キーになる見出し語(i can't / i'll be / isn't it / being that)は候補にしない", () => {
+    // 前提: 照合キーは n't や 'll を外して組み立てるため、"I can't" のキーは "I can" と同じになる。
+    // 除外しないと、肯定の "I can" が否定の見出し語 "I can't" の候補として LLM に渡ってしまう
+    expect(findExpressionCandidates("I can see it and I am sure it is that one, is it", "en")).toEqual([]);
+  });
+
+  it("除外リストと構成語が似ていても、学習価値のある機能語だけの表現(as if / so that)は候補に残す", () => {
+    // 検証: 「全語が機能語なら一律に落とす」規則ではなく、個別の除外リストであること
+    expect(findExpressionCandidates("he acts as if he knew, so that nobody asks", "en")).toEqual([
+      { term: "as if", expressionKey: buildTermExpressionKey("as if") },
+      { term: "so that", expressionKey: buildTermExpressionKey("so that") },
+    ]);
+  });
+
+  it("除外リストの表現はすべて同梱の表現リストに実在する(リスト再生成で消えた項目を検出する)", () => {
+    const listed = new Set(enExpressionList.expressions);
+    expect(EXCLUDED_CANDIDATE_EXPRESSIONS.filter((expression) => !listed.has(expression))).toEqual([]);
   });
 
   it("学ぶ言語が en 以外の場合はリスト未整備のため空配列を返す", () => {

@@ -12,7 +12,13 @@
  * 回帰テストとして固定する。
  */
 import { describe, expect, it } from "vitest";
-import { buildTermExpressionKey, filterOrdinaryTerms, isListedExpression } from "./pickup-ordinary-filter";
+import enExpressionList from "./data/en-expression-list.json";
+import {
+  buildTermExpressionKey,
+  CURATED_EXPRESSIONS,
+  filterOrdinaryTerms,
+  isListedExpression,
+} from "./pickup-ordinary-filter";
 import type { PickupTerm } from "./schemas";
 
 /** テストデータ組み立てヘルパー。意味の文字列は判定に影響しない */
@@ -64,15 +70,17 @@ describe("filterOrdinaryTerms", () => {
   });
 
   it("Wiktionary 未収載のミーム表現も手動補完リストにあれば残す", () => {
-    expect(survivingTerms(["let him cook", "on god"])).toEqual(["let him cook", "on god"]);
+    expect(survivingTerms(["let him cook", "let her cook"])).toEqual(["let him cook", "let her cook"]);
   });
 
   it("手動補完した定型接続表現・コロケーションは残す", () => {
-    expect(survivingTerms(["even though", "as well as", "put effort into"])).toEqual([
-      "even though",
-      "as well as",
-      "put effort into",
-    ]);
+    expect(survivingTerms(["no matter what", "put effort into"])).toEqual(["no matter what", "put effort into"]);
+  });
+
+  it("Wiktionary のカテゴリ追加(issue #112)で収録された定型表現は、手動補完リストから外した後も残す(issue #117)", () => {
+    // "even though" / "as well as" / "on god" は重複整理で手動補完リストから外したが、
+    // Wiktionary 由来の表現リストに収録されているため従来どおり残る
+    expect(survivingTerms(["even though", "as well as", "on god"])).toEqual(["even though", "as well as", "on god"]);
   });
 
   it("非高頻度語を含む複数語句は表現リストに無くても残す", () => {
@@ -188,13 +196,30 @@ describe("isListedExpression", () => {
   });
 
   it("手動補完リスト(CURATED_EXPRESSIONS)の表現にも一致する", () => {
+    // "let him cook" は Wiktionary 未収載のため手動補完リストだけが一致の根拠になる
     expect(isListedExpression("let him cook")).toBe(true);
+  });
+
+  it("Wiktionary のカテゴリ追加(issue #112)で収録された定型接続表現にも一致する", () => {
+    // "even though" は English conjunctions カテゴリ由来。手動補完リストからは重複整理(issue #117)で外した
     expect(isListedExpression("even though")).toBe(true);
   });
 
   it("リストに無い語句(普通の句・文まるごとの抽出)には一致しない", () => {
     expect(isListedExpression("main quests")).toBe(false);
     expect(isListedExpression("are you coming to the party tonight?")).toBe(false);
+  });
+});
+
+describe("CURATED_EXPRESSIONS", () => {
+  it("Wiktionary 由来の表現リストに収録済みの表現を重複して持たない", () => {
+    // 前提: 手動補完リストは「Wiktionary 未収載の表現」を補うためのもの(issue #117 の重複整理)
+    // 検証: 照合キー(レンマ正規化キー)で比較し、Wiktionary 由来リストと一致する表現が1件も無いこと
+    const wiktionaryKeys = new Set(enExpressionList.expressions.map(buildTermExpressionKey));
+    const duplicated = CURATED_EXPRESSIONS.filter((expression) =>
+      wiktionaryKeys.has(buildTermExpressionKey(expression)),
+    );
+    expect(duplicated).toEqual([]);
   });
 });
 

@@ -94,11 +94,57 @@ export function createExpressionCandidateMatcher(expressions: Iterable<string>):
   };
 }
 
-/** 同梱の表現リスト(Wiktionary 由来 + 手動補完)から組み立てた既定の英語用候補生成器 */
-const matchEnglishExpressionCandidates = createExpressionCandidateMatcher([
-  ...enExpressionList.expressions,
-  ...CURATED_EXPRESSIONS,
-]);
+/**
+ * 候補生成の対象から外す、表現リスト(Wiktionary 由来)の見出し語の手動除外リスト。
+ * 実チャット評価(issue #117。2配信・各45分)で、候補出現の約26%が機能語だけの断片だったため導入した。
+ *
+ * - 「全語が機能語なら一律に落とす」規則にしないのは、"as if" / "so that" / "and so on" / "used to" の
+ *   ような学習価値のある表現まで落ちるため。実チャットで観測した断片と、その同類だけを個別に挙げる
+ * - 除外は候補生成にだけ効く。LLM が自力で選んだ語句の救済判定(`isListedExpression`)は変えない
+ * - 表現リストの表記(小文字)のまま書く。リストに無い項目は `pickup-candidates.test.ts` が検出する
+ */
+export const EXCLUDED_CANDIDATE_EXPRESSIONS: readonly string[] = [
+  // 機能語だけの断片(前置詞句・接続詞カテゴリ由来)。字義通りの文の一部として頻出し、学習価値が無い
+  "of a",
+  "of an",
+  "to the",
+  "on the",
+  "and that",
+  "but that",
+  "not that",
+  "for you",
+  "for me",
+  "for that",
+  "for it",
+  "with it",
+  "in it",
+  "on it",
+  "at it",
+  "of his",
+  "of hers",
+  "of ours",
+  "of theirs",
+  "of yours",
+  "i would",
+  // 短縮形の除去(n't / 'll)やレンマ化で、別の字義通りの句と同じ照合キーになる見出し語。
+  // 例: "i can't" のキーは "i can" になり、肯定の "I can" が否定の見出し語の候補として注入されてしまう
+  "i can't", // → "I can"
+  "i'll be", // → "I am" / "I was"
+  "isn't it", // → "is it"
+  "being that", // → "is that" / "was that"
+];
+
+/** 除外リストの照合キー集合。リスト側の表現と同じ規則で正規化して持つ */
+const EXCLUDED_CANDIDATE_KEYS: ReadonlySet<string> = new Set(
+  EXCLUDED_CANDIDATE_EXPRESSIONS.map((expression) => buildExpressionKey(splitIntoMatchWords(expression))),
+);
+
+/** 同梱の表現リスト(Wiktionary 由来 + 手動補完)から、除外リストの表現を除いて組み立てた既定の英語用候補生成器 */
+const matchEnglishExpressionCandidates = createExpressionCandidateMatcher(
+  [...enExpressionList.expressions, ...CURATED_EXPRESSIONS].filter(
+    (expression) => !EXCLUDED_CANDIDATE_KEYS.has(buildExpressionKey(splitIntoMatchWords(expression))),
+  ),
+);
 
 /**
  * チャット本文から表現リストに合致する学習表現の候補を列挙する。
