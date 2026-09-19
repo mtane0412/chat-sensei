@@ -837,6 +837,29 @@ describe("ChannelPage(Pick up列)", () => {
     expect(records[0].knownCount).toBe(1);
   });
 
+  it("「忘れていた」と評価した語句でも、抽出結果が生成し直されて再び復習期日が来ていれば、目印と「忘れていた」ボタンを出し直す", async () => {
+    const user = userEvent.setup();
+    markPickupTermKnown("gg");
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ", reviewDue: true }] } },
+    });
+    render(<ChannelPage />);
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as forgotten' }));
+    expect(within(pickupColumn).queryByText("Review")).not.toBeInTheDocument();
+
+    // 同じ発言の抽出結果が生成し直され(新しい terms)、その時点で再び復習期日が来ていた場合
+    act(() => {
+      usePickupStore.setState({
+        entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ", reviewDue: true }] } },
+      });
+    });
+
+    expect(within(pickupColumn).getByText("Review")).toBeInTheDocument();
+    expect(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as forgotten' })).toBeInTheDocument();
+  });
+
   it('「忘れていた」を押すと、スクリーンリーダー向けの通知リージョンに「Marked "<語句>" as forgotten」が表示される', async () => {
     const user = userEvent.setup();
     markPickupTermKnown("gg");

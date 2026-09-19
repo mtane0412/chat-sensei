@@ -510,9 +510,10 @@ function PipelineCellContent<TDone extends object>({
  *
  * 復習期日が来て再表示された語句(`reviewDue`。issue #127)は理解度チェックの対象として、目印と
  * 「忘れていた」ボタンを出す(「知っている」は既存の✓ボタンが担う)。「忘れていた」を押した語句は
- * 意味を読み直せるよう行を残し、目印とボタンだけを消す。評価済みの語句はこのコンポーネントの状態で
- * 覚える(パイプライン再起動でエントリが再生成された場合は、評価で復習期日が未来へ移っているため
- * `reviewDue` 自体が付かなくなる)。評価しなかった語句は何も記録しない。
+ * 意味を読み直せるよう行を残し、目印とボタンだけを消す。評価済みの語句は、評価した時点の抽出結果
+ * (`terms` の参照)と組にしてこのコンポーネントの状態で覚え、抽出結果が生成し直されたら無効にする
+ * (再生成後の `reviewDue` はストアがその時点の復習期日で判定し直すため、そちらを正とする。評価直後の
+ * 再生成では復習期日が未来へ移っているので `reviewDue` 自体が付かない)。評価しなかった語句は何も記録しない。
  *
  * 発言のたびに全行が再レンダーされるため memo 化する(props の messageId・terms は
  * エントリが変わらない限り同一参照で、非表示集合の変化はストア購読で拾う)。
@@ -525,8 +526,13 @@ const PickupTerms = memo(function PickupTerms({
   terms: PickupDone["terms"];
 }) {
   const hiddenTerms = useHiddenPickupStore((state) => state.hiddenTerms[messageId]);
-  // 「忘れていた」と評価済みの語句(理解度チェックの目印とボタンを消す対象)
-  const [forgottenTerms, setForgottenTerms] = useState<ReadonlySet<string>>(new Set());
+  // 「忘れていた」と評価済みの語句(理解度チェックの目印とボタンを消す対象)。評価した時点の抽出結果と
+  // 組で持ち、抽出結果が生成し直された後は使わない
+  const [forgotten, setForgotten] = useState<{ terms: PickupDone["terms"]; forgottenTerms: ReadonlySet<string> }>({
+    terms,
+    forgottenTerms: new Set(),
+  });
+  const forgottenTerms = forgotten.terms === terms ? forgotten.forgottenTerms : undefined;
   const visibleTerms =
     hiddenTerms === undefined ? terms : terms.filter((term) => !isPickupTermHidden(hiddenTerms, term.term));
   if (visibleTerms.length === 0) {
@@ -546,10 +552,10 @@ const PickupTerms = memo(function PickupTerms({
             hidePickupTerm(messageId, term.term);
           }}
           onMarkForgotten={
-            term.reviewDue === true && !forgottenTerms.has(term.term)
+            term.reviewDue === true && forgottenTerms?.has(term.term) !== true
               ? () => {
                   markPickupTermForgotten(term.term);
-                  setForgottenTerms((current) => new Set(current).add(term.term));
+                  setForgotten({ terms, forgottenTerms: new Set(forgottenTerms).add(term.term) });
                 }
               : undefined
           }
