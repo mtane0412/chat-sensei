@@ -153,10 +153,59 @@ describe("pickUpExpressions(原文との照合)", () => {
     expect(result.terms).toEqual([{ term: "w", meaning: "勝利" }]);
   });
 
-  it("原文に登場しない語句が含まれる場合はエラーを投げる(解説言語の語や言い換えを原文の語句として表示しない)", async () => {
+  it("返された語句がすべて原文に登場しない場合はエラーを投げる(解説言語の語や言い換えを原文の語句として表示しない)", async () => {
     const pool = createFakeSessionPool(JSON.stringify({ terms: [{ term: "了解", meaning: "分かった" }] }));
 
     await expect(pickUpExpressions(pool, "roger that")).rejects.toThrow(/does not appear in the message/);
+  });
+
+  it("言い換えられた語句だけを落とし、同じ発言から抽出された原文どおりの語句は返す(issue #120)", async () => {
+    // 前提: 本文は "slept on a really good mattress"。モデルが "slept on a mattress" と言い換えて返した
+    const pool = createFakeSessionPool(
+      JSON.stringify({
+        terms: [
+          { term: "slept on a mattress", meaning: "マットレスで寝た" },
+          { term: "no cap", meaning: "マジで、嘘じゃなく" },
+        ],
+      }),
+    );
+
+    const result = await pickUpExpressions(pool, "never slept on a really good mattress no cap");
+
+    // 検証: 言い換えの1件のせいで全滅せず、原文どおりの語句は残る
+    expect(result.terms).toEqual([{ term: "no cap", meaning: "マジで、嘘じゃなく" }]);
+  });
+
+  it("別の単語の一部にしか現れない語句は、原文の語句とみなさず落とす(単語境界での照合)", async () => {
+    // 前提: "w" は "wow" の一部としてしか現れない。"cooked" は独立した語として現れる
+    const pool = createFakeSessionPool(
+      JSON.stringify({
+        terms: [
+          { term: "w", meaning: "勝利" },
+          { term: "cooked", meaning: "もうダメ、終わってる" },
+        ],
+      }),
+    );
+
+    const result = await pickUpExpressions(pool, "wow he is cooked");
+
+    expect(result.terms).toEqual([{ term: "cooked", meaning: "もうダメ、終わってる" }]);
+  });
+
+  it("語句の前後が記号・句読点の場合は、単語の境界として原文の語句とみなす", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [{ term: "cooked", meaning: "もうダメ、終わってる" }] }));
+
+    const result = await pickUpExpressions(pool, "bro is (cooked)!!");
+
+    expect(result.terms).toEqual([{ term: "cooked", meaning: "もうダメ、終わってる" }]);
+  });
+
+  it("分かち書きをしない言語の語句は、前後に文字が続いていても原文の語句とみなす", async () => {
+    const pool = createFakeSessionPool(JSON.stringify({ terms: [{ term: "草生える", meaning: "laughing hard" }] }));
+
+    const result = await pickUpExpressions(pool, "それは草生えるわ");
+
+    expect(result.terms).toEqual([{ term: "草生える", meaning: "laughing hard" }]);
   });
 });
 
@@ -343,7 +392,7 @@ describe("pickUpExpressions(ハイブリッド抽出: 候補の注入と決定�
     ]);
   });
 
-  it("自由発見には従来どおり原文照合を課し、本文に無い語句が含まれる場合はエラーを投げる", async () => {
+  it("自由発見には原文照合を課し、本文に無い語句だけを落として採用された候補は返す(issue #120)", async () => {
     const pool = createFakeSessionPool(
       JSON.stringify({
         terms: [
@@ -353,11 +402,29 @@ describe("pickUpExpressions(ハイブリッド抽出: 候補の注入と決定�
       }),
     );
 
-    await expect(
-      pickUpExpressions(pool, "even though it rained we won", {
-        findCandidates: createFakeFindCandidates([候補_even_though]),
-      }),
-    ).rejects.toThrow(/does not appear in the message/);
+    const result = await pickUpExpressions(pool, "even though it rained we won", {
+      findCandidates: createFakeFindCandidates([候補_even_though]),
+    });
+
+    expect(result.terms).toEqual([{ term: "even though", meaning: "〜だけれども" }]);
+  });
+
+  it("本文に無い語句は自由発見の上限件数に数えない", async () => {
+    // 前提: 自由発見の先頭が言い換え(本文に無い)。残りの自由発見は上限件数ちょうど
+    const 本文にある自由発見 = [
+      { term: "malding", meaning: "ハゲるほどキレること" },
+      { term: "copium", meaning: "現実逃避の言い訳" },
+    ];
+    expect(本文にある自由発見).toHaveLength(MAX_PICKUP_DISCOVERIES);
+    const pool = createFakeSessionPool(
+      JSON.stringify({ terms: [{ term: "raining hard", meaning: "激しい雨" }, ...本文にある自由発見] }),
+    );
+
+    const result = await pickUpExpressions(pool, "even though it rained he is malding on copium", {
+      findCandidates: createFakeFindCandidates([候補_even_though]),
+    });
+
+    expect(result.terms).toEqual(本文にある自由発見);
   });
 
   it("候補が無い発言(他言語など)では自由発見の上限を課さず、従来どおりすべて返す", async () => {
