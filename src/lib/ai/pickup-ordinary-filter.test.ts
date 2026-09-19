@@ -181,6 +181,34 @@ describe("filterOrdinaryTerms", () => {
     expect(survivingTerms(["SOoo"])).toEqual([]);
   });
 
+  it("正当な重ね字を持つ高頻度語の伸ばし形(chiiilll / coolll)は連続を2文字に縮めた形でも照合して落とす(issue #119)", () => {
+    // "chiiilll" は全連続を1文字に潰すと "chil" になり "chill" と一致しないため、2文字に縮めた形も試す
+    expect(survivingTerms(["chiiilll", "coolll", "sooo chiiilll"])).toEqual([]);
+  });
+
+  it("2文字だけの伸ばし形(noo / yess / whatt / stopp)は語末の連続を1文字に縮めた形でも照合して落とす(issue #119)", () => {
+    expect(survivingTerms(["noo", "yess", "whatt", "stopp", "noo way"])).toEqual([]);
+  });
+
+  it("3連続以上と語末の2文字連続が混ざった伸ばし形(whaaatt)も両方を縮めた形で照合して落とす(issue #119)", () => {
+    expect(survivingTerms(["whaaatt"])).toEqual([]);
+  });
+
+  it("語末を縮めた形が第1層の高頻度語と衝突する正当なスラング(ass / pill / buss / purr)は保護リストで残す(issue #119)", () => {
+    // "ass" → "as" / "buss" → "bus" のように縮めた形が NGSL の語と一致するが、それ自体がスラングとして学習価値を持つ
+    expect(survivingTerms(["ass", "pill", "buss", "purr"])).toEqual(["ass", "pill", "buss", "purr"]);
+  });
+
+  it("語末を縮めた形が第2層(字幕頻度リスト)にしか無い語(boo / mutt / floss)は照合対象外のため残す(issue #119)", () => {
+    // "boo" → "bo" は字幕頻度リストの語と一致するが、第2層は固有名詞・短い雑多な語を含み誤衝突が多いため
+    // 語末を縮めた形は第1層(NGSL + 手動補完語)だけと照合する
+    expect(survivingTerms(["boo", "mutt", "floss"])).toEqual(["boo", "mutt", "floss"]);
+  });
+
+  it("語末を縮めても高頻度語に一致しない伸ばしスラング(lmaoo / bruhh / yeett)は残す(issue #119)", () => {
+    expect(survivingTerms(["lmaoo", "bruhh", "yeett"])).toEqual(["lmaoo", "bruhh", "yeett"]);
+  });
+
   it("学ぶ言語が en 以外の場合はリスト未整備のため何も落とさない", () => {
     expect(survivingTerms(["rare", "main quests"], "ja")).toEqual(["rare", "main quests"]);
     expect(survivingTerms(["rare", "main quests"], "fr")).toEqual(["rare", "main quests"]);

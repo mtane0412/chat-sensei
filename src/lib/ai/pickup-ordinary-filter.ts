@@ -10,7 +10,8 @@
  *   第2層(issue #99)は OpenSubtitles 由来の頻度上位語から Wiktionary スラング系カテゴリの1語と
  *   Twitch特有の意味を持つ語を除いたもので、NGSL 圏外の普通語("flavour" / "paradise")を捕捉する。
  *   リストに無いスラング("lol" / "malding")や Twitch 用語("raid" / "emote")は残る。
- *   "sooo" のような伸ばし字は同一文字の3連続以上を潰した形でも照合して落とす(issue #97)
+ *   "sooo" / "chiiilll" のような伸ばし字は同一文字の3連続以上を1文字・2文字に縮めた形でも照合して落とす
+ *   (issue #97 / #119)。"noo" のような2文字だけの伸ばし形は語末の連続を縮めた形を第1層と照合して落とす(issue #119)
  * - 複数語の語句: 表現リスト(Wiktionary の句動詞・イディオム・スラング + 手動補完の定型表現)に
  *   レンマ正規化して一致すれば残す。リスト外で全語が高頻度なら落とす("main quests")。
  *   非高頻度語を1語でも含めば残す(リストに無い新しいミーム表現の偽陰性を減らす)
@@ -26,7 +27,12 @@ import enExpressionList from "./data/en-expression-list.json";
 import enFrequentWords from "./data/en-frequent-words.json";
 import type { SupportedLanguage } from "./prompts";
 import type { PickupTerm } from "./schemas";
-import { collapseElongatedLetters, splitIntoMatchWords, stemForMatch } from "./stem";
+import {
+  collapseTrailingDoubledLetter,
+  expandElongatedLetterVariants,
+  splitIntoMatchWords,
+  stemForMatch,
+} from "./stem";
 
 /**
  * Wiktionary のカテゴリに無い、学習価値のある定型表現の手動補完リスト。
@@ -51,24 +57,51 @@ export const CURATED_EXPRESSIONS: readonly string[] = [
   "let her cook",
 ];
 
-/** 高頻度語の照合キー集合。NGSL のレンマ・手動補完語・字幕頻度リスト(第2層)を `stemForMatch` で正規化して持つ */
-const FREQUENT_STEMS: ReadonlySet<string> = new Set(
-  [...enFrequentWords.ngslWords, ...enFrequentWords.supplementaryWords, ...enFrequentWords.subtitleWords].map(
-    stemForMatch,
-  ),
+/** 第1層の高頻度語の照合キー集合。NGSL のレンマ・手動補完語を `stemForMatch` で正規化して持つ */
+const FIRST_TIER_FREQUENT_STEMS: ReadonlySet<string> = new Set(
+  [...enFrequentWords.ngslWords, ...enFrequentWords.supplementaryWords].map(stemForMatch),
 );
+
+/** 高頻度語の照合キー集合。第1層に字幕頻度リスト(第2層)を `stemForMatch` で正規化して加えたもの */
+const FREQUENT_STEMS: ReadonlySet<string> = new Set([
+  ...FIRST_TIER_FREQUENT_STEMS,
+  ...enFrequentWords.subtitleWords.map(stemForMatch),
+]);
+
+/**
+ * 語末の2文字連続を1文字に縮めた形が第1層の高頻度語と衝突するが、それ自体がスラングとして学習価値を持つため
+ * 語末の縮めの対象にしない語(issue #119)。Wiktionary のスラング系カテゴリ(internet slang / AAVE /
+ * Twitch-speak / swear words / slang / text messaging slang の1語見出し語 約1.4万語)で衝突を実測して選んだ:
+ * "ass" → "as" / "pill" → "pil"("pile" の照合キー)/ "buss" → "bus" / "purr" → "pur"("pure" の照合キー)。
+ * 実チャットで新しい衝突を観測したら追記する。
+ */
+const TRAILING_DOUBLE_PROTECTED_WORDS: ReadonlySet<string> = new Set(["ass", "pill", "buss", "purr"]);
+
+/**
+ * 語末の2文字連続を1文字に縮めた形(`noo` → `no`)が第1層の高頻度語に一致するかを判定する(issue #119)。
+ * - 照合先を第1層(NGSL + 手動補完語)に限る。第2層(字幕頻度リスト)は固有名詞や短い雑多な語を含み、
+ *   `boo` → `bo` / `mutt` → `mut` のような誤衝突が約50語に増えるため(issue #119 の実測)
+ * - 第1層に限っても衝突する正当なスラングは `TRAILING_DOUBLE_PROTECTED_WORDS` で対象外にする
+ */
+function isTrailingDoubledFrequentWord(word: string): boolean {
+  if (TRAILING_DOUBLE_PROTECTED_WORDS.has(word.toLowerCase())) return false;
+  const collapsed = collapseTrailingDoubledLetter(word);
+  return collapsed !== undefined && FIRST_TIER_FREQUENT_STEMS.has(stemForMatch(collapsed));
+}
 
 /**
  * 語が高頻度語かを判定する。`sooo` のような伸ばし字が頻度照合を素通りしないよう、
- * 元の形に加えて同一文字の3連続以上を1文字に潰した形(`sooo` → `so`)でも照合する(issue #97)。
- * - 潰した形だけで判定すると誤変換で衝突しうるため、「どちらかが高頻度語に一致したら普通の語」とみなす
- * - 2文字連続は `loot` / `yeet` / `weeb` のような正当なスラングを壊すため潰さない(`collapseElongatedLetters` 参照)
- * - 潰しの後方参照が大小文字を区別するため、混在ケース(`SOoo`)に備えて先に小文字化する
+ * 元の形に加えて、伸ばし字を縮めた形でも照合する(issue #97)。
+ * - 同一文字の3連続以上は、各連続を「1文字 / 2文字」にする全組合せを試す(`chiiilll` → `chil` / `chill` / …)。
+ *   1文字に潰すだけでは `chill` のような正当な重ね字を持つ語の伸ばし形が一致しないため(issue #119)
+ * - 2文字連続は `loot` / `yeet` / `weeb` のような正当なスラングを壊すため、語末に限って縮め、
+ *   照合先も第1層に絞る(`noo` → `no`。`isTrailingDoubledFrequentWord` 参照。issue #119)
+ * - 縮めた形だけで判定すると誤変換で衝突しうるため、「どれかが高頻度語に一致したら普通の語」とみなす
  */
 function isFrequentWord(word: string): boolean {
-  return (
-    FREQUENT_STEMS.has(stemForMatch(word)) ||
-    FREQUENT_STEMS.has(stemForMatch(collapseElongatedLetters(word.toLowerCase())))
+  if (FREQUENT_STEMS.has(stemForMatch(word))) return true;
+  return expandElongatedLetterVariants(word).some(
+    (variant) => FREQUENT_STEMS.has(stemForMatch(variant)) || isTrailingDoubledFrequentWord(variant),
   );
 }
 

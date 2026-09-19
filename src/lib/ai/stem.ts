@@ -46,6 +46,69 @@ export function collapseElongatedLetters(word: string): string {
   return word.replace(ELONGATED_LETTER_PATTERN, "$1");
 }
 
+/** 同じ文字の連続(1回以上)、または文字以外の並びに語を区切る(`chiiilll` → `c` / `h` / `iii` / `lll`) */
+const LETTER_RUN_PATTERN = /(\p{L})\1*|[^\p{L}]+/gu;
+
+/** 伸ばし字とみなす連続の最小文字数(`collapseElongatedLetters` と同じ基準) */
+const ELONGATED_RUN_MIN_LENGTH = 3;
+
+/**
+ * 組合せ展開する伸ばし字の連続箇所の上限。展開数は 2^箇所数 になるため、
+ * 実チャットの伸ばし字(通常1〜2箇所)を十分に覆いつつ、`aaabbbccc…` のような入力で爆発しない値にする。
+ */
+const MAX_EXPANDED_ELONGATED_RUNS = 4;
+
+/**
+ * 同じ文字が3回以上連続する各箇所を「1文字に縮める / 2文字に縮める」の全組合せで展開する
+ * (`chiiilll` → `chil` / `chill` / `chiil` / `chiill`)。高頻度語の照合(pickup-ordinary-filter.ts)で使う。
+ * 1文字に縮めるだけでは `chill` / `cool` のような正当な重ね字を持つ語の伸ばし形が照合できないため、
+ * 2文字に縮めた形も候補にする(issue #119)。
+ * - 2文字連続は `collapseElongatedLetters` と同じ理由(`loot` → `lot` の誤衝突)で伸ばし字とみなさない
+ * - 後方参照が大小文字を区別するため、混在ケース(`SOoo`)に備えて先に小文字化する
+ * - 連続箇所が `MAX_EXPANDED_ELONGATED_RUNS` を超える語は組合せ爆発を避けるため展開せず、
+ *   全連続を1文字に縮めた形だけを返す(issue #97 の規則と同じ結果)
+ */
+export function expandElongatedLetterVariants(word: string): string[] {
+  const lowered = word.toLowerCase();
+  const runs = lowered.match(LETTER_RUN_PATTERN) ?? [];
+  // サロゲートペアの文字を1文字として数えるため、コードポイント単位に分けて長さを見る
+  const isElongated = (run: string) => [...run].length >= ELONGATED_RUN_MIN_LENGTH && /^\p{L}/u.test(run);
+  if (runs.filter(isElongated).length > MAX_EXPANDED_ELONGATED_RUNS) {
+    return [collapseElongatedLetters(lowered)];
+  }
+  return runs.reduce<string[]>(
+    (variants, run) => {
+      const [letter] = [...run];
+      const shortenedForms = isElongated(run) ? [letter, letter + letter] : [run];
+      return variants.flatMap((prefix) => shortenedForms.map((form) => prefix + form));
+    },
+    [""],
+  );
+}
+
+/** 語末の同じ文字の2文字連続(`noo` の `oo`)。3文字以上の連続の末尾2文字にも一致する点に注意 */
+const TRAILING_DOUBLED_LETTER_PATTERN = /(\p{L})\1$/u;
+
+/** 語末の同じ文字の3文字以上の連続(`nooo` の `ooo`) */
+const TRAILING_ELONGATED_LETTER_PATTERN = /(\p{L})\1{2,}$/u;
+
+/**
+ * 語末のちょうど2文字の連続を1文字に縮める(`noo` → `no` / `yess` → `yes`)。語末が2文字連続でなければ
+ * `undefined` を返す。高頻度語の照合(pickup-ordinary-filter.ts)で「2文字だけの伸ばし形」を拾うために使う(issue #119)。
+ * - 伸ばし字は語末に付くことが多く、`loot` / `weeb` のような語中の2文字連続は対象にしない
+ * - `ass` → `as` のように正当な語も縮むため、この結果だけで判定せず、呼び出し側で照合先の限定と
+ *   保護リストを併用すること(`pickup-ordinary-filter.ts` の `isFrequentWord` 参照)
+ * - 3文字以上の連続は `expandElongatedLetterVariants` が担当するため対象外とする
+ * - 後方参照が大小文字を区別するため、先に小文字化する
+ */
+export function collapseTrailingDoubledLetter(word: string): string | undefined {
+  const lowered = word.toLowerCase();
+  if (!TRAILING_DOUBLED_LETTER_PATTERN.test(lowered) || TRAILING_ELONGATED_LETTER_PATTERN.test(lowered)) {
+    return undefined;
+  }
+  return lowered.replace(TRAILING_DOUBLED_LETTER_PATTERN, "$1");
+}
+
 /**
  * 語句を照合用の語の配列に分割する。空白で区切り、各語の前後の記号を外す。
  * 語の内部のアポストロフィ・ハイフン("don't" / "uh-oh")は保持し、
