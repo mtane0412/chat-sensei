@@ -11,7 +11,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "eval:collect": "node scripts/run-ts-script.mjs scripts/collect-chat-log.ts",
-    "eval:candidates": "node scripts/run-ts-script.mjs scripts/evaluate-pickup-candidates.ts"
+    "eval:candidates": "node scripts/run-ts-script.mjs scripts/evaluate-pickup-candidates.ts",
+    "eval:gate-pairs": "node scripts/run-ts-script.mjs scripts/export-gate-pairs.ts",
+    "eval:gate": "node scripts/run-ts-script.mjs scripts/evaluate-pickup-gate.ts",
+    "eval:gate-llm": "node scripts/run-ts-script.mjs scripts/evaluate-pickup-gate-llm.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
