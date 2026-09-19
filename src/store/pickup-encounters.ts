@@ -18,6 +18,11 @@
  *   - 意味を確認した回数(`recordPickupMeaningChecked`。手動Pick upの意味生成完了時に呼ぶ): 回数を
  *     記録する。FSRSカードを持つ(マーク済みの)表現では忘却シグナルとして `Rating.Again` も適用する。
  *     カードが無い表現ではカードを作らない(意味確認だけで新たな抑制期間を作らないため)
+ * - 理解度チェック(issue #127): 復習期日が来て再表示する表現には目印(`ShownPickupTerm.reviewDue`)を付け、
+ *   UIが「忘れていた」(`markPickupTermForgotten`。`Rating.Again`)・「知っている」(`markPickupTermKnown`。
+ *   `Rating.Good`)の評価ボタンを出す。評価しなかった場合はFSRSカードを変えない(配信を眺めていただけの
+ *   時間を「忘れた」と記録しないため)。未評価の表現は復習期日を過ぎたままなので、クールダウン規則に従って
+ *   次の遭遇でも目印付きで再表示される
  * - 適用範囲: 抑制は自動Pick up(`pickups.ts`)の順方向・逆方向のみ。手動Pick up(`manual-pickups.ts`)は
  *   ユーザーが明示的に選択した操作のため抑制対象外(記録のみ行う)。翻訳列にも影響しない
  * - 永続化: localStorage(`lib/settings.ts` と同じパターン)。学習状態はユーザーに属するため
@@ -106,6 +111,13 @@ const storedEncountersV1Schema = z.object({
 });
 
 type EncounterRecord = z.infer<typeof encounterRecordSchema>;
+
+/**
+ * 表示する語句(`suppressRecentPickupTerms` の戻り値)。復習期日が来たFSRSカードを持つ表現にだけ
+ * `reviewDue: true` を付ける(issue #127。それ以外の語句にはプロパティ自体を付けない)。
+ * UI(`page.tsx`)はこの目印がある語句に理解度チェックの評価ボタンを出す
+ */
+export type ShownPickupTerm = PickupTerm & { reviewDue?: true };
 type EncounterRecordV2 = z.infer<typeof encounterRecordV2Schema>;
 
 /** 旧形式の記録に Phase 2・3 で追加したフィールドの既定値。移行と新規エントリの作成で共通に使う */
@@ -199,6 +211,16 @@ function isRecordSuppressed(record: EncounterRecord, messageId: string, now: num
 }
 
 /**
+ * 表示する語句に、理解度チェックの目印を付ける(issue #127)。FSRSカードの復習期日が来ている
+ * (評価待ちの)表現にだけ `reviewDue: true` を付け、カードが無い・評価済みで期日が未来の表現は
+ * そのまま返す。パイプライン再起動による同じ発言の再抽出でも同じ規則で判定するため、未評価のあいだは
+ * 目印が付き直り、評価後(期日が未来へ移った後)は付かない
+ */
+function withReviewDue(item: PickupTerm, record: EncounterRecord, now: number): ShownPickupTerm {
+  return record.srsCard !== null && now >= record.srsCard.due ? { ...item, reviewDue: true } : item;
+}
+
+/**
  * 表現キーが、指定の発言に対して抑制期間中かを判定する(読み取り専用。遭遇記録は変えない)。
  * ハイブリッド抽出(issue #116)で、表現リスト候補を LLM に注入する前に抑制中の候補を除外するために
  * `pickups.ts` から呼ぶ。判定規則は `suppressRecentPickupTerms` と同一
@@ -217,12 +239,12 @@ export function isPickupExpressionSuppressed(expressionKey: string, messageId: s
  *
  * @param terms 決定的フィルタ適用後の抽出結果
  * @param messageId 抽出元のメッセージID(逆方向では訳文の元になった発言のID)
- * @returns 表示する語句(抑制した語句を除いたもの)
+ * @returns 表示する語句(抑制した語句を除いたもの)。復習期日が来た表現には理解度チェックの目印が付く
  */
-export function suppressRecentPickupTerms(terms: PickupTerm[], messageId: string): PickupTerm[] {
+export function suppressRecentPickupTerms(terms: PickupTerm[], messageId: string): ShownPickupTerm[] {
   const loaded = ensureLoaded();
   const now = Date.now();
-  const shown: PickupTerm[] = [];
+  const shown: ShownPickupTerm[] = [];
   for (const item of terms) {
     const key = buildTermExpressionKey(item.term);
     const record = loaded.get(key);
@@ -233,7 +255,7 @@ export function suppressRecentPickupTerms(terms: PickupTerm[], messageId: string
     } else if (record.shownMessageIds.includes(messageId)) {
       // 表示済みの発言からの再抽出(パイプライン再起動): 同じ遭遇の再表示として扱い、記録は変えない。
       // マーク済みの表現でも同様に返す(押した行の画面上の非表示は hidden-pickups が担う)
-      shown.push(item);
+      shown.push(withReviewDue(item, record, now));
     } else if (isRecordSuppressed(record, messageId, now)) {
       // FSRSカードの復習期日前、またはクールダウン内の再遭遇: 抑制する。
       // 遭遇回数だけ加算し、最終表示日時・表示したメッセージIDは表示していないので変えない
@@ -246,7 +268,7 @@ export function suppressRecentPickupTerms(terms: PickupTerm[], messageId: string
         lastShownAt: now,
         shownMessageIds: [...record.shownMessageIds, messageId].slice(-MAX_SHOWN_MESSAGE_IDS_PER_ENTRY),
       });
-      shown.push(item);
+      shown.push(withReviewDue(item, record, now));
     }
   }
   persist(loaded);
@@ -270,6 +292,23 @@ export function markPickupTermKnown(term: string): void {
     lastKnownAt: now,
     srsCard: reviewSrsCard(record.srsCard, Rating.Good, now),
   });
+  persist(loaded);
+}
+
+/**
+ * 復習期日が来て再表示された表現を「忘れていた」と評価する(理解度チェック。issue #127)。
+ * FSRSカードに `Rating.Again` を適用して次回復習期日を近くに置き直す。「知っている」の記録
+ * (`knownCount` / `lastKnownAt`)は変えない。Pick up列の「忘れていた」ボタン(`page.tsx`)から呼ぶ。
+ * ボタンは `reviewDue` の目印がある(カードを持つ)語句にだけ出るため通常はカードが存在するが、
+ * 上限整理(`persist`)で記録が削除された直後などにカードが無い場合はカードを作らない
+ * (`recordPickupMeaningChecked` と同じく、忘却の評価だけで新たな抑制期間を作らないため)
+ */
+export function markPickupTermForgotten(term: string): void {
+  const loaded = ensureLoaded();
+  const key = buildTermExpressionKey(term);
+  const record = loaded.get(key);
+  if (record === undefined || record.srsCard === null) return;
+  loaded.set(key, { ...record, srsCard: reviewSrsCard(record.srsCard, Rating.Again, Date.now()) });
   persist(loaded);
 }
 

@@ -31,6 +31,11 @@ export function announcePickupKnown(term: string): void {
   usePickupAnnouncementStore.setState((state) => ({ message: `Marked "${term}" as known`, seq: state.seq + 1 }));
 }
 
+/** 語句への「忘れていた」評価(理解度チェック。issue #127)をスクリーンリーダーへ通知する。評価ボタンから呼ぶ */
+export function announcePickupForgotten(term: string): void {
+  usePickupAnnouncementStore.setState((state) => ({ message: `Marked "${term}" as forgotten`, seq: state.seq + 1 }));
+}
+
 /** テスト専用: ストアを初期状態に戻す。各テストの afterEach で呼び出すこと */
 export function resetPickupAnnouncementStoreForTests(): void {
   usePickupAnnouncementStore.setState({ message: "", seq: 0 });

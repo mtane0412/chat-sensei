@@ -10,6 +10,8 @@
  * - 同一メッセージIDからの再抽出(言語設定変更等によるパイプライン再起動)は抑制しない
  * - 語形変化("picked up" / "pick up")は同一の表現キーとして扱う
  * - 「知っている」マーク・意味確認がFSRSカード(issue #113)を更新し、復習期日前の再表示を抑制する
+ * - 復習期日が来て再表示された表現に理解度チェックの目印(`reviewDue`)を付け、「忘れていた」評価で
+ *   FSRSカードに Again を適用する(issue #127)
  * - localStorage への永続化・破損データの扱い・エントリ数上限の整理・旧形式(version 1 / 2)からの移行
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +24,7 @@ import {
   PICKUP_ENCOUNTER_COOLDOWN_MS,
   PICKUP_ENCOUNTER_STORAGE_KEY,
   isPickupExpressionSuppressed,
+  markPickupTermForgotten,
   markPickupTermKnown,
   recordPickupMeaningChecked,
   resetPickupEncountersForTests,
@@ -383,6 +386,106 @@ describe("recordPickupMeaningChecked(意味を確認した回数の記録。issu
     expect(card.due).toBeLessThan(dueBeforeLapse);
     expect(card.lapses).toBe(1);
     expect(soleStoredRecord().meaningCheckedCount).toBe(1);
+  });
+});
+
+describe("理解度チェック(復習期日が来た表現への明示的な評価入力。issue #127)", () => {
+  it("復習期日が来て再表示された表現には、理解度チェックの目印(reviewDue)を付ける", () => {
+    surviving(["even though"], "msg-1");
+    markPickupTermKnown("even though");
+    vi.setSystemTime(soleSrsCard().due);
+
+    expect(suppressRecentPickupTerms(terms("even though"), "msg-2")).toEqual([
+      { term: "even though", meaning: "テスト用の意味", reviewDue: true },
+    ]);
+  });
+
+  it("FSRSカードが無い表現(初回遭遇・クールダウン経過後の再表示)には目印を付けない", () => {
+    // 初回遭遇
+    expect(suppressRecentPickupTerms(terms("even though"), "msg-1")[0]).not.toHaveProperty("reviewDue");
+
+    // 「知っている」を押していない表現が、クールダウン経過後に再表示された場合
+    vi.advanceTimersByTime(PICKUP_ENCOUNTER_COOLDOWN_MS);
+    expect(suppressRecentPickupTerms(terms("even though"), "msg-2")[0]).not.toHaveProperty("reviewDue");
+  });
+
+  it("復習期日に再表示した発言の再抽出(パイプライン再起動)でも、未評価のあいだは目印を付け直す", () => {
+    surviving(["even though"], "msg-1");
+    markPickupTermKnown("even though");
+    vi.setSystemTime(soleSrsCard().due);
+    surviving(["even though"], "msg-2");
+
+    // 評価しないままパイプラインが再起動し、同じ発言(msg-2)から再抽出された
+    vi.advanceTimersByTime(1000);
+    expect(suppressRecentPickupTerms(terms("even though"), "msg-2")[0]).toHaveProperty("reviewDue", true);
+  });
+
+  it("評価済み(次の復習期日が未来)の表現は、同じ発言から再抽出されても目印を付けない", () => {
+    surviving(["even though"], "msg-1");
+    markPickupTermKnown("even though");
+    vi.setSystemTime(soleSrsCard().due);
+    surviving(["even though"], "msg-2");
+    markPickupTermForgotten("even though");
+
+    vi.advanceTimersByTime(1000);
+    expect(suppressRecentPickupTerms(terms("even though"), "msg-2")[0]).not.toHaveProperty("reviewDue");
+  });
+
+  it("「忘れていた」評価はFSRSカードにAgainを適用し、「知っている」の記録(knownCount・lastKnownAt)は変えない", () => {
+    surviving(["even though"], "msg-1");
+    const markedAt = Date.now();
+    markPickupTermKnown("even though");
+    vi.setSystemTime(soleSrsCard().due);
+    surviving(["even though"], "msg-2");
+
+    markPickupTermForgotten("even though");
+
+    const record = soleStoredRecord();
+    expect(soleSrsCard().lapses).toBe(1);
+    expect(record.knownCount).toBe(1);
+    expect(record.lastKnownAt).toBe(markedAt);
+  });
+
+  it("「忘れていた」評価の次の復習間隔は、同じ時点で「知っている」と評価した場合より短い", () => {
+    surviving(["even though"], "msg-1");
+    markPickupTermKnown("even though");
+    const reviewedAt = soleSrsCard().due;
+    vi.setSystemTime(reviewedAt);
+    const stateBeforeRating = window.localStorage.getItem(PICKUP_ENCOUNTER_STORAGE_KEY) as string;
+
+    // 同じ時点で「知っている」と評価した場合の次の復習期日
+    markPickupTermKnown("even though");
+    const dueIfKnown = soleSrsCard().due;
+
+    // 評価前の状態へ戻し、「忘れていた」と評価した場合の次の復習期日と比べる
+    window.localStorage.setItem(PICKUP_ENCOUNTER_STORAGE_KEY, stateBeforeRating);
+    resetPickupEncountersForTests();
+    markPickupTermForgotten("even though");
+
+    expect(soleSrsCard().due).toBeGreaterThan(reviewedAt);
+    expect(soleSrsCard().due).toBeLessThan(dueIfKnown);
+  });
+
+  it("「忘れていた」と評価した表現は、次の復習期日まで抑制し、期日が来たら再び目印付きで表示する", () => {
+    surviving(["even though"], "msg-1");
+    markPickupTermKnown("even though");
+    vi.setSystemTime(soleSrsCard().due);
+    surviving(["even though"], "msg-2");
+    markPickupTermForgotten("even though");
+
+    vi.setSystemTime(soleSrsCard().due - 1);
+    expect(surviving(["even though"], "msg-3")).toEqual([]);
+
+    vi.setSystemTime(soleSrsCard().due);
+    expect(suppressRecentPickupTerms(terms("even though"), "msg-4")[0]).toHaveProperty("reviewDue", true);
+  });
+
+  it("FSRSカードが無い表現への「忘れていた」評価はカードを作らない(評価だけで新たな抑制期間を作らないため)", () => {
+    surviving(["even though"], "msg-1");
+
+    markPickupTermForgotten("even though");
+
+    expect(soleStoredRecord().srsCard).toBeNull();
   });
 });
 
