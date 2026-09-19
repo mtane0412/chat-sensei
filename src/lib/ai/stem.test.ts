@@ -8,7 +8,14 @@
  * そのためテストは「変化形と基本形が同じキーになる」ことを中心に検証する。
  */
 import { describe, expect, it } from "vitest";
-import { collapseElongatedLetters, collapseRepeatedLetters, splitIntoMatchWords, stemForMatch } from "./stem";
+import {
+  collapseElongatedLetters,
+  collapseRepeatedLetters,
+  collapseTrailingDoubledLetter,
+  expandElongatedLetterVariants,
+  splitIntoMatchWords,
+  stemForMatch,
+} from "./stem";
 
 /** 変化形と基本形が同じ照合キーに揃うことを検証するヘルパー */
 function expectSameKey(inflected: string, base: string) {
@@ -148,5 +155,48 @@ describe("collapseElongatedLetters", () => {
     expect(collapseElongatedLetters("loot")).toBe("loot");
     expect(collapseElongatedLetters("weeb")).toBe("weeb");
     expect(collapseElongatedLetters("good")).toBe("good");
+  });
+});
+
+describe("expandElongatedLetterVariants", () => {
+  it("3回以上の連続を1文字に縮めた形と2文字に縮めた形の両方を返す(sooo → so / soo)", () => {
+    expect(expandElongatedLetterVariants("sooo")).toEqual(["so", "soo"]);
+  });
+
+  it("連続が複数箇所ある語は全組合せを返し、正当な重ね字を持つ語(chill)の形を含む(issue #119)", () => {
+    // "chiiilll" は i の連続と l の連続をそれぞれ1文字/2文字に縮めるため 2×2 = 4通りになる
+    expect(expandElongatedLetterVariants("chiiilll")).toEqual(["chil", "chill", "chiil", "chiill"]);
+  });
+
+  it("2文字連続は伸ばし字とみなさず保持する(loot / gooood の oo 以外)", () => {
+    expect(expandElongatedLetterVariants("loot")).toEqual(["loot"]);
+    expect(expandElongatedLetterVariants("weeb")).toEqual(["weeb"]);
+  });
+
+  it("大小文字が混在した伸ばし字(SOoo)は小文字化してから展開する", () => {
+    expect(expandElongatedLetterVariants("SOoo")).toEqual(["so", "soo"]);
+  });
+
+  it("連続箇所が上限を超える語は組合せ展開せず、全連続を1文字に縮めた形だけを返す", () => {
+    // 連続が5箇所(a / b / c / d / e)あり上限の4箇所を超えるため、2^5 通りには展開しない
+    expect(expandElongatedLetterVariants("aaabbbcccdddeee")).toEqual(["abcde"]);
+  });
+});
+
+describe("collapseTrailingDoubledLetter", () => {
+  it("語末のちょうど2文字の連続を1文字に縮める(noo → no / yess → yes)", () => {
+    expect(collapseTrailingDoubledLetter("noo")).toBe("no");
+    expect(collapseTrailingDoubledLetter("yess")).toBe("yes");
+    expect(collapseTrailingDoubledLetter("WHATT")).toBe("what");
+  });
+
+  it("語中の2文字連続(loot / weeb)や連続の無い語は対象外として undefined を返す", () => {
+    expect(collapseTrailingDoubledLetter("loot")).toBeUndefined();
+    expect(collapseTrailingDoubledLetter("weeb")).toBeUndefined();
+    expect(collapseTrailingDoubledLetter("nice")).toBeUndefined();
+  });
+
+  it("語末の3文字以上の連続は expandElongatedLetterVariants の担当のため対象外とする", () => {
+    expect(collapseTrailingDoubledLetter("nooo")).toBeUndefined();
   });
 });
