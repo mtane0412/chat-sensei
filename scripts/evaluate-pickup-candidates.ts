@@ -29,7 +29,14 @@ function loadObservations(filePath: string): CandidateObservation[] {
     .split("\n")
     .filter((line) => line.trim() !== "");
   return lines.map((line, index) => {
-    const parsed = collectedChatMessageSchema.safeParse(JSON.parse(line));
+    let json: unknown;
+    try {
+      json = JSON.parse(line);
+    } catch (error) {
+      // JSON として壊れた行(収集の中断で途中まで書かれた行など)も、どの行かが分かる形で失敗させる
+      throw new Error(`${filePath}:${index + 1} を JSON として解釈できません`, { cause: error });
+    }
+    const parsed = collectedChatMessageSchema.safeParse(json);
     if (!parsed.success) {
       throw new Error(`${filePath}:${index + 1} の形式が不正です: ${parsed.error.message}`);
     }
