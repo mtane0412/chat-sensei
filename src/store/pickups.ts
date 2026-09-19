@@ -44,7 +44,6 @@ import { filterOrdinaryTerms } from "@/lib/ai/pickup-ordinary-filter";
 import type { SupportedLanguage } from "@/lib/ai/prompts";
 import { LowPriorityQueueOverflowError } from "@/lib/ai/session-pool";
 import type { MessageSegment } from "@/lib/twitch/emotes";
-import type { PickupTerm } from "@/lib/ai/schemas";
 import { isChatCommandMessage } from "@/lib/twitch/chat-command";
 import { isTextlessMessage } from "@/lib/twitch/emotes";
 import type { TwitchChatMessage } from "@/lib/twitch/irc-parser";
@@ -54,14 +53,17 @@ import {
   type AutoPipelineJobContext,
   type PipelineEntry,
 } from "./auto-pipeline";
-import { isPickupExpressionSuppressed, suppressRecentPickupTerms } from "./pickup-encounters";
+import { isPickupExpressionSuppressed, suppressRecentPickupTerms, type ShownPickupTerm } from "./pickup-encounters";
 import { useSettingsStore } from "./settings";
 import { getStreamInfo } from "./stream-info";
 import { useTranslationStore } from "./translations";
 
-/** 抽出の完了時に保持する結果。該当する表現が無い場合は `terms` が空配列 */
+/**
+ * 抽出の完了時に保持する結果。該当する表現が無い場合は `terms` が空配列。
+ * 復習期日が来た表現には理解度チェックの目印(`reviewDue`。issue #127)が付く
+ */
 export interface PickupDone {
-  terms: PickupTerm[];
+  terms: ShownPickupTerm[];
 }
 
 /** 発言1件ぶんの抽出の状態 */

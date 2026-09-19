@@ -36,7 +36,8 @@
  * フローティングの「Pick up」ボタン(ManualPickupOverlay)が出て、選択した語句を手動でPick upできる
  * (issue #72。意味の生成状態は manual-pickups ストアが保持し、Pick up列で自動抽出分とあわせて表示する)。
  * Pick up列の各語句はユーザーが削除でき、
- * 削除した語句は hidden-pickups ストアが保持して表示時に除外する(issue #71)。Prompt API の利用可否は両列で共通の
+ * 削除した語句は hidden-pickups ストアが保持して表示時に除外する(issue #71)。復習期日が来て再表示された語句には
+ * 理解度チェックの目印と評価ボタン(「忘れていた」・「知っている」)を出す(issue #127)。Prompt API の利用可否は両列で共通の
  * prompt-api ストアを参照し、利用不可の理由は翻訳列・Pick up列それぞれの見出し下に表示する。
  * 言語設定は settings ストアが LocalStorage から復元し、パイプラインは復元後に開始する。言語設定が変わると
  * 両パイプラインを停止して新しい設定で開始し直す(生成済みの翻訳・Pick up は破棄され、表示中の発言は再生成される。
@@ -48,11 +49,12 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { CheckIcon, ChevronsDownIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
+import { CheckIcon, ChevronsDownIcon, EyeIcon, EyeOffIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { BotFilterDialog } from "@/components/bot-filter-dialog";
 import { ManualPickupOverlay, MESSAGE_TEXT_ATTRIBUTE, RAW_IRC_COLUMN_NAME } from "@/components/manual-pickup";
 import { StreamInfoPanel } from "@/components/stream-info-panel";
 import { TwitchEmbedPlayer } from "@/components/twitch-embed-player";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -65,8 +67,13 @@ import { hydrateBotFilterStore } from "@/store/bot-filter";
 import { isConnectingOrConnected, useChatConnectionStore } from "@/store/chat-connection";
 import type { PipelineEntry } from "@/store/auto-pipeline";
 import { hidePickupTerm, isPickupTermHidden, useHiddenPickupStore } from "@/store/hidden-pickups";
-import { announcePickupKnown, announcePickupRemoval, usePickupAnnouncementStore } from "@/store/pickup-announcements";
-import { markPickupTermKnown } from "@/store/pickup-encounters";
+import {
+  announcePickupForgotten,
+  announcePickupKnown,
+  announcePickupRemoval,
+  usePickupAnnouncementStore,
+} from "@/store/pickup-announcements";
+import { markPickupTermForgotten, markPickupTermKnown } from "@/store/pickup-encounters";
 import { addManualPickup, removeManualPickup, useManualPickupStore } from "@/store/manual-pickups";
 import { startPickupPipeline, usePickupStore, warmUpPickupPipeline, type PickupDone } from "@/store/pickups";
 import { usePromptApiStore, type PromptApiStatus } from "@/store/prompt-api";
@@ -501,6 +508,13 @@ function PipelineCellContent<TDone extends object>({
  * (不可視のままクリック可能領域だけが残り、誤タップで気付かず削除されるのを防ぐ)。
  * 非表示集合はパイプライン再起動で破棄されないため、エントリの再生成後も削除が維持される。
  *
+ * 復習期日が来て再表示された語句(`reviewDue`。issue #127)は理解度チェックの対象として、目印と
+ * 「忘れていた」ボタンを出す(「知っている」は既存の✓ボタンが担う)。「忘れていた」を押した語句は
+ * 意味を読み直せるよう行を残し、目印とボタンだけを消す。評価済みの語句は、評価した時点の抽出結果
+ * (`terms` の参照)と組にしてこのコンポーネントの状態で覚え、抽出結果が生成し直されたら無効にする
+ * (再生成後の `reviewDue` はストアがその時点の復習期日で判定し直すため、そちらを正とする。評価直後の
+ * 再生成では復習期日が未来へ移っているので `reviewDue` 自体が付かない)。評価しなかった語句は何も記録しない。
+ *
  * 発言のたびに全行が再レンダーされるため memo 化する(props の messageId・terms は
  * エントリが変わらない限り同一参照で、非表示集合の変化はストア購読で拾う)。
  */
@@ -512,6 +526,13 @@ const PickupTerms = memo(function PickupTerms({
   terms: PickupDone["terms"];
 }) {
   const hiddenTerms = useHiddenPickupStore((state) => state.hiddenTerms[messageId]);
+  // 「忘れていた」と評価済みの語句(理解度チェックの目印とボタンを消す対象)。評価した時点の抽出結果と
+  // 組で持ち、抽出結果が生成し直された後は使わない
+  const [forgotten, setForgotten] = useState<{ terms: PickupDone["terms"]; forgottenTerms: ReadonlySet<string> }>({
+    terms,
+    forgottenTerms: new Set(),
+  });
+  const forgottenTerms = forgotten.terms === terms ? forgotten.forgottenTerms : undefined;
   const visibleTerms =
     hiddenTerms === undefined ? terms : terms.filter((term) => !isPickupTermHidden(hiddenTerms, term.term));
   if (visibleTerms.length === 0) {
@@ -530,6 +551,14 @@ const PickupTerms = memo(function PickupTerms({
             markPickupTermKnown(term.term);
             hidePickupTerm(messageId, term.term);
           }}
+          onMarkForgotten={
+            term.reviewDue === true && forgottenTerms?.has(term.term) !== true
+              ? () => {
+                  markPickupTermForgotten(term.term);
+                  setForgotten({ terms, forgottenTerms: new Set(forgottenTerms).add(term.term) });
+                }
+              : undefined
+          }
         >
           <dd className="text-muted-foreground">{term.meaning}</dd>
         </PickupTermRow>
@@ -542,17 +571,23 @@ const PickupTerms = memo(function PickupTerms({
 const PICKUP_ACTION_BUTTON_CLASS =
   "ml-1 align-middle opacity-0 group-hover/term:opacity-100 focus:opacity-100 pointer-coarse:opacity-100";
 
+/** 理解度チェック中の行の評価ボタン(「忘れていた」・✓)のスタイル。評価を促すため hover を待たず常に表示する */
+const PICKUP_REVIEW_BUTTON_CLASS = "ml-1 align-middle";
+
 /**
  * Pick up列の語句1件の行(語句 + hover時のアクションボタン + 意味などの内容)。
  * 自動抽出分(PickupTerms)と手動Pick up分(ManualPickupTerms)で見た目・ボタンの挙動を揃えるための共通部品。
  * ボタンは hover 時(またはフォーカス時)に表示し、hover が無いタッチ端末では常に表示する(issue #71 と同じ)。
  * `onMarkKnown` を渡すと「知っている」ボタン(✓。issue #110)を削除ボタンの前に表示する
  * (手動Pick upは「調べた=知らない」操作のため渡さない)。`children` には意味(dd)や生成状態の表示を渡す。
+ * `onMarkForgotten` を渡すと理解度チェック中の行(issue #127)として、Review の目印と「忘れていた」ボタンを
+ * ✓の前に表示し、評価ボタン(「忘れていた」・✓)を常に見える状態にする。
  */
 function PickupTermRow({
   term,
   onRemove,
   onMarkKnown,
+  onMarkForgotten,
   children,
 }: {
   term: string;
@@ -560,21 +595,43 @@ function PickupTermRow({
   onRemove: () => void;
   /** 「知っている」ボタンが押されたときの処理(自動分のみ。ユーザー辞書への記録 + 非表示集合へ追加) */
   onMarkKnown?: () => void;
+  /** 「忘れていた」ボタンが押されたときの処理(復習期日が来た未評価の語句のみ。FSRSカードへの Again の記録) */
+  onMarkForgotten?: () => void;
   children: React.ReactNode;
 }) {
+  const reviewing = onMarkForgotten !== undefined;
   return (
     <div className="group/term flex flex-wrap items-baseline gap-x-2">
       {/* 「チャットから拾い上げた語彙」が目に留まるよう、語句をゴールド + 破線下線で強調する(issue #87)。
           破線下線は inline-flex のアクションボタンには波及しない */}
       <dt className="font-semibold text-pickup underline decoration-dashed decoration-pickup/50 underline-offset-4">
         {term}
+        {onMarkForgotten !== undefined && (
+          <>
+            <Badge variant="outline" className="ml-2 align-middle text-pickup">
+              Review
+            </Badge>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`Mark "${term}" as forgotten`}
+              data-pickup-action="forgotten"
+              className={PICKUP_REVIEW_BUTTON_CLASS}
+              onClick={(event) =>
+                handlePickupActionClick(event, onMarkForgotten, () => announcePickupForgotten(term))
+              }
+            >
+              <RotateCcwIcon />
+            </Button>
+          </>
+        )}
         {onMarkKnown !== undefined && (
           <Button
             variant="ghost"
             size="icon-xs"
             aria-label={`Mark "${term}" as known`}
             data-pickup-action="known"
-            className={PICKUP_ACTION_BUTTON_CLASS}
+            className={reviewing ? PICKUP_REVIEW_BUTTON_CLASS : PICKUP_ACTION_BUTTON_CLASS}
             onClick={(event) => handlePickupActionClick(event, onMarkKnown, () => announcePickupKnown(term))}
           >
             <CheckIcon />
@@ -597,7 +654,7 @@ function PickupTermRow({
 }
 
 /**
- * Pick up列のアクションボタン(削除・「知っている」)が押されたときの共通処理(issue #73 / #110)。
+ * Pick up列のアクションボタン(削除・「知っている」・「忘れていた」)が押されたときの共通処理(issue #73 / #110 / #127)。
  * 押された行のボタンは unmount されてフォーカスが body に落ちるため、実行前に同じ発言の行
  * (`role="listitem"`)内のアクションボタン一覧から次(無ければ前)のボタンを探し、実行後にそこへ
  * フォーカスを移す。どちらも無ければ行コンテナ(tabIndex={-1})へ退避し、Tab 移動が
@@ -606,6 +663,7 @@ function PickupTermRow({
  * 参照へそのままフォーカスしてよい。押した語句の✓と×は一緒に消えるため、移動先の候補は
  * 同じ種類(data-pickup-action の値が同じ)のボタンに絞る(語句1件につき各種類1個なので、
  * 隣は必ず別の語句の同種ボタンになる)。
+ * 「忘れていた」は行を残して評価ボタンだけを消すが、押したボタン自体は unmount されるため同じ規則で退避する。
  */
 function handlePickupActionClick(
   event: React.MouseEvent<HTMLButtonElement>,

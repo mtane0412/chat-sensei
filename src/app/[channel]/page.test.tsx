@@ -24,7 +24,11 @@ import { resetBotFilterStoreForTests, useBotFilterStore } from "@/store/bot-filt
 import { resetChatConnectionStoreForTests, useChatConnectionStore } from "@/store/chat-connection";
 import { resetHiddenPickupStoreForTests } from "@/store/hidden-pickups";
 import { resetPickupAnnouncementStoreForTests } from "@/store/pickup-announcements";
-import { PICKUP_ENCOUNTER_STORAGE_KEY, resetPickupEncountersForTests } from "@/store/pickup-encounters";
+import {
+  PICKUP_ENCOUNTER_STORAGE_KEY,
+  markPickupTermKnown,
+  resetPickupEncountersForTests,
+} from "@/store/pickup-encounters";
 import { resetManualPickupStoreForTests, useManualPickupStore } from "@/store/manual-pickups";
 import { resetPickupStoreForTests, usePickupStore } from "@/store/pickups";
 import { resetPromptApiStoreForTests, usePromptApiStore } from "@/store/prompt-api";
@@ -773,6 +777,139 @@ describe("ChannelPage(Pick up列)", () => {
     await user.click(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as known' }));
 
     expect(row).toHaveFocus();
+  });
+
+  it("復習期日が来た語句(reviewDue)には Review の目印と「忘れていた」ボタンを出し、それ以外の語句には出さない(issue #127)", () => {
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: {
+        "msg-1": {
+          status: "done",
+          terms: [
+            { term: "gg", meaning: "good game の略、お疲れ", reviewDue: true },
+            { term: "no re", meaning: "再戦なし" },
+          ],
+        },
+      },
+    });
+
+    render(<ChannelPage />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    // 復習期日が来た語句: 目印 + 「忘れていた」「知っている」の2択
+    expect(within(pickupColumn).getByText("Review")).toBeInTheDocument();
+    expect(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as forgotten' })).toBeInTheDocument();
+    expect(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as known' })).toBeInTheDocument();
+    // 通常の語句: 「忘れていた」ボタンは出さない
+    expect(within(pickupColumn).queryByRole("button", { name: 'Mark "no re" as forgotten' })).not.toBeInTheDocument();
+    expect(within(pickupColumn).getAllByText("Review")).toHaveLength(1);
+  });
+
+  it("「忘れていた」ボタンを押すと、FSRSカードにAgainが記録され、語句と意味は残したまま目印と「忘れていた」ボタンだけが消える", async () => {
+    const user = userEvent.setup();
+    // 前提: "gg" は過去に「知っている」とマーク済みで、復習期日が来ている
+    markPickupTermKnown("gg");
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: {
+        "msg-1": { status: "done", terms: [{ term: "gg", meaning: "good game の略、お疲れ", reviewDue: true }] },
+      },
+    });
+
+    render(<ChannelPage />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as forgotten' }));
+
+    // 忘れていた語句は意味を読み直せるよう行を残し、評価済みの目印とボタンだけを消す
+    expect(within(pickupColumn).getByText("gg")).toBeInTheDocument();
+    expect(within(pickupColumn).getByText("good game の略、お疲れ")).toBeInTheDocument();
+    expect(within(pickupColumn).queryByText("Review")).not.toBeInTheDocument();
+    expect(within(pickupColumn).queryByRole("button", { name: 'Mark "gg" as forgotten' })).not.toBeInTheDocument();
+
+    // ユーザー辞書(pickup-encounters)のFSRSカードに忘却(lapses)が記録される
+    const stored = JSON.parse(window.localStorage.getItem(PICKUP_ENCOUNTER_STORAGE_KEY) as string) as {
+      entries: Record<string, { knownCount: number; srsCard: { lapses: number } | null }>;
+    };
+    const records = Object.values(stored.entries);
+    expect(records).toHaveLength(1);
+    expect(records[0].srsCard?.lapses).toBe(1);
+    expect(records[0].knownCount).toBe(1);
+  });
+
+  it("「忘れていた」と評価した語句でも、抽出結果が生成し直されて再び復習期日が来ていれば、目印と「忘れていた」ボタンを出し直す", async () => {
+    const user = userEvent.setup();
+    markPickupTermKnown("gg");
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ", reviewDue: true }] } },
+    });
+    render(<ChannelPage />);
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as forgotten' }));
+    expect(within(pickupColumn).queryByText("Review")).not.toBeInTheDocument();
+
+    // 同じ発言の抽出結果が生成し直され(新しい terms)、その時点で再び復習期日が来ていた場合
+    act(() => {
+      usePickupStore.setState({
+        entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ", reviewDue: true }] } },
+      });
+    });
+
+    expect(within(pickupColumn).getByText("Review")).toBeInTheDocument();
+    expect(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as forgotten' })).toBeInTheDocument();
+  });
+
+  it('「忘れていた」を押すと、スクリーンリーダー向けの通知リージョンに「Marked "<語句>" as forgotten」が表示される', async () => {
+    const user = userEvent.setup();
+    markPickupTermKnown("gg");
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ", reviewDue: true }] } },
+    });
+
+    render(<ChannelPage />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as forgotten' }));
+
+    expect(screen.getByRole("status", { name: "Pick up updates" })).toHaveTextContent('Marked "gg" as forgotten');
+  });
+
+  it("「忘れていた」を押すと、同じ発言に他の「忘れていた」ボタンが無ければ行コンテナへフォーカスが移る", async () => {
+    const user = userEvent.setup();
+    markPickupTermKnown("gg");
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ", reviewDue: true }] } },
+    });
+
+    render(<ChannelPage />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as forgotten' }));
+
+    expect(within(pickupColumn).getByRole("listitem")).toHaveFocus();
+  });
+
+  it("復習期日が来た語句の「知っている」ボタンは、通常の語句と同じく語句を消して knownCount を加算する", async () => {
+    const user = userEvent.setup();
+    markPickupTermKnown("gg");
+    useChatConnectionStore.setState({ messages: [サンプル発言] });
+    usePickupStore.setState({
+      entries: { "msg-1": { status: "done", terms: [{ term: "gg", meaning: "お疲れ", reviewDue: true }] } },
+    });
+
+    render(<ChannelPage />);
+
+    const pickupColumn = screen.getByRole("region", { name: "Pick up" });
+    await user.click(within(pickupColumn).getByRole("button", { name: 'Mark "gg" as known' }));
+
+    expect(within(pickupColumn).queryByText("gg")).not.toBeInTheDocument();
+    const stored = JSON.parse(window.localStorage.getItem(PICKUP_ENCOUNTER_STORAGE_KEY) as string) as {
+      entries: Record<string, { knownCount: number }>;
+    };
+    expect(Object.values(stored.entries)[0].knownCount).toBe(2);
   });
 
   it("手動Pick upの行には「知っている」ボタンを出さない(調べた語句は「知っている」と矛盾するため)", () => {
